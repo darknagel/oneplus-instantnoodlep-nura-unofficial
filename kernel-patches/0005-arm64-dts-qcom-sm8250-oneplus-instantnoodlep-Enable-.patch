@@ -1,7 +1,7 @@
 From 2768385e9c4a180c05a4f84c5f88adc1dca2fced Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Sun, 25 Oct 2026 18:46:35 +0100
-Subject: [PATCH 05/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
+Subject: [PATCH 05/13] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
  audio
 
 The OnePlus 8 Pro uses the same audio hardware as the OnePlus 8T

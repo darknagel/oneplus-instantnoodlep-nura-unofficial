@@ -1,7 +1,7 @@
 From cefe24478ed25e291974663ac6932ab2e9b01349 Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Mon, 26 Oct 2026 18:26:23 +0100
-Subject: [PATCH 09/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
+Subject: [PATCH 09/13] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
  telephoto camera
 
 Enable CAMSS and CCI1 and add the Samsung S5K3M5 telephoto camera

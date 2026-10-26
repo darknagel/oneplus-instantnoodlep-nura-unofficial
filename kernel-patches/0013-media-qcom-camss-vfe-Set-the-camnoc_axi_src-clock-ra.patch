@@ -1,0 +1,38 @@
+From 990f70da1a5f347db0e12795dc2bddb4b766cfcd Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 23:15:47 +0100
+Subject: [PATCH 13/13] media: qcom: camss: vfe: Set the camnoc_axi_src clock
+ rate
+
+On SM8250 the rate table for the camera NoC AXI clock is attached to
+"camnoc_axi_src", while vfe_set_clock_rates() only scales clocks named
+"camnoc_axi" or "camnoc_rt_axi". The clock is therefore never set and
+stays at 19.2 MHz while streaming.
+
+At that rate the bus cannot drain long lines: RDI capture of full
+resolution modes (4208x3120 and 4656x3496 RAW10, about 5.3 KiB per
+line) never completes a frame, and the bus reports a CCIF violation
+for the write master, while binned modes with shorter lines still
+work. Scale "camnoc_axi_src" with the pixel clock like the other
+camnoc clocks.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/media/platform/qcom/camss/camss-vfe.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index 319d19158..8d3cffc28 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -919,6 +919,7 @@ static int vfe_match_clock_names(struct vfe_device *vfe,
+ 		!strcmp(clock->name, vfe_lite_name) ||
+ 		!strcmp(clock->name, "vfe_lite") ||
+ 		!strcmp(clock->name, "camnoc_axi") ||
++		!strcmp(clock->name, "camnoc_axi_src") ||
+ 		!strcmp(clock->name, "camnoc_rt_axi"));
+ }
+ 
+-- 
+2.43.0
+

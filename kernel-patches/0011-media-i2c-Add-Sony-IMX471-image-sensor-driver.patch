@@ -1,7 +1,7 @@
 From 2356a4d7c3d5cf630c53c846b754a3b7f74e3f2a Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Mon, 26 Oct 2026 19:21:55 +0100
-Subject: [PATCH 11/12] media: i2c: Add Sony IMX471 image sensor driver
+Subject: [PATCH 11/13] media: i2c: Add Sony IMX471 image sensor driver
 
 Add a driver for the Sony IMX471, a 16 MP sensor used as front camera
 in the OnePlus 8 Pro. It supports two RAW10 modes over four CSI-2 D-PHY

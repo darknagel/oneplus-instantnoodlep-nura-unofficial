@@ -18,13 +18,14 @@ mainline kernel with postmarketOS. Tested on my own device, October 2026.
 | Speakers + 3 microphones (VA macro, mic bias as in vendor DT) | works | kernel 0005, pmaports 0002, 0007 |
 | A/B boot counter (qbootctl marks boot successful) | works | pmaports 0003 |
 | Accelerometer, light, proximity via SLPI (SMEM item 130 filled by new driver) | works | kernel 0006–0008, pmaports 0004–0006, hexagonrpc 0001–0005 |
-| Telephoto camera Samsung S5K3M5 via CAMSS + libcamera (60 fps, AGC, no AF, green tint) | works | kernel 0009–0010, pmaports 0008–0009, libcamera 0001 |
-| Front camera Sony IMX471 (new driver, 2328×1748 @ 60 binned; colours and rotation checked) | works – probed on 3 of 3 boots | kernel 0011–0012, pmaports 0010–0011, libcamera 0002 |
+| Telephoto camera Samsung S5K3M5 via CAMSS + libcamera (4208×3120 @ 30, 2104×1184 @ 60, AGC, no AF, green tint) | works | kernel 0009–0010, pmaports 0008–0009, libcamera 0001 |
+| Front camera Sony IMX471 (new driver, 4656×3496 @ 30, 2328×1748 @ 60; colours and rotation checked) | works – probed on 3 of 3 boots | kernel 0011–0012, pmaports 0010–0011, libcamera 0002 |
+| Full resolution capture on SM8250 CAMSS (camera NoC clock was never set, stayed at 19.2 MHz) | fixed | kernel 0013, pmaports 0012 |
 
-**Known issue:** the full-resolution sensor modes (S5K3M5 4208×3120, IMX471 4656×3496) do not
-deliver frames – buffers are queued but never completed, with no kernel error. The binned
-modes stream at 60 fps. With libcamera, request an output of 1920×1080 or smaller
-(e.g. `cam -c 2 -C -s width=1280,height=960`) so the binned mode is chosen.
+Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
+`camnoc_axi_src` clock was never scaled, so full resolution RDI capture never completed a
+frame (the VFE bus reports a CCIF violation for the write master), while binned modes with
+shorter lines still worked. Other SM8250 devices using CAMSS should be affected too.
 | Main/ultrawide camera (C-PHY), autofocus, magnetometer, modem, calls | not done | – |
 
 ## Contents

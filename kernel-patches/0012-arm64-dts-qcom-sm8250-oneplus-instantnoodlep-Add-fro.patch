@@ -1,7 +1,7 @@
 From 05bdc4b733771ce93b5d3680e24a125ef3798e2b Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Mon, 26 Oct 2026 19:21:55 +0100
-Subject: [PATCH 12/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
+Subject: [PATCH 12/13] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
  front camera
 
 Add the Sony IMX471 front camera (slot 2 of the vendor device tree):

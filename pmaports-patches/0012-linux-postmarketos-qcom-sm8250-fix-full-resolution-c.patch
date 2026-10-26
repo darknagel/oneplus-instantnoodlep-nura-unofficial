@@ -1,0 +1,89 @@
+From 3b714699d9fecd1384cc4aa863dfd281496bfa50 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 23:20:58 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: fix full resolution camera
+ capture
+
+Set the camera NoC AXI clock rate on SM8250. It stayed at 19.2 MHz,
+so RDI capture of the full resolution sensor modes never completed.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ...-vfe-Set-the-camnoc_axi_src-clock-ra.patch | 37 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  4 +-
+ 2 files changed, 40 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0013-media-qcom-camss-vfe-Set-the-camnoc_axi_src-clock-ra.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0013-media-qcom-camss-vfe-Set-the-camnoc_axi_src-clock-ra.patch b/device/testing/linux-postmarketos-qcom-sm8250/0013-media-qcom-camss-vfe-Set-the-camnoc_axi_src-clock-ra.patch
+new file mode 100644
+index 0000000000..1f54fc0b31
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0013-media-qcom-camss-vfe-Set-the-camnoc_axi_src-clock-ra.patch
+@@ -0,0 +1,37 @@
++From 5634b94b50ccc706e6c8eff1db0e529f4736e2da Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 26 Oct 2026 23:15:47 +0100
++Subject: [PATCH] media: qcom: camss: vfe: Set the camnoc_axi_src clock rate
++
++On SM8250 the rate table for the camera NoC AXI clock is attached to
++"camnoc_axi_src", while vfe_set_clock_rates() only scales clocks named
++"camnoc_axi" or "camnoc_rt_axi". The clock is therefore never set and
++stays at 19.2 MHz while streaming.
++
++At that rate the bus cannot drain long lines: RDI capture of full
++resolution modes (4208x3120 and 4656x3496 RAW10, about 5.3 KiB per
++line) never completes a frame, and the bus reports a CCIF violation
++for the write master, while binned modes with shorter lines still
++work. Scale "camnoc_axi_src" with the pixel clock like the other
++camnoc clocks.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ drivers/media/platform/qcom/camss/camss-vfe.c | 1 +
++ 1 file changed, 1 insertion(+)
++
++diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
++index 319d19158..8d3cffc28 100644
++--- a/drivers/media/platform/qcom/camss/camss-vfe.c
+++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
++@@ -919,6 +919,7 @@ static int vfe_match_clock_names(struct vfe_device *vfe,
++ 		!strcmp(clock->name, vfe_lite_name) ||
++ 		!strcmp(clock->name, "vfe_lite") ||
++ 		!strcmp(clock->name, "camnoc_axi") ||
+++		!strcmp(clock->name, "camnoc_axi_src") ||
++ 		!strcmp(clock->name, "camnoc_rt_axi"));
++ }
++ 
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 257d7d5933..dbba60bd50 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=11
++pkgrel=13
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -52,6 +52,7 @@ source="
+ 	0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch
+ 	0011-media-i2c-Add-Sony-IMX471-image-sensor-driver.patch
+ 	0012-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-fro.patch
++	0013-media-qcom-camss-vfe-Set-the-camnoc_axi_src-clock-ra.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -111,4 +112,5 @@ c09e372009be552b2640e8e5bd00c7a85e9e73f61b9eed1bbfe319d09524a21db969e2f0be6aa5f7
+ dba18610e90c2054aa2fbbe6dd4d311a09a4d6f00181bf390cf19a9c0c981d73f6e1ee0a0ad32623a77faf045c2ac0a61953c8d4f19a6039841a0321998c6763  0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch
+ 24347da30a97f4cb783a99354db358caace8281d5d842f97bbd11b68aadc2a0e3fb31d82a844c0a1edf28dc61c54bb75661bb65aaaee6ede1d3ea462053f935f  0011-media-i2c-Add-Sony-IMX471-image-sensor-driver.patch
+ 6f2448da87a80d1668db7341f3ac51db00fdf2a333107a51e0d38e4b211400554abbedc53263dc654ae5f3631932ba694efbd48f53fd0d7fc021eda13f8b297b  0012-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-fro.patch
++dd23767156bf823f298bd44423c9d947049ddadb5d2a1a56d67be27111ed02b3419dcf733c169ac11fa872cb03fdc81c68b313a04cf4faaba4d075a3db325e06  0013-media-qcom-camss-vfe-Set-the-camnoc_axi_src-clock-ra.patch
+ "
+-- 
+2.43.0
+

@@ -1,7 +1,7 @@
 From dee5bd8ad3ef90a5a422c98098141dc5e2a34fc4 Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Sun, 25 Oct 2026 23:40:27 +0100
-Subject: [PATCH 08/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
+Subject: [PATCH 08/13] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
  sensor device info
 
 Describe the sensor chips for the sensor DSP with the values of the vendor
