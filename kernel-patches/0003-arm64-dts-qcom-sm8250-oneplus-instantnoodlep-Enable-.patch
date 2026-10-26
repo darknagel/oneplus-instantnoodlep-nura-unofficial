@@ -1,0 +1,148 @@
+From a75d6049c023358e26d071313726a7b239bdacbf Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 17:43:50 +0100
+Subject: [PATCH 03/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
+ display
+
+Enable the display clock controller, DSI0 and its PHY, and describe the
+Samsung AMS678UW01 panel.
+
+The simple-framebuffer now references the display clocks and the MDSS
+GDSC, like sm8250-oneplus-common.dtsi does. Without this, the bootloader
+framebuffer loses its clocks as soon as dispcc probes and the display
+freezes before msm takes over.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 87 ++++++++++++++++++-
+ 1 file changed, 86 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 7f294fef7..ed9550880 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -5,6 +5,8 @@
+ #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+ #include <dt-bindings/phy/phy.h>
+ #include <dt-bindings/usb/pd.h>
++#include <dt-bindings/clock/qcom,dispcc-sm8250.h>
++#include <dt-bindings/clock/qcom,gcc-sm8250.h>
+ #include "sm8250.dtsi"
+ #include "pm8150.dtsi"
+ #include "pm8150b.dtsi"
+@@ -55,6 +57,16 @@ framebuffer0: framebuffer@9c000000 {
+ 			height = <2376>;
+ 			stride = <(1080 * 4)>;
+ 			format = "a8r8g8b8";
++			clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
++				 <&gcc GCC_DISP_HF_AXI_CLK>,
++				 <&gcc GCC_DISP_SF_AXI_CLK>,
++				 <&dispcc DISP_CC_MDSS_VSYNC_CLK>,
++				 <&dispcc DISP_CC_MDSS_MDP_CLK>,
++				 <&dispcc DISP_CC_MDSS_BYTE0_CLK>,
++				 <&dispcc DISP_CC_MDSS_BYTE0_INTF_CLK>,
++				 <&dispcc DISP_CC_MDSS_PCLK0_CLK>,
++				 <&dispcc DISP_CC_MDSS_ESC0_CLK>;
++			power-domains = <&dispcc MDSS_GDSC>;
+ 		};
+ 	};
+ 
+@@ -585,7 +597,7 @@ &cdsp {
+ };
+ 
+ &dispcc {
+-       status = "disabled";
++	status = "okay";
+ };
+ 
+ &gmu {
+@@ -672,6 +684,42 @@ &mdss {
+ 	status = "okay";
+ };
+ 
++&mdss_dsi0 {
++	vdda-supply = <&vreg_l9a_1p2>;
++
++	status = "okay";
++
++	display_panel: panel@0 {
++		compatible = "samsung,ams678uw01";
++		reg = <0>;
++
++		reset-gpios = <&tlmm 75 GPIO_ACTIVE_LOW>;
++		vddio-supply = <&vreg_l14a_1p8>;
++		vdd-supply = <&vreg_l11c_3p3>;
++
++		pinctrl-0 = <&panel_reset_default &panel_vout_default &panel_vsync>;
++		pinctrl-1 = <&panel_reset_suspend &panel_vout_suspend &panel_vsync>;
++		pinctrl-names = "default", "sleep";
++
++		port {
++			panel_in: endpoint {
++				remote-endpoint = <&mdss_dsi0_out>;
++			};
++		};
++	};
++};
++
++&mdss_dsi0_out {
++	data-lanes = <0 1 2 3>;
++	remote-endpoint = <&panel_in>;
++};
++
++&mdss_dsi0_phy {
++	vdds-supply = <&vreg_l5a_0p88>;
++
++	status = "okay";
++};
++
+ &slpi {
+ 	firmware-name = "postmarketos/slpi.mbn";
+ 	status = "okay";
+@@ -879,6 +927,43 @@ ts_rst_suspend: ts-rst-suspend {
+ 		drive-strength = <0x02>;
+ 		bias-pull-down;
+ 	};
++
++	panel_reset_default: panel-reset-default-state {
++		pins = "gpio75";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-disable;
++	};
++
++	panel_reset_suspend: panel-reset-suspend-state {
++		pins = "gpio75";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-pull-down;
++	};
++
++	panel_vout_default: panel-vout-default-state {
++		pins = "gpio8";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-disable;
++		output-high;
++	};
++
++	panel_vout_suspend: panel-vout-suspend-state {
++		pins = "gpio8";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-pull-down;
++		output-low;
++	};
++
++	panel_vsync: panel-vsync-state {
++		pins = "gpio66";
++		function = "mdp_vsync";
++		drive-strength = <2>;
++		bias-pull-down;
++	};
+ };
+ 
+ &ufs_mem_hc {
+-- 
+2.43.0
+

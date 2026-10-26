@@ -1,0 +1,160 @@
+From cefe24478ed25e291974663ac6932ab2e9b01349 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 18:26:23 +0100
+Subject: [PATCH 09/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
+ telephoto camera
+
+Enable CAMSS and CCI1 and add the Samsung S5K3M5 telephoto camera
+(slot 3 of the vendor device tree): CCI1 master 0, address 0x2d,
+CSIPHY2 with four lanes, MCLK2, reset on GPIO 90. The analog supply
+comes from an external LDO enabled by GPIO 139, the digital supply
+from PM8009 L4 (1.056 V), the I/O supply from PM8009 L7.
+
+The vendor runs MCLK at 19.2 MHz; the mainline driver expects 24 MHz,
+which the camera clock controller can provide.
+
+The vendor reports a sensor orientation of 90 degrees clockwise, which
+is a rotation of 270 degrees in the counter-clockwise convention of the
+rotation property (checked with an arrow on the screen).
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 101 ++++++++++++++++++
+ 1 file changed, 101 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 06a1155bb..d41714d91 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -242,6 +242,21 @@ ramoops@b0000000 {
+ 	};
+ 
+ 	/* Values from the vendor device tree overlay of project 19811 */
++	vreg_cam_tele_avdd: regulator-cam-tele-avdd {
++		compatible = "regulator-fixed";
++		regulator-name = "cam_tele_avdd";
++		regulator-min-microvolt = <2800000>;
++		regulator-max-microvolt = <2800000>;
++		startup-delay-us = <2000>;
++
++		gpio = <&tlmm 139 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		vin-supply = <&vreg_bob>;
++
++		pinctrl-0 = <&cam_tele_avdd_en>;
++		pinctrl-names = "default";
++	};
++
+ 	sensor-devinfo {
+ 		compatible = "oneplus,sensor-devinfo";
+ 
+@@ -469,6 +484,13 @@ vreg_l2f_1p2: ldo2 {
+ 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+ 		};
+ 
++		vreg_l4f_1p05: ldo4 {
++			regulator-name = "vreg_l4f_1p05";
++			regulator-min-microvolt = <1056000>;
++			regulator-max-microvolt = <1056000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
+ 		vreg_l6f_2p8: ldo6 {
+ 			regulator-name = "vreg_l6f_2p8";
+ 			regulator-min-microvolt = <2800000>;
+@@ -736,6 +758,62 @@ &adsp {
+ 	status = "okay";
+ };
+ 
++&camss {
++	vdda-phy-supply = <&vreg_l5a_0p88>;
++	vdda-pll-supply = <&vreg_l9a_1p2>;
++	status = "okay";
++
++	ports {
++		/* The port index is the CSIPHY id */
++		port@2 {
++			csiphy2_ep: endpoint {
++				clock-lanes = <7>;
++				data-lanes = <0 1 2 3>;
++				remote-endpoint = <&cam_tele_ep>;
++			};
++		};
++	};
++};
++
++&cci1 {
++	status = "okay";
++};
++
++&cci1_i2c0 {
++	#address-cells = <1>;
++	#size-cells = <0>;
++
++	/* Telephoto camera */
++	camera@2d {
++		compatible = "samsung,s5k3m5";
++		reg = <0x2d>;
++
++		clocks = <&camcc CAM_CC_MCLK2_CLK>;
++		assigned-clocks = <&camcc CAM_CC_MCLK2_CLK>;
++		assigned-clock-rates = <24000000>;
++
++		reset-gpios = <&tlmm 90 GPIO_ACTIVE_LOW>;
++
++		vdda-supply = <&vreg_cam_tele_avdd>;
++		vddd-supply = <&vreg_l4f_1p05>;
++		vddio-supply = <&vreg_l7f_1p8>;
++
++		pinctrl-0 = <&cam_tele_default>;
++		pinctrl-names = "default";
++
++		orientation = <1>;
++		rotation = <270>;
++
++		port {
++			cam_tele_ep: endpoint {
++				data-lanes = <1 2 3 4>;
++				link-frequencies = /bits/ 64 <602500000>;
++				remote-endpoint = <&csiphy2_ep>;
++			};
++		};
++	};
++};
++
+ &cdsp {
+ 	firmware-name = "postmarketos/cdsp.mbn";
+ 	status = "okay";
+@@ -1154,6 +1232,29 @@ wcd_default: wcd-default-state {
+ 		drive-strength = <16>;
+ 		output-low;
+ 	};
++
++	cam_tele_avdd_en: cam-tele-avdd-en-state {
++		pins = "gpio139";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
++	cam_tele_default: cam-tele-default-state {
++		mclk-pins {
++			pins = "gpio96";
++			function = "cam_mclk";
++			drive-strength = <16>;
++			bias-disable;
++		};
++
++		rst-pins {
++			pins = "gpio90";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-disable;
++		};
++	};
+ };
+ 
+ &ufs_mem_hc {
+-- 
+2.43.0
+

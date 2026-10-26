@@ -1,0 +1,186 @@
+From e80e7817dfb1da2d06f8339fe38e4c6fba8eb720 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 17:29:35 +0100
+Subject: [PATCH] oneplus-instantnoodlep: enable sensors
+
+- firmware-oneplus-instantnoodlep: new subpackage -hexagonfs with the
+  files hexagonrpcd serves to the sensor DSP (sdsp libraries, sensor
+  configs, the sensor registry). textrels is needed for two of the
+  Hexagon libraries.
+- device-oneplus-instantnoodlep: depend on hexagonrpcd and the
+  -hexagonfs/-slpi firmware, run hexagonrpcd-sdsp with a writable
+  registry in /var/lib/hexagonrpcd (seeded by tmpfiles), and set the
+  accelerometer mount matrix for iio-sensor-proxy.
+
+Tested with Phosh: automatic screen rotation works in all four
+orientations. Light and proximity sensors are reported by libssc;
+the magnetometer is not working yet.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../81-libssc-oneplus-instantnoodlep.rules    |  2 ++
+ .../device-oneplus-instantnoodlep/APKBUILD    | 18 ++++++++++++-
+ .../hexagonrpcd-sdsp.conf                     |  5 ++++
+ .../hexagonrpcd.tmpfiles                      |  6 +++++
+ .../firmware-oneplus-instantnoodlep/APKBUILD  | 25 ++++++++++++++++---
+ 5 files changed, 52 insertions(+), 4 deletions(-)
+ create mode 100755 device/testing/device-oneplus-instantnoodlep/81-libssc-oneplus-instantnoodlep.rules
+ create mode 100755 device/testing/device-oneplus-instantnoodlep/hexagonrpcd-sdsp.conf
+ create mode 100755 device/testing/device-oneplus-instantnoodlep/hexagonrpcd.tmpfiles
+
+diff --git a/device/testing/device-oneplus-instantnoodlep/81-libssc-oneplus-instantnoodlep.rules b/device/testing/device-oneplus-instantnoodlep/81-libssc-oneplus-instantnoodlep.rules
+new file mode 100755
+index 0000000000..c2b76407b2
+--- /dev/null
++++ b/device/testing/device-oneplus-instantnoodlep/81-libssc-oneplus-instantnoodlep.rules
+@@ -0,0 +1,2 @@
++# iio-sensor-proxy with libssc: accelerometer mount matrix
++SUBSYSTEM=="misc", KERNEL=="fastrpc-*", ENV{ACCEL_MOUNT_MATRIX}+="-1, 0, 0; 0, -1, 0; 0, 0, -1"
+diff --git a/device/testing/device-oneplus-instantnoodlep/APKBUILD b/device/testing/device-oneplus-instantnoodlep/APKBUILD
+index 48368c3882..9c356d600e 100644
+--- a/device/testing/device-oneplus-instantnoodlep/APKBUILD
++++ b/device/testing/device-oneplus-instantnoodlep/APKBUILD
+@@ -3,7 +3,7 @@ maintainer="kouling <k0ul1ng@proton.me>"
+ pkgname=device-oneplus-instantnoodlep
+ pkgdesc="OnePlus 8 Pro"
+ pkgver=7
+-pkgrel=3
++pkgrel=5
+ url="https://postmarketos.org"
+ license="MIT"
+ arch="aarch64"
+@@ -12,8 +12,11 @@ depends="
+ 	firmware-oneplus-instantnoodlep
+ 	firmware-oneplus-instantnoodlep-gpu
+ 	firmware-oneplus-instantnoodlep-adsp
++	firmware-oneplus-instantnoodlep-hexagonfs
++	firmware-oneplus-instantnoodlep-slpi
+ 	alsa-ucm-conf-oneplus-instantnoodlep
+ 	linux-postmarketos-qcom-sm8250
++	hexagonrpcd
+ 	mkbootimg
+ 	postmarketos-base
+ 	soc-qcom-qbootctl
+@@ -24,6 +27,9 @@ makedepends="
+ "
+ source="
+ 	deviceinfo
++	81-libssc-oneplus-instantnoodlep.rules
++	hexagonrpcd-sdsp.conf
++	hexagonrpcd.tmpfiles
+ 	kernel-cmdline.conf
+ 	sm8250-oneplus-instantnoodlep-empty.dts
+ "
+@@ -38,10 +44,20 @@ package() {
+ 	devicepkg_package $startdir $pkgname
+ 
+ 	install -Dm644 "$srcdir/dtbo.img" "$pkgdir/boot/dtbo.img"
++
++	install -Dm644 "$srcdir"/81-libssc-oneplus-instantnoodlep.rules \
++		-t "$pkgdir"/usr/lib/udev/rules.d/
++	install -Dm644 "$srcdir"/hexagonrpcd-sdsp.conf \
++		"$pkgdir"/usr/lib/systemd/system/hexagonrpcd-sdsp.service.d/writable-registry.conf
++	install -Dm644 "$srcdir"/hexagonrpcd.tmpfiles \
++		"$pkgdir"/usr/lib/tmpfiles.d/hexagonrpcd-oneplus-instantnoodlep.conf
+ }
+ 
+ sha512sums="
+ cdf5ea60993c40d7d8b4fd850c182b55df62d94c0f83268820216d5a9921b3fe11c74d831fe64d424fc597a5f3943edd1ee184f0686701a38e131fdb6af52ce4  deviceinfo
++d0e8f2e378130130ac72703aed957f7638e2dd75acf4aa421e1b4592c6cb6d296b652db0d9c242be4e56326760ce18d28c1e36ae553d0b7a7f91e12ab0353f22  81-libssc-oneplus-instantnoodlep.rules
++7b225a3513d3846089e6e04faf54682e0734dec8367c96393dbd48b983cfdb9efbef5331503f4f90bf8da321b4cd713a8d244666c5b8c3a85f24b4cf88fc5367  hexagonrpcd-sdsp.conf
++340ee153d351d6f42cd8b77207ceb7e793520a4031f2b24b3469700871f38e20e3c3c8b80ed5724893df48b6d712a8bf3ccd6371603535fb4caed8f428bd394a  hexagonrpcd.tmpfiles
+ 04cc87ed6b0041ede7edb2693ee4dd58d6ac8f1b036a0b37e1a86cce57b66e35d9f400a3ea75d75278b028132535033915f3a2fff919866e85336c5f92a68ffe  kernel-cmdline.conf
+ 06269dcbd405a18576a476bb976d39bcf91e8c7885a87716f510d66abc2ffe3bfabe56c286ad6fc88878de07427e58965ac833ac0e8cfa7ad393c2fa3b535c88  sm8250-oneplus-instantnoodlep-empty.dts
+ "
+diff --git a/device/testing/device-oneplus-instantnoodlep/hexagonrpcd-sdsp.conf b/device/testing/device-oneplus-instantnoodlep/hexagonrpcd-sdsp.conf
+new file mode 100755
+index 0000000000..465a6dc74c
+--- /dev/null
++++ b/device/testing/device-oneplus-instantnoodlep/hexagonrpcd-sdsp.conf
+@@ -0,0 +1,5 @@
++# The sensor DSP needs to save its registry, otherwise it does not bring up
++# the accelerometer. Serve a writable copy as the persist directory.
++[Service]
++ExecStart=
++ExecStart=/usr/bin/hexagonrpcd -f /dev/fastrpc-sdsp -d sdsp -s -w /var/lib/hexagonrpcd/sensors-registry
+diff --git a/device/testing/device-oneplus-instantnoodlep/hexagonrpcd.tmpfiles b/device/testing/device-oneplus-instantnoodlep/hexagonrpcd.tmpfiles
+new file mode 100755
+index 0000000000..2bf6ca81e4
+--- /dev/null
++++ b/device/testing/device-oneplus-instantnoodlep/hexagonrpcd.tmpfiles
+@@ -0,0 +1,6 @@
++# Writable sensor registry for hexagonrpcd, created from the packaged one once.
++# The parent stays owned by root, otherwise systemd-tmpfiles refuses the
++# chown below (unsafe path transition).
++d /var/lib/hexagonrpcd 0755 root root -
++C /var/lib/hexagonrpcd/sensors-registry - - - - /usr/share/qcom/sm8250/OnePlus/instantnoodlep/sensors/persist
++Z /var/lib/hexagonrpcd/sensors-registry - fastrpc fastrpc -
+diff --git a/device/testing/firmware-oneplus-instantnoodlep/APKBUILD b/device/testing/firmware-oneplus-instantnoodlep/APKBUILD
+index 06bdf96b52..781721a719 100644
+--- a/device/testing/firmware-oneplus-instantnoodlep/APKBUILD
++++ b/device/testing/firmware-oneplus-instantnoodlep/APKBUILD
+@@ -1,12 +1,12 @@
+ maintainer="kouling <k0ul1ng@proton.me>"
+ pkgname=firmware-oneplus-instantnoodlep
+ pkgver=3
+-pkgrel=1
++pkgrel=2
+ pkgdesc="Firmware for OnePlus 8 Pro (instantnoodlep)"
+ url="https://github.com/pangwalla/oneplus-instantnoodlep-firmware"
+ arch="aarch64"
+ license="proprietary"
+-options="!check !strip !archcheck !tracedeps pmb:cross-native"
++options="!check !strip !archcheck !tracedeps textrels pmb:cross-native"
+ makedepends="
+ 	qca-swiss-army-knife
+ 	pil-squasher
+@@ -21,6 +21,7 @@ subpackages="
+ 	$pkgname-bluetooth:bluetooth
+ 	$pkgname-cdsp:cdsp
+ 	$pkgname-gpu:gpu
++	$pkgname-hexagonfs:hexagonfs
+ 	$pkgname-ipa:ipa
+ 	$pkgname-modem:modem
+ 	$pkgname-slpi:slpi
+@@ -28,7 +29,9 @@ subpackages="
+ 	$pkgname-venus:venus
+ "
+ _commit="2dce2681689fcf615198c663555c5a7c7b3650ba"
+-source="https://github.com/pangwalla/oneplus-instantnoodlep-firmware/archive/$_commit/oneplus-instantnoodlep-firmware-$_commit.tar.gz"
++source="https://github.com/pangwalla/oneplus-instantnoodlep-firmware/archive/$_commit/oneplus-instantnoodlep-firmware-$_commit.tar.gz
++	oneplus-instantnoodlep-hexagonfs-1.tar.gz
++	"
+ builddir="$srcdir/oneplus-instantnoodlep-firmware-$_commit"
+ 
+ package() {
+@@ -56,6 +59,21 @@ gpu() {
+ 	install -Dm644 "$builddir/gpu/a650_zap.mbn" -t "$subpkgdir/usr/lib/firmware/qcom/sm8250/OnePlus/instantnoodlep"
+ }
+ 
++hexagonfs() {
++	pkgdesc="OnePlus 8 Pro files for hexagonrpcd (sensor DSP)"
++	depends="hexagonrpcd"
++
++	# dsp/sdsp from the dsp partition, sensor configuration from vendor and
++	# socinfo for the sensor DSP. sensors/persist is the initial registry,
++	# generated with sscregistrygen from the vendor configuration and the
++	# OnePlus configuration from odm on top of it.
++	local dir="$subpkgdir/usr/share/qcom/sm8250/OnePlus/instantnoodlep"
++	mkdir -p "$dir"
++	cp -r "$srcdir"/hexagonfs/. "$dir"
++	find "$dir" -type d -exec chmod 0755 {} \;
++	find "$dir" -type f -exec chmod 0644 {} \;
++}
++
+ ipa() {
+ 	pil-squasher "$builddir/ipa/ipa_fws.mbn" "$builddir/ipa/ipa_fws.mdt"
+ 	install -Dm644 "$builddir/ipa/ipa_fws.mbn" -t $subpkgdir/usr/lib/firmware/postmarketos
+@@ -90,4 +108,5 @@ venus() {
+ 
+ sha512sums="
+ c2855805e6327977fbd119ed89e76010586273008260c4df827622266f42dc318abf7f61f78408596377338cf36c03dd10b7279b6e6f7986569c970fffae72da  oneplus-instantnoodlep-firmware-2dce2681689fcf615198c663555c5a7c7b3650ba.tar.gz
++878e496bc79899264a93548a00d802ba1ea1e46d4243874803a87b0423d3bb48df0cb8f14a106d3d07e22eda51a6ae1988ae781b6337f842a6a239d044e54490  oneplus-instantnoodlep-hexagonfs-1.tar.gz
+ "
+-- 
+2.43.0
+

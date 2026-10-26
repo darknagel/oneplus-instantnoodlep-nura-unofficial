@@ -1,0 +1,985 @@
+From 3ecd8091f0ca8961b3c4b468fcfdc452866b6d5f Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 18:07:54 +0100
+Subject: [PATCH] oneplus-instantnoodlep: enable display, GPU and kernel
+ flashing on update
+
+- linux-postmarketos-qcom-sm8250: add Samsung AMS678UW01 panel driver,
+  enable display and GPU on the OnePlus 8 Pro
+- firmware-oneplus-instantnoodlep: install the squashed zap shader to
+  qcom/sm8250/OnePlus/instantnoodlep/a650_zap.mbn, use sqe/gmu firmware
+  from linux-firmware
+- device-oneplus-instantnoodlep: depend on the GPU firmware, set
+  deviceinfo_drm and deviceinfo_flash_kernel_on_update
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../device-oneplus-instantnoodlep/APKBUILD    |   5 +-
+ .../device-oneplus-instantnoodlep/deviceinfo  |   2 +
+ .../firmware-oneplus-instantnoodlep/APKBUILD  |   7 +-
+ ...display-panel-Add-Samsung-AMS678UW01.patch |  93 +++
+ ...-Add-Samsung-AMS678UW01-panel-driver.patch | 533 ++++++++++++++++++
+ ...m8250-oneplus-instantnoodlep-Enable-.patch | 148 +++++
+ ...m8250-oneplus-instantnoodlep-Enable-.patch |  36 ++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  12 +-
+ .../config-postmarketos-qcom-sm8250.aarch64   |   1 +
+ 9 files changed, 829 insertions(+), 8 deletions(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+
+diff --git a/device/testing/device-oneplus-instantnoodlep/APKBUILD b/device/testing/device-oneplus-instantnoodlep/APKBUILD
+index b1d4ca8217..39646f614a 100644
+--- a/device/testing/device-oneplus-instantnoodlep/APKBUILD
++++ b/device/testing/device-oneplus-instantnoodlep/APKBUILD
+@@ -3,13 +3,14 @@ maintainer="kouling <k0ul1ng@proton.me>"
+ pkgname=device-oneplus-instantnoodlep
+ pkgdesc="OnePlus 8 Pro"
+ pkgver=7
+-pkgrel=0
++pkgrel=1
+ url="https://postmarketos.org"
+ license="MIT"
+ arch="aarch64"
+ options="!check !archcheck"
+ depends="
+ 	firmware-oneplus-instantnoodlep
++	firmware-oneplus-instantnoodlep-gpu
+ 	linux-postmarketos-qcom-sm8250
+ 	mkbootimg
+ 	postmarketos-base
+@@ -37,7 +38,7 @@ package() {
+ }
+ 
+ sha512sums="
+-a70fa2b360f8e719a28f80eed31a1d2a440e0779a7a11da527b872c12535c14ed015fb8b1a56274b873f4d9c7916a872cf3845bb0eb59efcf05557ec183c83ac  deviceinfo
++cdf5ea60993c40d7d8b4fd850c182b55df62d94c0f83268820216d5a9921b3fe11c74d831fe64d424fc597a5f3943edd1ee184f0686701a38e131fdb6af52ce4  deviceinfo
+ 04cc87ed6b0041ede7edb2693ee4dd58d6ac8f1b036a0b37e1a86cce57b66e35d9f400a3ea75d75278b028132535033915f3a2fff919866e85336c5f92a68ffe  kernel-cmdline.conf
+ 06269dcbd405a18576a476bb976d39bcf91e8c7885a87716f510d66abc2ffe3bfabe56c286ad6fc88878de07427e58965ac833ac0e8cfa7ad393c2fa3b535c88  sm8250-oneplus-instantnoodlep-empty.dts
+ "
+diff --git a/device/testing/device-oneplus-instantnoodlep/deviceinfo b/device/testing/device-oneplus-instantnoodlep/deviceinfo
+index c4fc2c2f7d..875c4f15a7 100644
+--- a/device/testing/device-oneplus-instantnoodlep/deviceinfo
++++ b/device/testing/device-oneplus-instantnoodlep/deviceinfo
+@@ -13,9 +13,11 @@ deviceinfo_arch="aarch64"
+ deviceinfo_chassis="handset"
+ deviceinfo_screen_width="1440"
+ deviceinfo_screen_height="3168"
++deviceinfo_drm="true"
+ 
+ # Bootloader related
+ deviceinfo_flash_method="fastboot"
++deviceinfo_flash_kernel_on_update="true"
+ deviceinfo_generate_bootimg="true"
+ deviceinfo_flash_pagesize="4096"
+ deviceinfo_header_version="2"
+diff --git a/device/testing/firmware-oneplus-instantnoodlep/APKBUILD b/device/testing/firmware-oneplus-instantnoodlep/APKBUILD
+index d42e697401..06bdf96b52 100644
+--- a/device/testing/firmware-oneplus-instantnoodlep/APKBUILD
++++ b/device/testing/firmware-oneplus-instantnoodlep/APKBUILD
+@@ -1,7 +1,7 @@
+ maintainer="kouling <k0ul1ng@proton.me>"
+ pkgname=firmware-oneplus-instantnoodlep
+ pkgver=3
+-pkgrel=0
++pkgrel=1
+ pkgdesc="Firmware for OnePlus 8 Pro (instantnoodlep)"
+ url="https://github.com/pangwalla/oneplus-instantnoodlep-firmware"
+ arch="aarch64"
+@@ -52,9 +52,8 @@ cdsp() {
+ }
+ 
+ gpu() {
+-	for file in $builddir/gpu/*; do
+-		install -Dm644 $file -t "$subpkgdir/usr/lib/firmware/qcom/"
+-	done
++	pil-squasher "$builddir/gpu/a650_zap.mbn" "$builddir/gpu/a650_zap.mdt"
++	install -Dm644 "$builddir/gpu/a650_zap.mbn" -t "$subpkgdir/usr/lib/firmware/qcom/sm8250/OnePlus/instantnoodlep"
+ }
+ 
+ ipa() {
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch b/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+new file mode 100644
+index 0000000000..0863209c5d
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+@@ -0,0 +1,93 @@
++From 655a4b8b2894b8f945e3ad5e3ef839cf738cfda2 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 25 Oct 2026 17:43:49 +0100
++Subject: [PATCH 1/5] dt-bindings: display: panel: Add Samsung AMS678UW01
++
++Add bindings for the Samsung AMS678UW01 6.78" 1440x3168 DSC command
++mode AMOLED panel found in the OnePlus 8 Pro.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ .../display/panel/samsung,ams678uw01.yaml     | 70 +++++++++++++++++++
++ 1 file changed, 70 insertions(+)
++ create mode 100644 Documentation/devicetree/bindings/display/panel/samsung,ams678uw01.yaml
++
++diff --git a/Documentation/devicetree/bindings/display/panel/samsung,ams678uw01.yaml b/Documentation/devicetree/bindings/display/panel/samsung,ams678uw01.yaml
++new file mode 100644
++index 000000000..231cbe87e
++--- /dev/null
+++++ b/Documentation/devicetree/bindings/display/panel/samsung,ams678uw01.yaml
++@@ -0,0 +1,70 @@
+++# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+++%YAML 1.2
+++---
+++$id: http://devicetree.org/schemas/display/panel/samsung,ams678uw01.yaml#
+++$schema: http://devicetree.org/meta-schemas/core.yaml#
+++
+++title: Samsung AMS678UW01 6.78" 1440x3168 MIPI-DSI Panel
+++
+++maintainers:
+++  - Timo <1788603+darknagel@users.noreply.github.com>
+++
+++description:
+++  The Samsung AMS678UW01 is a 6.78 inch 1440x3168 MIPI-DSI CMD mode AMOLED
+++  panel with Display Stream Compression, found in the OnePlus 8 Pro.
+++
+++allOf:
+++  - $ref: panel-common.yaml#
+++
+++properties:
+++  compatible:
+++    const: samsung,ams678uw01
+++
+++  reg:
+++    maxItems: 1
+++
+++  vdd-supply:
+++    description: Panel power supply
+++
+++  vddio-supply:
+++    description: I/O source voltage rail
+++
+++  reset-gpios: true
+++  port: true
+++
+++required:
+++  - compatible
+++  - reg
+++  - vdd-supply
+++  - vddio-supply
+++  - reset-gpios
+++  - port
+++
+++unevaluatedProperties: false
+++
+++examples:
+++  - |
+++    #include <dt-bindings/gpio/gpio.h>
+++
+++    dsi {
+++        #address-cells = <1>;
+++        #size-cells = <0>;
+++
+++        panel@0 {
+++            compatible = "samsung,ams678uw01";
+++            reg = <0>;
+++
+++            vdd-supply = <&vreg_l11c_3p3>;
+++            vddio-supply = <&vreg_l14a_1p8>;
+++
+++            reset-gpios = <&tlmm 75 GPIO_ACTIVE_LOW>;
+++
+++            port {
+++                panel_in: endpoint {
+++                    remote-endpoint = <&mdss_dsi0_out>;
+++                };
+++            };
+++        };
+++    };
+++
+++...
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch b/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+new file mode 100644
+index 0000000000..9cae9633bd
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+@@ -0,0 +1,533 @@
++From 1975afee4af99085932dbb5c75ee6c798d8218e9 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 25 Oct 2026 17:43:49 +0100
++Subject: [PATCH 2/5] drm/panel: Add Samsung AMS678UW01 panel driver
++
++Add a driver for the Samsung AMS678UW01 DSC command mode panel used in
++the OnePlus 8 Pro (instantnoodlep). It was generated with
++linux-mdss-dsi-panel-driver-generator from the vendor device tree.
++
++The panel supports four vendor timings: 1080x2376 and 1440x3168 (panel
++internal scaling), each at 60 and 120 Hz. As the DSC configuration
++differs between them, the mode is selected at probe time with the
++"mode" module parameter (default: 1440x3168@120).
++
++Tested modes: 1080x2376@60, 1080x2376@120 and 1440x3168@120
++(kmscube: ~119.4 fps).
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ drivers/gpu/drm/panel/Kconfig                 |  12 +
++ drivers/gpu/drm/panel/Makefile                |   1 +
++ .../gpu/drm/panel/panel-samsung-ams678uw01.c  | 464 ++++++++++++++++++
++ 3 files changed, 477 insertions(+)
++ create mode 100644 drivers/gpu/drm/panel/panel-samsung-ams678uw01.c
++
++diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
++index bb1d5f64a..908d69d7f 100644
++--- a/drivers/gpu/drm/panel/Kconfig
+++++ b/drivers/gpu/drm/panel/Kconfig
++@@ -831,6 +831,18 @@ config DRM_PANEL_RONBO_RB070D30
++ 	  Say Y here if you want to enable support for Ronbo Electronics
++ 	  RB070D30 1024x600 DSI panel.
++ 
+++config DRM_PANEL_SAMSUNG_AMS678UW01
+++	tristate "Samsung AMS678UW01 DSI cmd mode panel (OnePlus 8 Pro)"
+++	depends on OF
+++	depends on DRM_MIPI_DSI
+++	depends on BACKLIGHT_CLASS_DEVICE
+++	select DRM_DISPLAY_DSC_HELPER
+++	select DRM_DISPLAY_HELPER
+++	help
+++	  Say Y here if you want to enable support for the Samsung AMS678UW01
+++	  6.78" 1440x3168 AMOLED DSC command mode panel found in the
+++	  OnePlus 8 Pro.
+++
++ config DRM_PANEL_SAMSUNG_AMB655X
++ 	tristate "Samsung AMB655X panel"
++ 	depends on OF
++diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
++index 79a83166a..18bec26af 100644
++--- a/drivers/gpu/drm/panel/Makefile
+++++ b/drivers/gpu/drm/panel/Makefile
++@@ -82,6 +82,7 @@ obj-$(CONFIG_DRM_PANEL_RENESAS_R61307) += panel-renesas-r61307.o
++ obj-$(CONFIG_DRM_PANEL_RENESAS_R69328) += panel-renesas-r69328.o
++ obj-$(CONFIG_DRM_PANEL_RONBO_RB070D30) += panel-ronbo-rb070d30.o
++ obj-$(CONFIG_DRM_PANEL_SAMSUNG_AMB655X) += panel-samsung-amb655x.o
+++obj-$(CONFIG_DRM_PANEL_SAMSUNG_AMS678UW01) += panel-samsung-ams678uw01.o
++ obj-$(CONFIG_DRM_PANEL_SAMSUNG_AMS581VF01) += panel-samsung-ams581vf01.o
++ obj-$(CONFIG_DRM_PANEL_SAMSUNG_AMS639RQ08) += panel-samsung-ams639rq08.o
++ obj-$(CONFIG_DRM_PANEL_SAMSUNG_AMSA26ZP01) += panel-samsung-amsa26zp01.o
++diff --git a/drivers/gpu/drm/panel/panel-samsung-ams678uw01.c b/drivers/gpu/drm/panel/panel-samsung-ams678uw01.c
++new file mode 100644
++index 000000000..6229e41a7
++--- /dev/null
+++++ b/drivers/gpu/drm/panel/panel-samsung-ams678uw01.c
++@@ -0,0 +1,464 @@
+++// SPDX-License-Identifier: GPL-2.0-only
+++/*
+++ * Samsung AMS678UW01 6.78" 1440x3168 AMOLED DSC command mode panel,
+++ * found in the OnePlus 8 Pro (instantnoodlep).
+++ *
+++ * Initial driver generated with linux-mdss-dsi-panel-driver-generator from the
+++ * vendor device tree (Copyright (c) 2013, The Linux Foundation; Oplus).
+++ *
+++ * The panel has four vendor timings: 1080x2376 and 1440x3168 (panel internal
+++ * scaling), each at 60 and 120 Hz. The DSC configuration differs between them,
+++ * so one mode is selected at probe time via the "mode" module parameter.
+++ */
+++
+++#include <linux/backlight.h>
+++#include <linux/delay.h>
+++#include <linux/device-id/of.h>
+++#include <linux/gpio/consumer.h>
+++#include <linux/module.h>
+++#include <linux/regulator/consumer.h>
+++
+++#include <video/mipi_display.h>
+++
+++#include <drm/display/drm_dsc.h>
+++#include <drm/display/drm_dsc_helper.h>
+++#include <drm/drm_mipi_dsi.h>
+++#include <drm/drm_modes.h>
+++#include <drm/drm_panel.h>
+++#include <drm/drm_probe_helper.h>
+++
+++static unsigned int mode = 3;
+++module_param(mode, uint, 0444);
+++MODULE_PARM_DESC(mode, "Panel mode: 0=1080x2376@60, 1=1080x2376@120, 2=1440x3168@60, 3=1440x3168@120 (default)");
+++
+++/* Samsung specific DSC PPS (register 0x9e), taken from the vendor device tree */
+++static const u8 ams678uw01_pps_fhd[] = {
+++	0x11, 0x00, 0x00, 0x89, 0x30, 0x80, 0x09, 0x48,
+++	0x04, 0x38, 0x00, 0x48, 0x02, 0x1c, 0x02, 0x1c,
+++	0x02, 0x00, 0x02, 0x52, 0x00, 0x20, 0x06, 0x3b,
+++	0x00, 0x07, 0x00, 0x0f, 0x01, 0xb1, 0x01, 0x6a,
+++	0x18, 0x00, 0x10, 0xf0, 0x03, 0x0c, 0x20, 0x00,
+++	0x06, 0x0b, 0x0b, 0x33, 0x0e, 0x1c, 0x2a, 0x38,
+++	0x46, 0x54, 0x62, 0x69, 0x70, 0x77, 0x79, 0x7b,
+++	0x7d, 0x7e, 0x01, 0x02, 0x01, 0x00, 0x09, 0x40,
+++	0x09, 0xbe, 0x19, 0xfc, 0x19, 0xfa, 0x19, 0xf8,
+++	0x1a, 0x38, 0x1a, 0x78, 0x1a, 0xb6, 0x2a, 0xb6,
+++	0x2a, 0xf4, 0x2a, 0xf4, 0x4b, 0x34, 0x63, 0x74,
+++};
+++
+++static const u8 ams678uw01_pps_qhd60[] = {
+++	0x11, 0x00, 0x00, 0xab, 0x30, 0xa0, 0x0c, 0x60,
+++	0x05, 0xa0, 0x00, 0x10, 0x02, 0xd0, 0x03, 0x84,
+++	0x01, 0x9a, 0x02, 0x68, 0x00, 0x19, 0x01, 0xd1,
+++	0x00, 0x0e, 0x00, 0x09, 0x04, 0xcd, 0x05, 0xd6,
+++	0x16, 0x00, 0x10, 0xec, 0x07, 0x10, 0x20, 0x00,
+++	0x06, 0x0f, 0x0f, 0x33, 0x0e, 0x1c, 0x2a, 0x38,
+++	0x46, 0x54, 0x62, 0x69, 0x70, 0x77, 0x79, 0x7b,
+++	0x7d, 0x7e, 0x02, 0x02, 0x22, 0x00, 0x2a, 0x40,
+++	0x32, 0xbe, 0x3a, 0xfc, 0x3a, 0xfa, 0x3a, 0xf8,
+++	0x3b, 0x38, 0x3b, 0x78, 0x3b, 0x76, 0x4b, 0xb6,
+++	0x4b, 0xb4, 0x4b, 0xf4, 0x5b, 0xf4, 0x7c, 0x34,
+++};
+++
+++static const u8 ams678uw01_pps_qhd120[] = {
+++	0x12, 0x00, 0x00, 0xab, 0x30, 0x80, 0x0c, 0x60,
+++	0x05, 0xa0, 0x00, 0x60, 0x02, 0xd0, 0x02, 0xd0,
+++	0x02, 0x00, 0x02, 0xc2, 0x00, 0x20, 0x09, 0x62,
+++	0x00, 0x0a, 0x00, 0x0f, 0x01, 0x44, 0x00, 0xcc,
+++	0x18, 0x00, 0x10, 0xf0, 0x07, 0x10, 0x20, 0x00,
+++	0x06, 0x0f, 0x0f, 0x33, 0x0e, 0x1c, 0x2a, 0x38,
+++	0x46, 0x54, 0x62, 0x69, 0x70, 0x77, 0x79, 0x7b,
+++	0x7d, 0x7e, 0x02, 0x02, 0x22, 0x00, 0x2a, 0x40,
+++	0x2a, 0xbe, 0x3a, 0xfc, 0x3a, 0xfa, 0x3a, 0xf8,
+++	0x3b, 0x38, 0x3b, 0x78, 0x3b, 0xb6, 0x4b, 0xb6,
+++	0x4b, 0xf4, 0x4b, 0xf4, 0x6c, 0x34, 0x84, 0x74,
+++};
+++
+++struct ams678uw01_desc {
+++	struct drm_display_mode mode;
+++	u16 slice_width;
+++	u16 slice_height;
+++	u8 bits_per_component;
+++	u8 bits_per_pixel;
+++	const u8 *pps;
+++	u8 scaler;	/* register 0xba: 0x02 = 1080x2376, 0x03 = 1440x3168 */
+++	u8 refresh;	/* register 0x60: 0x20 = 120 Hz, 0x02 = 1080x2376 scaling */
+++	bool fhd_120hz_te;
+++};
+++
+++#define AMS678UW01_MODE(hd, hfp, hpw, hbp, vd, vfp, vpw, vbp, hz)		\
+++	{									\
+++		.clock = ((hd) + (hfp) + (hpw) + (hbp)) *			\
+++			 ((vd) + (vfp) + (vpw) + (vbp)) * (hz) / 1000,		\
+++		.hdisplay = (hd),						\
+++		.hsync_start = (hd) + (hfp),					\
+++		.hsync_end = (hd) + (hfp) + (hpw),				\
+++		.htotal = (hd) + (hfp) + (hpw) + (hbp),				\
+++		.vdisplay = (vd),						\
+++		.vsync_start = (vd) + (vfp),					\
+++		.vsync_end = (vd) + (vfp) + (vpw),				\
+++		.vtotal = (vd) + (vfp) + (vpw) + (vbp),				\
+++		.width_mm = 71,							\
+++		.height_mm = 157,						\
+++		.type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,		\
+++	}
+++
+++static const struct ams678uw01_desc ams678uw01_descs[] = {
+++	{	/* 1080x2376 @ 60 Hz (vendor timing@0) */
+++		.mode = AMS678UW01_MODE(1080, 64, 8, 48, 2376, 1100, 188, 1100, 60),
+++		.slice_width = 540, .slice_height = 72,
+++		.bits_per_component = 8, .bits_per_pixel = 8,
+++		.pps = ams678uw01_pps_fhd, .scaler = 0x02, .refresh = 0x02,
+++	},
+++	{	/* 1080x2376 @ 120 Hz (vendor timing@1) */
+++		.mode = AMS678UW01_MODE(1080, 64, 8, 48, 2376, 2, 2, 8, 120),
+++		.slice_width = 540, .slice_height = 72,
+++		.bits_per_component = 8, .bits_per_pixel = 8,
+++		.pps = ams678uw01_pps_fhd, .scaler = 0x02, .refresh = 0x22,
+++		.fhd_120hz_te = true,
+++	},
+++	{	/* 1440x3168 @ 60 Hz (vendor timing@3) */
+++		.mode = AMS678UW01_MODE(1440, 80, 8, 80, 3168, 180, 12, 180, 60),
+++		.slice_width = 720, .slice_height = 16,
+++		.bits_per_component = 10, .bits_per_pixel = 10,
+++		.pps = ams678uw01_pps_qhd60, .scaler = 0x03, .refresh = 0x00,
+++	},
+++	{	/* 1440x3168 @ 120 Hz (vendor timing@2) */
+++		.mode = AMS678UW01_MODE(1440, 88, 8, 56, 3168, 8, 8, 8, 120),
+++		.slice_width = 720, .slice_height = 96,
+++		.bits_per_component = 10, .bits_per_pixel = 8,
+++		.pps = ams678uw01_pps_qhd120, .scaler = 0x03, .refresh = 0x20,
+++	},
+++};
+++
+++struct ams678uw01 {
+++	struct drm_panel panel;
+++	struct mipi_dsi_device *dsi;
+++	struct drm_dsc_config dsc;
+++	const struct ams678uw01_desc *desc;
+++	struct regulator_bulk_data *supplies;
+++	struct gpio_desc *reset_gpio;
+++};
+++
+++static const struct regulator_bulk_data ams678uw01_supplies[] = {
+++	{ .supply = "vdd" },
+++	{ .supply = "vddio" },
+++};
+++
+++static inline struct ams678uw01 *to_ams678uw01(struct drm_panel *panel)
+++{
+++	return container_of_const(panel, struct ams678uw01, panel);
+++}
+++
+++static void ams678uw01_reset(struct ams678uw01 *ctx)
+++{
+++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
+++	usleep_range(10000, 11000);
+++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+++	usleep_range(2000, 3000);
+++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
+++	usleep_range(10000, 11000);
+++}
+++
+++static void ams678uw01_write_pps(struct mipi_dsi_multi_context *dsi_ctx, const u8 *pps)
+++{
+++	u8 buf[89];
+++
+++	buf[0] = 0x9e;
+++	memcpy(&buf[1], pps, 88);
+++	mipi_dsi_dcs_write_buffer_multi(dsi_ctx, buf, sizeof(buf));
+++}
+++
+++static int ams678uw01_on(struct ams678uw01 *ctx)
+++{
+++	const struct ams678uw01_desc *desc = ctx->desc;
+++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+++
+++	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+++
+++	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
+++	mipi_dsi_usleep_range(&dsi_ctx, 11000, 12000);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x09);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb5, 0x08);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x22);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf5, 0x65);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x38);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf5, 0x0f);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x56);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf5, 0xc4);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x03);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xcb, 0xff, 0xff);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf7, 0x0f);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+++	mipi_dsi_usleep_range(&dsi_ctx, 11000, 12000);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+++	mipi_dsi_compression_mode_multi(&dsi_ctx, true);
+++	mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0xba, desc->scaler);
+++	ams678uw01_write_pps(&dsi_ctx, desc->pps);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf7, 0x0f);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+++	mipi_dsi_dcs_set_tear_on_multi(&dsi_ctx, MIPI_DSI_DCS_TEAR_MODE_VBLANK);
+++	mipi_dsi_dcs_set_column_address_multi(&dsi_ctx, 0x0000,
+++					      desc->mode.hdisplay - 1);
+++	mipi_dsi_dcs_set_page_address_multi(&dsi_ctx, 0x0000,
+++					    desc->mode.vdisplay - 1);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x05);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb9, 0x07, 0x02, 0x40, 0x23);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x0a);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xfb, 0x00);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x54);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb5, 0x48);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x99, 0x40);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x5c);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb1, 0x03);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+++	mipi_dsi_msleep(&dsi_ctx, 111);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x0b);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb1, 0x01);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x02);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb5, 0x13);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_WRITE_CONTROL_DISPLAY,
+++				     0x28);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+++	mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0x60, desc->refresh);
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf7, 0x0f);
+++	if (desc->fhd_120hz_te) {
+++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb9, 0x01);
+++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x01);
+++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb9, 0x0c, 0x54, 0x00, 0x0b);
+++	}
+++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+++	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
+++
+++	return dsi_ctx.accum_err;
+++}
+++
+++static int ams678uw01_off(struct ams678uw01 *ctx)
+++{
+++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+++
+++	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+++
+++	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
+++	mipi_dsi_usleep_range(&dsi_ctx, 10000, 11000);
+++	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
+++	mipi_dsi_msleep(&dsi_ctx, 120);
+++
+++	return dsi_ctx.accum_err;
+++}
+++
+++static int ams678uw01_prepare(struct drm_panel *panel)
+++{
+++	struct ams678uw01 *ctx = to_ams678uw01(panel);
+++	struct device *dev = &ctx->dsi->dev;
+++	struct drm_dsc_picture_parameter_set pps;
+++	int ret;
+++
+++	ret = regulator_bulk_enable(ARRAY_SIZE(ams678uw01_supplies), ctx->supplies);
+++	if (ret < 0) {
+++		dev_err(dev, "Failed to enable regulators: %d\n", ret);
+++		return ret;
+++	}
+++
+++	ams678uw01_reset(ctx);
+++
+++	ret = ams678uw01_on(ctx);
+++	if (ret < 0) {
+++		dev_err(dev, "Failed to initialize panel: %d\n", ret);
+++		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+++		regulator_bulk_disable(ARRAY_SIZE(ams678uw01_supplies), ctx->supplies);
+++		return ret;
+++	}
+++
+++	drm_dsc_pps_payload_pack(&pps, &ctx->dsc);
+++
+++	ret = mipi_dsi_picture_parameter_set(ctx->dsi, &pps);
+++	if (ret < 0) {
+++		dev_err(panel->dev, "failed to transmit PPS: %d\n", ret);
+++		return ret;
+++	}
+++
+++	return 0;
+++}
+++
+++static int ams678uw01_unprepare(struct drm_panel *panel)
+++{
+++	struct ams678uw01 *ctx = to_ams678uw01(panel);
+++	struct device *dev = &ctx->dsi->dev;
+++	int ret;
+++
+++	ret = ams678uw01_off(ctx);
+++	if (ret < 0)
+++		dev_err(dev, "Failed to un-initialize panel: %d\n", ret);
+++
+++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+++	regulator_bulk_disable(ARRAY_SIZE(ams678uw01_supplies), ctx->supplies);
+++
+++	return 0;
+++}
+++
+++static int ams678uw01_get_modes(struct drm_panel *panel,
+++				struct drm_connector *connector)
+++{
+++	struct ams678uw01 *ctx = to_ams678uw01(panel);
+++
+++	return drm_connector_helper_get_modes_fixed(connector, &ctx->desc->mode);
+++}
+++
+++static const struct drm_panel_funcs ams678uw01_panel_funcs = {
+++	.prepare = ams678uw01_prepare,
+++	.unprepare = ams678uw01_unprepare,
+++	.get_modes = ams678uw01_get_modes,
+++};
+++
+++static int ams678uw01_bl_update_status(struct backlight_device *bl)
+++{
+++	struct mipi_dsi_device *dsi = bl_get_data(bl);
+++	u16 brightness = backlight_get_brightness(bl);
+++	int ret;
+++
+++	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+++
+++	ret = mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
+++	if (ret < 0)
+++		return ret;
+++
+++	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+++
+++	return 0;
+++}
+++
+++static int ams678uw01_bl_get_brightness(struct backlight_device *bl)
+++{
+++	struct mipi_dsi_device *dsi = bl_get_data(bl);
+++	u16 brightness;
+++	int ret;
+++
+++	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+++
+++	ret = mipi_dsi_dcs_get_display_brightness_large(dsi, &brightness);
+++	if (ret < 0)
+++		return ret;
+++
+++	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+++
+++	return brightness;
+++}
+++
+++static const struct backlight_ops ams678uw01_bl_ops = {
+++	.update_status = ams678uw01_bl_update_status,
+++	.get_brightness = ams678uw01_bl_get_brightness,
+++};
+++
+++static struct backlight_device *
+++ams678uw01_create_backlight(struct mipi_dsi_device *dsi)
+++{
+++	struct device *dev = &dsi->dev;
+++	const struct backlight_properties props = {
+++		.type = BACKLIGHT_RAW,
+++		.brightness = 2047,
+++		.max_brightness = 2047,
+++	};
+++
+++	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
+++					      &ams678uw01_bl_ops, &props);
+++}
+++
+++static int ams678uw01_probe(struct mipi_dsi_device *dsi)
+++{
+++	struct device *dev = &dsi->dev;
+++	struct ams678uw01 *ctx;
+++	int ret;
+++
+++	ctx = devm_drm_panel_alloc(dev, struct ams678uw01, panel,
+++				   &ams678uw01_panel_funcs,
+++				   DRM_MODE_CONNECTOR_DSI);
+++	if (IS_ERR(ctx))
+++		return PTR_ERR(ctx);
+++
+++	ret = devm_regulator_bulk_get_const(dev, ARRAY_SIZE(ams678uw01_supplies),
+++					    ams678uw01_supplies, &ctx->supplies);
+++	if (ret < 0)
+++		return dev_err_probe(dev, ret, "Failed to get regulators\n");
+++
+++	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
+++	if (IS_ERR(ctx->reset_gpio))
+++		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
+++				     "Failed to get reset-gpios\n");
+++
+++	if (mode >= ARRAY_SIZE(ams678uw01_descs))
+++		return dev_err_probe(dev, -EINVAL, "invalid mode %u\n", mode);
+++	ctx->desc = &ams678uw01_descs[mode];
+++	dev_info(dev, "using mode %ux%u@%d\n", ctx->desc->mode.hdisplay,
+++		 ctx->desc->mode.vdisplay, drm_mode_vrefresh(&ctx->desc->mode));
+++
+++	ctx->dsi = dsi;
+++	mipi_dsi_set_drvdata(dsi, ctx);
+++
+++	dsi->lanes = 4;
+++	dsi->format = MIPI_DSI_FMT_RGB888;
+++	dsi->mode_flags = MIPI_DSI_MODE_VIDEO_BURST |
+++			  MIPI_DSI_MODE_NO_EOT_PACKET |
+++			  MIPI_DSI_CLOCK_NON_CONTINUOUS;
+++
+++	ctx->panel.prepare_prev_first = true;
+++
+++	ctx->panel.backlight = ams678uw01_create_backlight(dsi);
+++	if (IS_ERR(ctx->panel.backlight))
+++		return dev_err_probe(dev, PTR_ERR(ctx->panel.backlight),
+++				     "Failed to create backlight\n");
+++
+++	ret = devm_drm_panel_add(dev, &ctx->panel);
+++	if (ret)
+++		return ret;
+++
+++	/* This panel only supports DSC; unconditionally enable it */
+++	dsi->dsc = &ctx->dsc;
+++
+++	ctx->dsc.dsc_version_major = 1;
+++	ctx->dsc.dsc_version_minor = 1;
+++
+++	ctx->dsc.slice_height = ctx->desc->slice_height;
+++	ctx->dsc.slice_width = ctx->desc->slice_width;
+++	ctx->dsc.slice_count = ctx->desc->mode.hdisplay / ctx->dsc.slice_width;
+++	ctx->dsc.bits_per_component = ctx->desc->bits_per_component;
+++	ctx->dsc.bits_per_pixel = ctx->desc->bits_per_pixel << 4; /* 4 fractional bits */
+++	ctx->dsc.block_pred_enable = true;
+++
+++	return devm_mipi_dsi_attach(dev, dsi);
+++}
+++
+++static const struct of_device_id ams678uw01_of_match[] = {
+++	{ .compatible = "samsung,ams678uw01" },
+++	{ /* sentinel */ }
+++};
+++MODULE_DEVICE_TABLE(of, ams678uw01_of_match);
+++
+++static struct mipi_dsi_driver ams678uw01_driver = {
+++	.probe = ams678uw01_probe,
+++	.driver = {
+++		.name = "panel-samsung-ams678uw01",
+++		.of_match_table = ams678uw01_of_match,
+++	},
+++};
+++module_mipi_dsi_driver(ams678uw01_driver);
+++
+++MODULE_AUTHOR("Timo");
+++MODULE_DESCRIPTION("DRM driver for Samsung AMS678UW01 DSC cmd mode panel (OnePlus 8 Pro)");
+++MODULE_LICENSE("GPL");
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+new file mode 100644
+index 0000000000..9ca5e15676
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+@@ -0,0 +1,148 @@
++From a75d6049c023358e26d071313726a7b239bdacbf Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 25 Oct 2026 17:43:50 +0100
++Subject: [PATCH 3/5] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
++ display
++
++Enable the display clock controller, DSI0 and its PHY, and describe the
++Samsung AMS678UW01 panel.
++
++The simple-framebuffer now references the display clocks and the MDSS
++GDSC, like sm8250-oneplus-common.dtsi does. Without this, the bootloader
++framebuffer loses its clocks as soon as dispcc probes and the display
++freezes before msm takes over.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 87 ++++++++++++++++++-
++ 1 file changed, 86 insertions(+), 1 deletion(-)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 7f294fef7..ed9550880 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -5,6 +5,8 @@
++ #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
++ #include <dt-bindings/phy/phy.h>
++ #include <dt-bindings/usb/pd.h>
+++#include <dt-bindings/clock/qcom,dispcc-sm8250.h>
+++#include <dt-bindings/clock/qcom,gcc-sm8250.h>
++ #include "sm8250.dtsi"
++ #include "pm8150.dtsi"
++ #include "pm8150b.dtsi"
++@@ -55,6 +57,16 @@ framebuffer0: framebuffer@9c000000 {
++ 			height = <2376>;
++ 			stride = <(1080 * 4)>;
++ 			format = "a8r8g8b8";
+++			clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
+++				 <&gcc GCC_DISP_HF_AXI_CLK>,
+++				 <&gcc GCC_DISP_SF_AXI_CLK>,
+++				 <&dispcc DISP_CC_MDSS_VSYNC_CLK>,
+++				 <&dispcc DISP_CC_MDSS_MDP_CLK>,
+++				 <&dispcc DISP_CC_MDSS_BYTE0_CLK>,
+++				 <&dispcc DISP_CC_MDSS_BYTE0_INTF_CLK>,
+++				 <&dispcc DISP_CC_MDSS_PCLK0_CLK>,
+++				 <&dispcc DISP_CC_MDSS_ESC0_CLK>;
+++			power-domains = <&dispcc MDSS_GDSC>;
++ 		};
++ 	};
++ 
++@@ -585,7 +597,7 @@ &cdsp {
++ };
++ 
++ &dispcc {
++-       status = "disabled";
+++	status = "okay";
++ };
++ 
++ &gmu {
++@@ -672,6 +684,42 @@ &mdss {
++ 	status = "okay";
++ };
++ 
+++&mdss_dsi0 {
+++	vdda-supply = <&vreg_l9a_1p2>;
+++
+++	status = "okay";
+++
+++	display_panel: panel@0 {
+++		compatible = "samsung,ams678uw01";
+++		reg = <0>;
+++
+++		reset-gpios = <&tlmm 75 GPIO_ACTIVE_LOW>;
+++		vddio-supply = <&vreg_l14a_1p8>;
+++		vdd-supply = <&vreg_l11c_3p3>;
+++
+++		pinctrl-0 = <&panel_reset_default &panel_vout_default &panel_vsync>;
+++		pinctrl-1 = <&panel_reset_suspend &panel_vout_suspend &panel_vsync>;
+++		pinctrl-names = "default", "sleep";
+++
+++		port {
+++			panel_in: endpoint {
+++				remote-endpoint = <&mdss_dsi0_out>;
+++			};
+++		};
+++	};
+++};
+++
+++&mdss_dsi0_out {
+++	data-lanes = <0 1 2 3>;
+++	remote-endpoint = <&panel_in>;
+++};
+++
+++&mdss_dsi0_phy {
+++	vdds-supply = <&vreg_l5a_0p88>;
+++
+++	status = "okay";
+++};
+++
++ &slpi {
++ 	firmware-name = "postmarketos/slpi.mbn";
++ 	status = "okay";
++@@ -879,6 +927,43 @@ ts_rst_suspend: ts-rst-suspend {
++ 		drive-strength = <0x02>;
++ 		bias-pull-down;
++ 	};
+++
+++	panel_reset_default: panel-reset-default-state {
+++		pins = "gpio75";
+++		function = "gpio";
+++		drive-strength = <8>;
+++		bias-disable;
+++	};
+++
+++	panel_reset_suspend: panel-reset-suspend-state {
+++		pins = "gpio75";
+++		function = "gpio";
+++		drive-strength = <2>;
+++		bias-pull-down;
+++	};
+++
+++	panel_vout_default: panel-vout-default-state {
+++		pins = "gpio8";
+++		function = "gpio";
+++		drive-strength = <8>;
+++		bias-disable;
+++		output-high;
+++	};
+++
+++	panel_vout_suspend: panel-vout-suspend-state {
+++		pins = "gpio8";
+++		function = "gpio";
+++		drive-strength = <2>;
+++		bias-pull-down;
+++		output-low;
+++	};
+++
+++	panel_vsync: panel-vsync-state {
+++		pins = "gpio66";
+++		function = "mdp_vsync";
+++		drive-strength = <2>;
+++		bias-pull-down;
+++	};
++ };
++ 
++ &ufs_mem_hc {
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+new file mode 100644
+index 0000000000..5fbf6e4618
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+@@ -0,0 +1,36 @@
++From 9ed2046be20039597997e415b597a4d8959c4f35 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 25 Oct 2026 17:43:50 +0100
++Subject: [PATCH 4/5] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
++ GPU
++
++Enable the Adreno 650 GPU and point the zap shader to the OnePlus
++signed firmware.
++
++Tested with Mesa freedreno: OpenGL ES 3.2, kmscube at 120 Hz.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 6 +++++-
++ 1 file changed, 5 insertions(+), 1 deletion(-)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index ed9550880..0b599fbea 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -617,7 +617,11 @@ &gpi_dma2 {
++ };
++ 
++ &gpu {
++-	status = "disabled";
+++	status = "okay";
+++};
+++
+++&gpu_zap_shader {
+++	firmware-name = "qcom/sm8250/OnePlus/instantnoodlep/a650_zap.mbn";
++ };
++ 
++ &i2c1 {
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 5a63929d26..738fa21bf2 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=0
++pkgrel=1
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -40,6 +40,10 @@ _config="config-$_flavor.$arch"
+ source="
+ 	$pkgname-$_tag.tar.gz::https://gitlab.postmarketos.org/soc/qualcomm-sm8250/linux/-/archive/$_tag/linux-$_tag.tar.gz
+ 	$_config
++	0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
++	0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
++	0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++	0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -86,5 +90,9 @@ package() {
+ 
+ sha512sums="
+ 05df1589411d2817fecc403402f1dea2c405c5de102bf92e23089e430fc2c623702bd778fbea5b87f70ea02e9eff7f02a7de292f895d47ff40ae88dafdfbab58  linux-postmarketos-qcom-sm8250-sm8250-7.2.0_git20261010.tar.gz
+-9d5edf4691c27791bfb5a632c8ebbaa10727f8adb22a89147b28b3e213f6ffb8ff1d4f0f1e5987b340a5097324c9d8d7f3c20a1e944238adfac83c8cf8b709de  config-postmarketos-qcom-sm8250.aarch64
++0648368da35867dbd691b31a77a55f2d42b7bb40342c4f96b34ea186224eb616f69f0ca67ecb75bbd41376b92d04d636bd47977d7adee7b72957340f015f0d30  config-postmarketos-qcom-sm8250.aarch64
++5e537d2bb93ddf60885d6becfe45236471283635625ec91dc1e08d850b379ab76864feeba82cafe76c91dce8b38745c03a7db6d8c7ada189de6fb0088b03c978  0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
++ae35a05a2f8ffa27034aa93de1f290515a37707aca6ec2d62f97f999959dad81dedf2698641a0b0d40618eb3a7ba6892cb06d0c42713db12df978e511a283479  0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
++98cd21aec44485188a558d4d778b7ae11774b7afdc01d0a67ab3eebefa1a9601f490361c03b31d051c5b6303384bef5f3f9a6bd78552ebadacc52ed6273fa81d  0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++8ff2a91cb703ce90acf389ae138b66685814309acc9689b3104fd556f8032778a94abcc392813a5985ce795a870fe2a2496605e9a42876d153114bec5df69bf3  0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+ "
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64 b/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
+index 0939233228..02f88d8e88 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
++++ b/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
+@@ -4916,6 +4916,7 @@ CONFIG_DRM_PANEL_NOVATEK_NT36532=m
+ # CONFIG_DRM_PANEL_RONBO_RB070D30 is not set
+ CONFIG_DRM_PANEL_SAMSUNG_AMB655X=m
+ # CONFIG_DRM_PANEL_SAMSUNG_AMS581VF01 is not set
++CONFIG_DRM_PANEL_SAMSUNG_AMS678UW01=m
+ # CONFIG_DRM_PANEL_SAMSUNG_AMS639RQ08 is not set
+ # CONFIG_DRM_PANEL_SAMSUNG_S6E88A0_AMS427AP24 is not set
+ # CONFIG_DRM_PANEL_SAMSUNG_S6E88A0_AMS452EF01 is not set
+-- 
+2.43.0
+

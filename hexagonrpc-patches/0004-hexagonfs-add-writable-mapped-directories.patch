@@ -1,0 +1,529 @@
+From 67bacc4840b76c74f0244712f417c7d1488c15c2 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 23:02:57 +0100
+Subject: [PATCH 4/5] hexagonfs: add writable mapped directories
+
+Add operations to create, write, truncate, sync, rename and remove files
+and a mapped directory type that implements them for all files below
+it. Read-only directories return -EROFS for these operations.
+
+The sensor registry on the sensor DSP needs this to save its state.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ hexagonrpcd/hexagonfs.c        | 203 ++++++++++++++++++++++++++++++++-
+ hexagonrpcd/hexagonfs.h        |  22 ++++
+ hexagonrpcd/hexagonfs_mapped.c | 160 ++++++++++++++++++++++++--
+ 3 files changed, 371 insertions(+), 14 deletions(-)
+
+diff --git a/hexagonrpcd/hexagonfs.c b/hexagonrpcd/hexagonfs.c
+index bd9f353..4b84b7e 100644
+--- a/hexagonrpcd/hexagonfs.c
++++ b/hexagonrpcd/hexagonfs.c
+@@ -20,6 +20,7 @@
+  */
+ 
+ #include <errno.h>
++#include <fcntl.h>
+ #include <stdbool.h>
+ #include <stddef.h>
+ #include <stdio.h>
+@@ -139,7 +140,8 @@ err:
+ 	return ret;
+ }
+ 
+-int hexagonfs_openat(struct hexagonfs_fd **fds, int rootfd, int dirfd, const char *name)
++static int walk_path(struct hexagonfs_fd **fds, int rootfd, int dirfd,
++		     const char *name, struct hexagonfs_fd **out)
+ {
+ 	struct hexagonfs_fd *fd;
+ 	const char *curr = name;
+@@ -179,14 +181,155 @@ int hexagonfs_openat(struct hexagonfs_fd **fds, int rootfd, int dirfd, const cha
+ 	if (ret)
+ 		goto err;
+ 
++	*out = fd;
++
++	return 0;
++
++err:
++	destroy_file_descriptor(fd);
++
++	return ret;
++}
++
++/*
++ * Walk to the directory that contains the last segment of the path. The
++ * directory and the last segment are returned, the caller must destroy the
++ * directory when done.
++ */
++static int walk_to_parent(struct hexagonfs_fd **fds, int rootfd, int dirfd,
++			  const char *name, struct hexagonfs_fd **dir,
++			  const char **last)
++{
++	const char *slash;
++	char *parent;
++	size_t len;
++	int ret;
++
++	slash = strrchr(name, '/');
++	if (slash == NULL) {
++		*last = name;
++		len = 0;
++	} else {
++		*last = slash + 1;
++		len = slash - name + 1;
++	}
++
++	if (**last == '\0' || !strcmp(*last, ".") || !strcmp(*last, ".."))
++		return -EINVAL;
++
++	parent = malloc(len + 1);
++	if (parent == NULL)
++		return -ENOMEM;
++
++	memcpy(parent, name, len);
++	parent[len] = '\0';
++
++	ret = walk_path(fds, rootfd, dirfd, parent, dir);
++
++	free(parent);
++
++	return ret;
++}
++
++int hexagonfs_openat(struct hexagonfs_fd **fds, int rootfd, int dirfd, const char *name)
++{
++	struct hexagonfs_fd *fd;
++	int ret;
++
++	ret = walk_path(fds, rootfd, dirfd, name, &fd);
++	if (ret)
++		return ret;
++
+ 	ret = allocate_file_number(fds, fd);
++	if (ret < 0)
++		destroy_file_descriptor(fd);
++
++	return ret;
++}
++
++/*
++ * Open a file with open(2) flags. Read-only files are opened like with
++ * hexagonfs_openat(), other files are opened through the create operation of
++ * the parent directory, which is only implemented by writable directories.
++ */
++int hexagonfs_openat_flags(struct hexagonfs_fd **fds, int rootfd, int dirfd,
++			   const char *name, int flags)
++{
++	struct hexagonfs_fd *dir, *fd;
++	const char *last;
++	int ret;
++
++	if ((flags & O_ACCMODE) == O_RDONLY && !(flags & O_CREAT))
++		return hexagonfs_openat(fds, rootfd, dirfd, name);
++
++	ret = walk_to_parent(fds, rootfd, dirfd, name, &dir, &last);
+ 	if (ret)
+-		goto err;
++		return ret;
++
++	if (dir->ops->create == NULL) {
++		destroy_file_descriptor(dir);
++		return -EROFS;
++	}
++
++	ret = dir->ops->create(dir, last, flags, &fd);
++	if (ret) {
++		destroy_file_descriptor(dir);
++		return ret;
++	}
++
++	ret = allocate_file_number(fds, fd);
++	if (ret < 0)
++		destroy_file_descriptor(fd);
+ 
+ 	return ret;
++}
+ 
+-err:
+-	destroy_file_descriptor(fd);
++int hexagonfs_rename(struct hexagonfs_fd **fds, int rootfd, int dirfd,
++		     const char *old_name, const char *new_name)
++{
++	struct hexagonfs_fd *old_dir, *new_dir;
++	const char *old_last, *new_last;
++	int ret;
++
++	ret = walk_to_parent(fds, rootfd, dirfd, old_name, &old_dir, &old_last);
++	if (ret)
++		return ret;
++
++	ret = walk_to_parent(fds, rootfd, dirfd, new_name, &new_dir, &new_last);
++	if (ret)
++		goto out_destroy_old;
++
++	if (old_dir->ops->rename == NULL)
++		ret = -EROFS;
++	else if (old_dir->ops != new_dir->ops)
++		ret = -EXDEV;
++	else
++		ret = old_dir->ops->rename(old_dir, old_last, new_dir, new_last);
++
++	destroy_file_descriptor(new_dir);
++out_destroy_old:
++	destroy_file_descriptor(old_dir);
++
++	return ret;
++}
++
++int hexagonfs_unlink(struct hexagonfs_fd **fds, int rootfd, int dirfd,
++		     const char *name)
++{
++	struct hexagonfs_fd *dir;
++	const char *last;
++	int ret;
++
++	ret = walk_to_parent(fds, rootfd, dirfd, name, &dir, &last);
++	if (ret)
++		return ret;
++
++	if (dir->ops->unlink == NULL)
++		ret = -EROFS;
++	else
++		ret = dir->ops->unlink(dir, last);
++
++	destroy_file_descriptor(dir);
+ 
+ 	return ret;
+ }
+@@ -244,6 +387,58 @@ ssize_t hexagonfs_read(struct hexagonfs_fd **fds, int fileno, size_t size, void
+ 	return fd->ops->read(fd, size, ptr);
+ }
+ 
++ssize_t hexagonfs_write(struct hexagonfs_fd **fds, int fileno, size_t size, const void *ptr)
++{
++	struct hexagonfs_fd *fd;
++
++	if (fileno < 0 || fileno >= HEXAGONFS_MAX_FD)
++		return -EBADF;
++
++	fd = fds[fileno];
++	if (fd == NULL)
++		return -EBADF;
++
++	if (fd->ops->write == NULL)
++		return -EBADF;
++
++	return fd->ops->write(fd, size, ptr);
++}
++
++int hexagonfs_ftruncate(struct hexagonfs_fd **fds, int fileno, off_t len)
++{
++	struct hexagonfs_fd *fd;
++
++	if (fileno < 0 || fileno >= HEXAGONFS_MAX_FD)
++		return -EBADF;
++
++	fd = fds[fileno];
++	if (fd == NULL)
++		return -EBADF;
++
++	if (fd->ops->truncate == NULL)
++		return -EBADF;
++
++	return fd->ops->truncate(fd, len);
++}
++
++int hexagonfs_fsync(struct hexagonfs_fd **fds, int fileno)
++{
++	struct hexagonfs_fd *fd;
++
++	if (fileno < 0 || fileno >= HEXAGONFS_MAX_FD)
++		return -EBADF;
++
++	fd = fds[fileno];
++	if (fd == NULL)
++		return -EBADF;
++
++	// Nothing to synchronize for read-only files
++	if (fd->ops->sync == NULL)
++		return 0;
++
++	return fd->ops->sync(fd);
++}
++
+ int hexagonfs_readdir(struct hexagonfs_fd **fds, int fileno, size_t ent_size, char *ent)
+ {
+ 	struct hexagonfs_fd *fd;
+diff --git a/hexagonrpcd/hexagonfs.h b/hexagonrpcd/hexagonfs.h
+index 7682604..9e59129 100644
+--- a/hexagonrpcd/hexagonfs.h
++++ b/hexagonrpcd/hexagonfs.h
+@@ -42,6 +42,18 @@ struct hexagonfs_file_ops {
+ 	ssize_t (*read)(struct hexagonfs_fd *fd, size_t size, void *ptr);
+ 	int (*stat)(struct hexagonfs_fd *fd, struct stat *stats);
+ 	int (*seek)(struct hexagonfs_fd *fd, off_t off, int whence);
++
++	// Only implemented by writable directories and their files
++	int (*create)(struct hexagonfs_fd *dir,
++		      const char *segment,
++		      int flags,
++		      struct hexagonfs_fd **out);
++	int (*rename)(struct hexagonfs_fd *old_dir, const char *old_segment,
++		      struct hexagonfs_fd *new_dir, const char *new_segment);
++	int (*unlink)(struct hexagonfs_fd *dir, const char *segment);
++	ssize_t (*write)(struct hexagonfs_fd *fd, size_t size, const void *ptr);
++	int (*truncate)(struct hexagonfs_fd *fd, off_t len);
++	int (*sync)(struct hexagonfs_fd *fd);
+ };
+ 
+ struct hexagonfs_dirent {
+@@ -65,17 +77,27 @@ struct hexagonfs_fd {
+ 
+ extern struct hexagonfs_file_ops hexagonfs_mapped_ops;
+ extern struct hexagonfs_file_ops hexagonfs_mapped_or_empty_ops;
++extern struct hexagonfs_file_ops hexagonfs_mapped_rw_ops;
+ extern struct hexagonfs_file_ops hexagonfs_mapped_sysfs_ops;
+ extern struct hexagonfs_file_ops hexagonfs_plat_subtype_name_ops;
+ extern struct hexagonfs_file_ops hexagonfs_virt_dir_ops;
+ 
+ int hexagonfs_open_root(struct hexagonfs_fd **fds, struct hexagonfs_dirent *root);
+ int hexagonfs_openat(struct hexagonfs_fd **fds, int rootfd, int dirfd, const char *name);
++int hexagonfs_openat_flags(struct hexagonfs_fd **fds, int rootfd, int dirfd,
++			   const char *name, int flags);
+ int hexagonfs_close(struct hexagonfs_fd **fds, int fileno);
++int hexagonfs_rename(struct hexagonfs_fd **fds, int rootfd, int dirfd,
++		     const char *old_name, const char *new_name);
++int hexagonfs_unlink(struct hexagonfs_fd **fds, int rootfd, int dirfd,
++		     const char *name);
+ 
+ int hexagonfs_fstat(struct hexagonfs_fd **fds, int fileno, struct stat *stats);
+ int hexagonfs_lseek(struct hexagonfs_fd **fds, int fileno, off_t pos, int whence);
+ int hexagonfs_readdir(struct hexagonfs_fd **fds, int fileno, size_t size, char *name);
+ ssize_t hexagonfs_read(struct hexagonfs_fd **fds, int fileno, size_t size, void *ptr);
++ssize_t hexagonfs_write(struct hexagonfs_fd **fds, int fileno, size_t size, const void *ptr);
++int hexagonfs_ftruncate(struct hexagonfs_fd **fds, int fileno, off_t len);
++int hexagonfs_fsync(struct hexagonfs_fd **fds, int fileno);
+ 
+ #endif
+diff --git a/hexagonrpcd/hexagonfs_mapped.c b/hexagonrpcd/hexagonfs_mapped.c
+index fd28c8c..8f34e2b 100644
+--- a/hexagonrpcd/hexagonfs_mapped.c
++++ b/hexagonrpcd/hexagonfs_mapped.c
+@@ -22,6 +22,7 @@
+ #include <dirent.h>
+ #include <errno.h>
+ #include <fcntl.h>
++#include <stdio.h>
+ #include <unistd.h>
+ #include <stdbool.h>
+ #include <stdlib.h>
+@@ -78,15 +79,15 @@ err:
+ 	return ret;
+ }
+ 
+-static int mapped_openat(struct hexagonfs_fd *dir,
+-			 const char *segment,
+-			 bool expect_dir,
+-			 struct hexagonfs_fd **out)
++static int mapped_openat_with_ops(struct hexagonfs_fd *dir,
++				  const char *segment,
++				  int flags,
++				  struct hexagonfs_file_ops *ops,
++				  struct hexagonfs_fd **out)
+ {
+ 	struct mapped_ctx *dir_ctx = dir->data;
+ 	struct hexagonfs_fd *fd;
+ 	struct mapped_ctx *ctx;
+-	int flags = O_RDONLY;
+ 	int ret;
+ 
+ 	ctx = malloc(sizeof(struct mapped_ctx));
+@@ -99,10 +100,7 @@ static int mapped_openat(struct hexagonfs_fd *dir,
+ 		goto err;
+ 	}
+ 
+-	if (expect_dir)
+-		flags |= O_DIRECTORY;
+-
+-	ctx->fd = openat(dir_ctx->fd, segment, flags);
++	ctx->fd = openat(dir_ctx->fd, segment, flags, 0644);
+ 	if (ctx->fd == -1) {
+ 		ret = -errno;
+ 		goto err_free_fd;
+@@ -112,7 +110,7 @@ static int mapped_openat(struct hexagonfs_fd *dir,
+ 
+ 	fd->is_assigned = false;
+ 	fd->up = dir;
+-	fd->ops = &hexagonfs_mapped_ops;
++	fd->ops = ops;
+ 	fd->data = ctx;
+ 
+ 	*out = fd;
+@@ -126,6 +124,20 @@ err:
+ 	return ret;
+ }
+ 
++static int mapped_openat(struct hexagonfs_fd *dir,
++			 const char *segment,
++			 bool expect_dir,
++			 struct hexagonfs_fd **out)
++{
++	int flags = O_RDONLY;
++
++	if (expect_dir)
++		flags |= O_DIRECTORY;
++
++	return mapped_openat_with_ops(dir, segment, flags,
++				      &hexagonfs_mapped_ops, out);
++}
++
+ static ssize_t mapped_read(struct hexagonfs_fd *fd, size_t size, void *out)
+ {
+ 	struct mapped_ctx *ctx = fd->data;
+@@ -322,6 +334,118 @@ static int mapped_sysfs_stat(struct hexagonfs_fd *fd, struct stat *stats)
+ 	return 0;
+ }
+ 
++/*
++ * These are the operations of writable mapped directories. Files can be
++ * created, written, renamed and removed below them, which the sensor registry
++ * needs to save its state.
++ */
++static int mapped_rw_openat(struct hexagonfs_fd *dir,
++			    const char *segment,
++			    bool expect_dir,
++			    struct hexagonfs_fd **out)
++{
++	int flags = O_RDONLY;
++
++	if (expect_dir)
++		flags |= O_DIRECTORY;
++
++	return mapped_openat_with_ops(dir, segment, flags,
++				      &hexagonfs_mapped_rw_ops, out);
++}
++
++static int mapped_rw_create(struct hexagonfs_fd *dir,
++			    const char *segment,
++			    int flags,
++			    struct hexagonfs_fd **out)
++{
++	return mapped_openat_with_ops(dir, segment, flags | O_NOFOLLOW,
++				      &hexagonfs_mapped_rw_ops, out);
++}
++
++static int mapped_rw_rename(struct hexagonfs_fd *old_dir, const char *old_segment,
++			    struct hexagonfs_fd *new_dir, const char *new_segment)
++{
++	struct mapped_ctx *old_ctx = old_dir->data;
++	struct mapped_ctx *new_ctx = new_dir->data;
++	int ret;
++
++	ret = renameat(old_ctx->fd, old_segment, new_ctx->fd, new_segment);
++	if (ret == -1)
++		return -errno;
++
++	return 0;
++}
++
++static int mapped_rw_unlink(struct hexagonfs_fd *dir, const char *segment)
++{
++	struct mapped_ctx *ctx = dir->data;
++	int ret;
++
++	ret = unlinkat(ctx->fd, segment, 0);
++	if (ret == -1)
++		return -errno;
++
++	return 0;
++}
++
++static ssize_t mapped_rw_write(struct hexagonfs_fd *fd, size_t size, const void *ptr)
++{
++	struct mapped_ctx *ctx = fd->data;
++	size_t done = 0;
++	ssize_t ret;
++
++	while (done < size) {
++		ret = write(ctx->fd, (const char *) ptr + done, size - done);
++		if (ret < 0) {
++			if (errno == EINTR)
++				continue;
++
++			return -errno;
++		}
++
++		done += ret;
++	}
++
++	return done;
++}
++
++static int mapped_rw_truncate(struct hexagonfs_fd *fd, off_t len)
++{
++	struct mapped_ctx *ctx = fd->data;
++	int ret;
++
++	ret = ftruncate(ctx->fd, len);
++	if (ret == -1)
++		return -errno;
++
++	return 0;
++}
++
++static int mapped_rw_sync(struct hexagonfs_fd *fd)
++{
++	struct mapped_ctx *ctx = fd->data;
++	int ret;
++
++	ret = fsync(ctx->fd);
++	if (ret == -1)
++		return -errno;
++
++	return 0;
++}
++
++static int mapped_rw_stat(struct hexagonfs_fd *fd, struct stat *stats)
++{
++	int ret;
++
++	ret = mapped_stat(fd, stats);
++	if (ret)
++		return ret;
++
++	stats->st_mode |= S_IWUSR;
++
++	return 0;
++}
++
+ struct hexagonfs_file_ops hexagonfs_mapped_ops = {
+ 	.close = mapped_close,
+ 	.from_dirent = mapped_from_dirent,
+@@ -342,6 +466,22 @@ struct hexagonfs_file_ops hexagonfs_mapped_or_empty_ops = {
+ 	.stat = mapped_or_empty_stat,
+ };
+ 
++struct hexagonfs_file_ops hexagonfs_mapped_rw_ops = {
++	.close = mapped_close,
++	.from_dirent = mapped_from_dirent,
++	.openat = mapped_rw_openat,
++	.read = mapped_read,
++	.readdir = mapped_readdir,
++	.seek = mapped_seek,
++	.stat = mapped_rw_stat,
++	.create = mapped_rw_create,
++	.rename = mapped_rw_rename,
++	.unlink = mapped_rw_unlink,
++	.write = mapped_rw_write,
++	.truncate = mapped_rw_truncate,
++	.sync = mapped_rw_sync,
++};
++
+ struct hexagonfs_file_ops hexagonfs_mapped_sysfs_ops = {
+ 	.close = mapped_close,
+ 	.from_dirent = mapped_from_dirent,
+-- 
+2.43.0
+

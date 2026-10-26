@@ -1,0 +1,509 @@
+From 2768385e9c4a180c05a4f84c5f88adc1dca2fced Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 18:46:35 +0100
+Subject: [PATCH 05/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
+ audio
+
+The OnePlus 8 Pro uses the same audio hardware as the OnePlus 8T
+(sm8250-oneplus-common.dtsi): two NXP TFA9874 speaker amplifiers on
+i2c15 (0x34/0x35, reset GPIOs 91/99) on the tertiary MI2S interface,
+a WCD9385 codec on SoundWire and the LPASS RX/TX/VA macros.
+
+Add the sound card, the speaker amplifiers, the codec and the q6 DAIs,
+based on the 8T description. The DisplayPort audio link and the FSA4480
+are left out, as DisplayPort and the USB-C SBU routing are not described
+for this device yet.
+
+The three digital microphones (DMIC1, DMIC2 and DMIC3) are powered from
+other WCD9385 micbias outputs than on the 8T. Take the micbias routing
+from the vendor device tree: DMIC0/1 on MIC BIAS1, DMIC2 on MIC BIAS3
+and DMIC3 on MIC BIAS4.
+
+Tested: both speakers play audio, and all three microphones record
+through the VA macro with PulseAudio.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 448 ++++++++++++++++++
+ 1 file changed, 448 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 0b599fbea..a073f85b2 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -7,6 +7,8 @@
+ #include <dt-bindings/usb/pd.h>
+ #include <dt-bindings/clock/qcom,dispcc-sm8250.h>
+ #include <dt-bindings/clock/qcom,gcc-sm8250.h>
++#include <dt-bindings/sound/qcom,q6asm.h>
++#include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
+ #include "sm8250.dtsi"
+ #include "pm8150.dtsi"
+ #include "pm8150b.dtsi"
+@@ -290,6 +292,32 @@ battery: battery {
+ 		energy-full-design-microwatt-hours = <17060000>;
+ 		voltage-max-design-microvolt = <4350000>;
+ 	};
++
++	wcd938x: audio-codec {
++		compatible = "qcom,wcd9385-codec";
++
++		pinctrl-0 = <&wcd_default>;
++		pinctrl-names = "default";
++
++		qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000 500000 500000 500000 500000 500000>;
++		qcom,mbhc-headset-vthreshold-microvolt = <2600000>;
++		qcom,mbhc-headphone-vthreshold-microvolt = <75000>;
++		qcom,micbias1-microvolt = <1800000>;
++		qcom,micbias2-microvolt = <2700000>;
++		qcom,micbias3-microvolt = <1800000>;
++		qcom,micbias4-microvolt = <1800000>;
++		qcom,rx-device = <&wcd_rx>;
++		qcom,tx-device = <&wcd_tx>;
++
++		reset-gpios = <&tlmm 32 GPIO_ACTIVE_LOW>;
++
++		vdd-buck-supply = <&vreg_s4a_1p8>;
++		vdd-rxtx-supply = <&vreg_s4a_1p8>;
++		vdd-io-supply = <&vreg_s4a_1p8>;
++		vdd-mic-bias-supply = <&vreg_bob>;
++
++		#sound-dai-cells = <1>;
++	};
+ };
+ 
+ &apps_rsc {
+@@ -968,6 +996,47 @@ panel_vsync: panel-vsync-state {
+ 		drive-strength = <2>;
+ 		bias-pull-down;
+ 	};
++
++	tert_mi2s_suspend: tert-mi2s-suspend-state {
++		sck-pins {
++			pins = "gpio133";
++			function = "mi2s2_sck";
++			drive-strength = <2>;
++			bias-pull-down;
++			input-enable;
++		};
++
++		data0-pins {
++			pins = "gpio134";
++			function = "mi2s2_data0";
++			drive-strength = <2>;
++			bias-pull-down;
++			input-enable;
++		};
++
++		data1-pins {
++			pins = "gpio137";
++			function = "mi2s2_data1";
++			drive-strength = <2>;
++			bias-pull-down;
++			input-enable;
++		};
++
++		ws-pins {
++			pins = "gpio135";
++			function = "mi2s2_ws";
++			drive-strength = <2>;
++			bias-pull-down;
++			input-enable;
++		};
++	};
++
++	wcd_default: wcd-default-state {
++		pins = "gpio32";
++		function = "gpio";
++		drive-strength = <16>;
++		output-low;
++	};
+ };
+ 
+ &ufs_mem_hc {
+@@ -1063,3 +1132,382 @@ &qup_i2c7_default {
+ &qup_spi7_data_clk {
+ 	status = "disabled";
+ };
++
++&i2c15 {
++	status = "okay";
++
++	top_spkr: tfa9874@34 {
++		compatible = "nxp,tfa9874";
++		reg = <0x34>;
++		reset-gpios = <&tlmm 91 GPIO_ACTIVE_HIGH>;
++		vddd-supply = <&vreg_s4a_1p8>;
++		sound-channel = <0>;
++		sound-name-prefix = "Top Speaker";
++		#sound-dai-cells = <0>;
++	};
++
++	bottom_spkr: tfa9874@35 {
++		compatible = "nxp,tfa9874";
++		reg = <0x35>;
++		reset-gpios = <&tlmm 99 GPIO_ACTIVE_HIGH>;
++		vddd-supply = <&vreg_s4a_1p8>;
++		sound-channel = <1>;
++		sound-name-prefix = "Bottom Speaker";
++		#sound-dai-cells = <0>;
++	};
++};
++
++&lpass_tlmm {
++	dmic23_active: dmic23-active-state {
++		clk-pins {
++			pins = "gpio8";
++			function = "dmic2_clk";
++			drive-strength = <8>;
++			output-high;
++		};
++
++		data-pins {
++			pins = "gpio9";
++			function = "dmic2_data";
++			drive-strength = <8>;
++			input-enable;
++		};
++	};
++
++	dmic23_sleep: dmic23-sleep-state {
++		clk-pins {
++			pins = "gpio8";
++			function = "dmic2_clk";
++			drive-strength = <2>;
++			bias-disable;
++			output-low;
++		};
++
++		data-pins {
++			pins = "gpio9";
++			function = "dmic2_data";
++			drive-strength = <2>;
++			bias-pull-down;
++			input-enable;
++		};
++	};
++};
++
++&q6afedai {
++	dai@20 {
++		reg = <TERTIARY_MI2S_RX>;
++		qcom,sd-lines = <1>;
++	};
++
++	dai@21 {
++		reg = <TERTIARY_MI2S_TX>;
++		qcom,sd-lines = <0>;
++	};
++
++	dai@104 {
++		reg = <DISPLAY_PORT_RX>;
++	};
++
++	dai@110 {
++		reg = <VA_CODEC_DMA_TX_0>;
++	};
++
++	dai@113 {
++		reg = <RX_CODEC_DMA_RX_0>;
++	};
++
++	dai@120 {
++		reg = <TX_CODEC_DMA_TX_3>;
++	};
++
++	dai@122 {
++		reg = <TX_CODEC_DMA_TX_4>;
++	};
++
++	dai@136 {
++		reg = <USB_RX>;
++	};
++};
++
++&q6asmdai {
++	dai@0 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
++	};
++
++	dai@1 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA2>;
++	};
++
++	dai@2 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA3>;
++	};
++
++	dai@3 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA4>;
++	};
++
++	dai@4 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA5>;
++	};
++
++	dai@5 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA6>;
++	};
++
++	dai@6 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA7>;
++	};
++
++	dai@7 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA8>;
++	};
++};
++
++&rxmacro {
++	status = "okay";
++};
++
++&sound {
++	compatible = "qcom,sm8250-sndcard";
++	model = "OnePlus 8 Pro";
++	audio-routing =
++		"AMIC2", "MIC BIAS2",
++		"TX DMIC0", "MIC BIAS1",
++		"TX DMIC1", "MIC BIAS1",
++		"TX DMIC2", "MIC BIAS3",
++		"TX DMIC3", "MIC BIAS4",
++		"TX DMIC4", "MIC BIAS4",
++		"TX DMIC5", "MIC BIAS4",
++		"DMIC1", "MIC BIAS1",
++		"DMIC2", "MIC BIAS1",
++		"DMIC3", "MIC BIAS3",
++		"DMIC4", "MIC BIAS3",
++		"DMIC5", "MIC BIAS4",
++		"DMIC6", "MIC BIAS4",
++		"IN1_HPHL", "HPHL_OUT",
++		"IN2_HPHR", "HPHR_OUT",
++		"IN3_AUX", "AUX_OUT",
++		"TX SWR_ADC0", "ADC1_OUTPUT",
++		"TX SWR_ADC1", "ADC2_OUTPUT",
++		"TX SWR_ADC2", "ADC3_OUTPUT",
++		"TX SWR_ADC3", "ADC4_OUTPUT",
++		"TX SWR_DMIC0", "DMIC1_OUTPUT",
++		"TX SWR_DMIC1", "DMIC2_OUTPUT",
++		"TX SWR_DMIC2", "DMIC3_OUTPUT",
++		"TX SWR_DMIC3", "DMIC4_OUTPUT",
++		"TX SWR_DMIC4", "DMIC5_OUTPUT",
++		"TX SWR_DMIC5", "DMIC6_OUTPUT",
++		"TX SWR_DMIC6", "DMIC7_OUTPUT",
++		"TX SWR_DMIC7", "DMIC8_OUTPUT",
++		"RX_TX DEC0_INP", "TX DEC0 MUX",
++		"RX_TX DEC1_INP", "TX DEC1 MUX",
++		"RX_TX DEC2_INP", "TX DEC2 MUX",
++		"RX_TX DEC3_INP", "TX DEC3 MUX",
++		"VA DMIC0", "VA MIC BIAS1",
++		"VA DMIC1", "VA MIC BIAS1",
++		"VA DMIC2", "VA MIC BIAS3",
++		"VA DMIC3", "VA MIC BIAS4",
++		"VA DMIC4", "VA MIC BIAS4",
++		"VA DMIC5", "VA MIC BIAS4",
++		"VA SWR_ADC0", "ADC1_OUTPUT",
++		"VA SWR_ADC1", "ADC2_OUTPUT",
++		"VA SWR_ADC2", "ADC3_OUTPUT",
++		"VA SWR_ADC3", "ADC4_OUTPUT",
++		"VA SWR_MIC0", "DMIC1_OUTPUT",
++		"VA SWR_MIC1", "DMIC2_OUTPUT",
++		"VA SWR_MIC2", "DMIC3_OUTPUT",
++		"VA SWR_MIC3", "DMIC4_OUTPUT",
++		"VA SWR_MIC4", "DMIC5_OUTPUT",
++		"VA SWR_MIC5", "DMIC6_OUTPUT",
++		"VA SWR_MIC6", "DMIC7_OUTPUT",
++		"VA SWR_MIC7", "DMIC8_OUTPUT";
++	pinctrl-0 = <&tert_mi2s_active>;
++	pinctrl-1 = <&tert_mi2s_suspend>;
++	pinctrl-names = "default", "sleep";
++
++	mm1-dai-link {
++		link-name = "MultiMedia1";
++
++		cpu {
++			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
++		};
++	};
++
++	mm2-dai-link {
++		link-name = "MultiMedia2";
++
++		cpu {
++			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
++		};
++	};
++
++	mm3-dai-link {
++		link-name = "MultiMedia3";
++
++		cpu {
++			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA3>;
++		};
++	};
++
++	mm4-dai-link {
++		link-name = "MultiMedia4";
++
++		cpu {
++			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA4>;
++		};
++	};
++
++	mm5-dai-link {
++		link-name = "MultiMedia5";
++
++		cpu {
++			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA5>;
++		};
++	};
++
++	mm6-dai-link {
++		link-name = "MultiMedia6";
++
++		cpu {
++			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA6>;
++		};
++	};
++
++	mm7-dai-link {
++		link-name = "MultiMedia7";
++
++		cpu {
++			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA7>;
++		};
++	};
++
++	mm8-dai-link {
++		link-name = "MultiMedia8";
++
++		cpu {
++			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA8>;
++		};
++	};
++
++	speaker-dai-link {
++		link-name = "Speaker Playback";
++
++		codec {
++			sound-dai = <&top_spkr>, <&bottom_spkr>;
++		};
++
++		cpu {
++			sound-dai = <&q6afedai TERTIARY_MI2S_RX>;
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
++		};
++	};
++
++	usb-dai-link {
++		link-name = "USB Playback";
++
++		codec {
++			sound-dai = <&q6usbdai USB_RX>;
++		};
++
++		cpu {
++			sound-dai = <&q6afedai USB_RX>;
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
++		};
++	};
++
++	va-dai-link {
++		link-name = "VA Capture";
++
++		codec {
++			sound-dai = <&vamacro 0>;
++		};
++
++		cpu {
++			sound-dai = <&q6afedai VA_CODEC_DMA_TX_0>;
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
++		};
++	};
++
++	wcd-playback-dai-link {
++		link-name = "WCD Playback";
++
++		codec {
++			sound-dai = <&wcd938x 0>, <&swr1 0>, <&rxmacro 0>;
++		};
++
++		cpu {
++			sound-dai = <&q6afedai RX_CODEC_DMA_RX_0>;
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
++		};
++	};
++
++	wcd-capture-dai-link {
++		link-name = "WCD Capture";
++
++		codec {
++			sound-dai = <&wcd938x 1>, <&swr2 0>, <&txmacro 0>;
++		};
++
++		cpu {
++			sound-dai = <&q6afedai TX_CODEC_DMA_TX_3>;
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
++		};
++	};
++};
++
++&swr1 {
++	status = "okay";
++
++	wcd_rx: codec@0,4 {
++		compatible = "sdw20217010d00";
++		reg = <0 4>;
++		qcom,rx-port-mapping = <1 2 3 4 5>;
++	};
++};
++
++&swr2 {
++	status = "okay";
++
++	wcd_tx: codec@0,3 {
++		compatible = "sdw20217010d00";
++		reg = <0 3>;
++		qcom,tx-port-mapping = <2 2 3 4>;
++	};
++};
++
++&tert_mi2s_active {
++	data1-pins {
++		pins = "gpio137";
++		function = "mi2s2_data1";
++		drive-strength = <8>;
++		bias-disable;
++		output-high;
++	};
++};
++
++&txmacro {
++	status = "okay";
++};
++
++&vamacro {
++	pinctrl-0 = <&dmic01_active>, <&dmic23_active>;
++	pinctrl-1 = <&dmic01_sleep>, <&dmic23_sleep>;
++	pinctrl-names = "default", "sleep";
++	vdd-micb-supply = <&vreg_bob>;
++	qcom,dmic-sample-rate = <2400000>;
++};
+-- 
+2.43.0
+

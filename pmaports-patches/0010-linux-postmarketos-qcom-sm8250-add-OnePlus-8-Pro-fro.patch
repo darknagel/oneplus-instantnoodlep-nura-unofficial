@@ -1,0 +1,1550 @@
+From 67e2b03194ed9c980d1ff7cfb7edf4488bdff32f Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 22:43:33 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: add OnePlus 8 Pro front
+ camera
+
+Add the Sony IMX471 driver and the front camera node, with a longer
+power-up delay on the camera supplies so the sensor probes reliably.
+Enable CONFIG_VIDEO_IMX471.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ...display-panel-Add-Samsung-AMS678UW01.patch |    2 +-
+ ...-Add-Samsung-AMS678UW01-panel-driver.patch |    2 +-
+ ...m8250-oneplus-instantnoodlep-Enable-.patch |    2 +-
+ ...m8250-oneplus-instantnoodlep-Enable-.patch |    2 +-
+ ...m8250-oneplus-instantnoodlep-Enable-.patch |    2 +-
+ ...-qcom-Add-OnePlus-sensor-device-info.patch |    2 +-
+ ...dd-OnePlus-sensor-device-info-driver.patch |    2 +-
+ ...m8250-oneplus-instantnoodlep-Add-sen.patch |    2 +-
+ ...m8250-oneplus-instantnoodlep-Add-tel.patch |   17 +-
+ ...-Report-correct-selection-rectangles.patch |    2 +-
+ ...-Add-Sony-IMX471-image-sensor-driver.patch | 1116 +++++++++++++++++
+ ...m8250-oneplus-instantnoodlep-Add-fro.patch |  142 +++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |   28 +-
+ .../config-postmarketos-qcom-sm8250.aarch64   |    1 +
+ 14 files changed, 1293 insertions(+), 29 deletions(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0011-media-i2c-Add-Sony-IMX471-image-sensor-driver.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0012-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-fro.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch b/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+index cc1e45af66..e2bbde5100 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 17:43:49 +0100
+-Subject: [PATCH 01/10] dt-bindings: display: panel: Add Samsung AMS678UW01
++Subject: [PATCH 01/12] dt-bindings: display: panel: Add Samsung AMS678UW01
+ 
+ Add bindings for the Samsung AMS678UW01 6.78" 1440x3168 DSC command
+ mode AMOLED panel found in the OnePlus 8 Pro.
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch b/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+index 6fbb6347fd..5cbcdde8ea 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 17:43:49 +0100
+-Subject: [PATCH 02/10] drm/panel: Add Samsung AMS678UW01 panel driver
++Subject: [PATCH 02/12] drm/panel: Add Samsung AMS678UW01 panel driver
+ 
+ Add a driver for the Samsung AMS678UW01 DSC command mode panel used in
+ the OnePlus 8 Pro (instantnoodlep). It was generated with
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+index 733925b114..620baca2a5 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 17:43:50 +0100
+-Subject: [PATCH 03/10] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
++Subject: [PATCH 03/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
+  display
+ 
+ Enable the display clock controller, DSI0 and its PHY, and describe the
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+index 0fec96666b..9134653c03 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 17:43:50 +0100
+-Subject: [PATCH 04/10] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
++Subject: [PATCH 04/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
+  GPU
+ 
+ Enable the Adreno 650 GPU and point the zap shader to the OnePlus
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+index 91b5ece073..bd28b265fa 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 18:46:35 +0100
+-Subject: [PATCH 05/10] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
++Subject: [PATCH 05/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
+  audio
+ 
+ The OnePlus 8 Pro uses the same audio hardware as the OnePlus 8T
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch b/device/testing/linux-postmarketos-qcom-sm8250/0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
+index 8b67611137..e92d174693 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 23:40:26 +0100
+-Subject: [PATCH 06/10] dt-bindings: soc: qcom: Add OnePlus sensor device info
++Subject: [PATCH 06/12] dt-bindings: soc: qcom: Add OnePlus sensor device info
+ 
+ The sensor DSP firmware of OnePlus devices reads the fitted sensor chips,
+ their orientation and tuning parameters from SMEM item 130. Describe them
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch b/device/testing/linux-postmarketos-qcom-sm8250/0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
+index 3c5fe832c2..452b6208eb 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 23:40:26 +0100
+-Subject: [PATCH 07/10] soc: qcom: Add OnePlus sensor device info driver
++Subject: [PATCH 07/12] soc: qcom: Add OnePlus sensor device info driver
+ 
+ The sensor DSP (SLPI) firmware of OnePlus devices reads which sensor
+ chips are fitted, how they are oriented and some tuning parameters from
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch b/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
+index 0a6471575b..ede32057d1 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 23:40:27 +0100
+-Subject: [PATCH 08/10] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
++Subject: [PATCH 08/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
+  sensor device info
+ 
+ Describe the sensor chips for the sensor DSP with the values of the vendor
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0009-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch b/device/testing/linux-postmarketos-qcom-sm8250/0009-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
+index c74dc04740..045af7d8fb 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0009-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0009-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Mon, 26 Oct 2026 18:26:23 +0100
+-Subject: [PATCH 09/10] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
++Subject: [PATCH 09/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
+  telephoto camera
+ 
+ Enable CAMSS and CCI1 and add the Samsung S5K3M5 telephoto camera
+@@ -19,14 +19,14 @@ rotation property (checked with an arrow on the screen).
+ 
+ Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+ ---
+- .../qcom/sm8250-oneplus-instantnoodlep.dts    | 100 ++++++++++++++++++
+- 1 file changed, 100 insertions(+)
++ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 101 ++++++++++++++++++
++ 1 file changed, 101 insertions(+)
+ 
+ diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+-index 06a1155bb..8911098d9 100644
++index 06a1155bb..d41714d91 100644
+ --- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+ +++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+-@@ -242,6 +242,20 @@ ramoops@b0000000 {
++@@ -242,6 +242,21 @@ ramoops@b0000000 {
+  	};
+  
+  	/* Values from the vendor device tree overlay of project 19811 */
+@@ -35,6 +35,7 @@ index 06a1155bb..8911098d9 100644
+ +		regulator-name = "cam_tele_avdd";
+ +		regulator-min-microvolt = <2800000>;
+ +		regulator-max-microvolt = <2800000>;
+++		startup-delay-us = <2000>;
+ +
+ +		gpio = <&tlmm 139 GPIO_ACTIVE_HIGH>;
+ +		enable-active-high;
+@@ -47,7 +48,7 @@ index 06a1155bb..8911098d9 100644
+  	sensor-devinfo {
+  		compatible = "oneplus,sensor-devinfo";
+  
+-@@ -469,6 +483,13 @@ vreg_l2f_1p2: ldo2 {
++@@ -469,6 +484,13 @@ vreg_l2f_1p2: ldo2 {
+  			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+  		};
+  
+@@ -61,7 +62,7 @@ index 06a1155bb..8911098d9 100644
+  		vreg_l6f_2p8: ldo6 {
+  			regulator-name = "vreg_l6f_2p8";
+  			regulator-min-microvolt = <2800000>;
+-@@ -736,6 +757,62 @@ &adsp {
++@@ -736,6 +758,62 @@ &adsp {
+  	status = "okay";
+  };
+  
+@@ -124,7 +125,7 @@ index 06a1155bb..8911098d9 100644
+  &cdsp {
+  	firmware-name = "postmarketos/cdsp.mbn";
+  	status = "okay";
+-@@ -1154,6 +1231,29 @@ wcd_default: wcd-default-state {
++@@ -1154,6 +1232,29 @@ wcd_default: wcd-default-state {
+  		drive-strength = <16>;
+  		output-low;
+  	};
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch b/device/testing/linux-postmarketos-qcom-sm8250/0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch
+index 26e798590a..b885b342a4 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Mon, 26 Oct 2026 18:56:44 +0100
+-Subject: [PATCH 10/10] media: i2c: s5k3m5: Report correct selection rectangles
++Subject: [PATCH 10/12] media: i2c: s5k3m5: Report correct selection rectangles
+ 
+ The crop rectangle used the mode width as height, and the driver did not
+ implement V4L2_SEL_TGT_NATIVE_SIZE and V4L2_SEL_TGT_CROP_DEFAULT, which
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0011-media-i2c-Add-Sony-IMX471-image-sensor-driver.patch b/device/testing/linux-postmarketos-qcom-sm8250/0011-media-i2c-Add-Sony-IMX471-image-sensor-driver.patch
+new file mode 100644
+index 0000000000..29f2e8f6a1
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0011-media-i2c-Add-Sony-IMX471-image-sensor-driver.patch
+@@ -0,0 +1,1116 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 26 Oct 2026 19:21:55 +0100
++Subject: [PATCH 11/12] media: i2c: Add Sony IMX471 image sensor driver
++
++Add a driver for the Sony IMX471, a 16 MP sensor used as front camera
++in the OnePlus 8 Pro. It supports two RAW10 modes over four CSI-2 D-PHY
++lanes with a 19.2 MHz MCLK:
++
++  4656x3496 at 30 fps (link frequency 748.8 MHz)
++  2328x1748 at 60 fps, 2x2 binned (link frequency 400 MHz)
++
++The register settings come from the camera module data of the phone.
++Exposure, analogue gain (1024 / (1024 - code), up to 16x), vertical
++blanking and the test patterns are exposed as controls.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ drivers/media/i2c/Kconfig  |   10 +
++ drivers/media/i2c/Makefile |    1 +
++ drivers/media/i2c/imx471.c | 1050 ++++++++++++++++++++++++++++++++++++
++ 3 files changed, 1061 insertions(+)
++ create mode 100755 drivers/media/i2c/imx471.c
++
++diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
++index 5d173e0ec..b7199f9f5 100644
++--- a/drivers/media/i2c/Kconfig
+++++ b/drivers/media/i2c/Kconfig
++@@ -287,6 +287,16 @@ config VIDEO_IMX415
++ 	  To compile this driver as a module, choose M here: the
++ 	  module will be called imx415.
++ 
+++config VIDEO_IMX471
+++	tristate "Sony IMX471 sensor support"
+++	select V4L2_CCI_I2C
+++	help
+++	  This is a Video4Linux2 sensor driver for the Sony
+++	  IMX471 camera.
+++
+++	  To compile this driver as a module, choose M here: the
+++	  module will be called imx471.
+++
++ config VIDEO_MAX9271_LIB
++ 	tristate
++ 
++diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
++index e45359efe..acbd321fc 100644
++--- a/drivers/media/i2c/Makefile
+++++ b/drivers/media/i2c/Makefile
++@@ -61,6 +61,7 @@ obj-$(CONFIG_VIDEO_IMX335) += imx335.o
++ obj-$(CONFIG_VIDEO_IMX355) += imx355.o
++ obj-$(CONFIG_VIDEO_IMX412) += imx412.o
++ obj-$(CONFIG_VIDEO_IMX415) += imx415.o
+++obj-$(CONFIG_VIDEO_IMX471) += imx471.o
++ obj-$(CONFIG_VIDEO_IR_I2C) += ir-kbd-i2c.o
++ obj-$(CONFIG_VIDEO_ISL7998X) += isl7998x.o
++ obj-$(CONFIG_VIDEO_KS0127) += ks0127.o
++diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
++new file mode 100755
++index 000000000..f8eeb42d2
++--- /dev/null
+++++ b/drivers/media/i2c/imx471.c
++@@ -0,0 +1,1050 @@
+++// SPDX-License-Identifier: GPL-2.0
+++/*
+++ * Sony IMX471 image sensor driver
+++ *
+++ * The register settings are taken from the camera module data of the
+++ * OnePlus 8 Pro, which uses the IMX471 as front camera with a 19.2 MHz
+++ * MCLK and four CSI-2 D-PHY data lanes.
+++ */
+++
+++#include <linux/clk.h>
+++#include <linux/delay.h>
+++#include <linux/gpio/consumer.h>
+++#include <linux/i2c.h>
+++#include <linux/module.h>
+++#include <linux/pm_runtime.h>
+++#include <linux/regulator/consumer.h>
+++#include <linux/units.h>
+++#include <media/v4l2-cci.h>
+++#include <media/v4l2-ctrls.h>
+++#include <media/v4l2-device.h>
+++#include <media/v4l2-fwnode.h>
+++
+++#define IMX471_MCLK_FREQ		(19200 * HZ_PER_KHZ)
+++#define IMX471_DATA_LANES		4
+++
+++#define IMX471_REG_CHIP_ID		CCI_REG16(0x0016)
+++#define IMX471_CHIP_ID			0x0471
+++
+++#define IMX471_REG_MODE_SELECT		CCI_REG8(0x0100)
+++#define IMX471_MODE_STANDBY		0x00
+++#define IMX471_MODE_STREAMING		0x01
+++
+++#define IMX471_REG_EXPOSURE		CCI_REG16(0x0202)
+++#define IMX471_EXPOSURE_MIN		4
+++#define IMX471_EXPOSURE_STEP		1
+++#define IMX471_EXPOSURE_MARGIN		10
+++#define IMX471_EXPOSURE_DEFAULT		1000
+++
+++/* Analogue gain = 1024 / (1024 - code), up to 16x */
+++#define IMX471_REG_AGAIN		CCI_REG16(0x0204)
+++#define IMX471_AGAIN_MIN		0
+++#define IMX471_AGAIN_MAX		960
+++#define IMX471_AGAIN_STEP		1
+++#define IMX471_AGAIN_DEFAULT		0
+++
+++#define IMX471_REG_VTS			CCI_REG16(0x0340)
+++#define IMX471_VTS_MAX			0xffff
+++
+++#define IMX471_REG_TEST_PATTERN		CCI_REG16(0x0600)
+++
+++#define IMX471_NATIVE_WIDTH		4656
+++#define IMX471_NATIVE_HEIGHT		3496
+++
+++#define to_imx471(_sd)			container_of(_sd, struct imx471, sd)
+++
+++static const s64 imx471_link_freq_menu[] = {
+++	748800000,
+++	400000000,
+++};
+++
+++struct imx471_reg_list {
+++	const struct cci_reg_sequence *regs;
+++	unsigned int num_regs;
+++};
+++
+++struct imx471_mode {
+++	u32 width;			/* Frame width in pixels */
+++	u32 height;			/* Frame height in pixels */
+++	u32 hts;			/* Horizontal timing size */
+++	u32 vts;			/* Default vertical timing size */
+++	u32 link_freq_index;		/* Index into imx471_link_freq_menu */
+++	u64 pixel_rate;			/* Pixel rate matching hts and vts */
+++	struct v4l2_rect crop;		/* Analogue crop rectangle */
+++
+++	const struct imx471_reg_list reg_list;	/* Sensor register setting */
+++};
+++
+++static const char * const imx471_test_pattern_menu[] = {
+++	"Disabled",
+++	"Solid colour",
+++	"Colour bars",
+++	"Fade to grey colour bars",
+++	"PN9",
+++};
+++
+++static const char * const imx471_supply_names[] = {
+++	"avdd",		/* Analog power */
+++	"dvdd",		/* Digital core power */
+++	"dovdd",	/* Digital I/O power */
+++};
+++
+++#define IMX471_NUM_SUPPLIES	ARRAY_SIZE(imx471_supply_names)
+++
+++struct imx471 {
+++	struct device *dev;
+++	struct regmap *regmap;
+++	struct clk *mclk;
+++	struct gpio_desc *reset_gpio;
+++	struct regulator_bulk_data supplies[IMX471_NUM_SUPPLIES];
+++
+++	struct v4l2_subdev sd;
+++	struct media_pad pad;
+++
+++	struct v4l2_ctrl_handler ctrl_handler;
+++	struct v4l2_ctrl *link_freq;
+++	struct v4l2_ctrl *pixel_rate;
+++	struct v4l2_ctrl *hblank;
+++	struct v4l2_ctrl *vblank;
+++	struct v4l2_ctrl *exposure;
+++
+++	const struct imx471_mode *mode;
+++};
+++
+++static const struct cci_reg_sequence imx471_init_regs[] = {
+++	{ CCI_REG8(0x0136), 0x13 },
+++	{ CCI_REG8(0x0137), 0x33 },
+++	{ CCI_REG8(0x3c7e), 0x04 },
+++	{ CCI_REG8(0x3c7f), 0x04 },
+++	{ CCI_REG8(0x300a), 0x02 },
+++	{ CCI_REG8(0x3e35), 0x00 },
+++	{ CCI_REG8(0x3e36), 0x00 },
+++	{ CCI_REG8(0x3e37), 0x00 },
+++	{ CCI_REG8(0x3f7f), 0x01 },
+++	{ CCI_REG8(0x4431), 0x04 },
+++	{ CCI_REG8(0x531c), 0x01 },
+++	{ CCI_REG8(0x531d), 0x02 },
+++	{ CCI_REG8(0x531e), 0x04 },
+++	{ CCI_REG8(0x5928), 0x00 },
+++	{ CCI_REG8(0x5929), 0x2f },
+++	{ CCI_REG8(0x592a), 0x00 },
+++	{ CCI_REG8(0x592b), 0x85 },
+++	{ CCI_REG8(0x592c), 0x00 },
+++	{ CCI_REG8(0x592d), 0x32 },
+++	{ CCI_REG8(0x592e), 0x00 },
+++	{ CCI_REG8(0x592f), 0x88 },
+++	{ CCI_REG8(0x5930), 0x00 },
+++	{ CCI_REG8(0x5931), 0x3d },
+++	{ CCI_REG8(0x5932), 0x00 },
+++	{ CCI_REG8(0x5933), 0x93 },
+++	{ CCI_REG8(0x5938), 0x00 },
+++	{ CCI_REG8(0x5939), 0x24 },
+++	{ CCI_REG8(0x593a), 0x00 },
+++	{ CCI_REG8(0x593b), 0x7a },
+++	{ CCI_REG8(0x593c), 0x00 },
+++	{ CCI_REG8(0x593d), 0x24 },
+++	{ CCI_REG8(0x593e), 0x00 },
+++	{ CCI_REG8(0x593f), 0x7a },
+++	{ CCI_REG8(0x5940), 0x00 },
+++	{ CCI_REG8(0x5941), 0x2f },
+++	{ CCI_REG8(0x5942), 0x00 },
+++	{ CCI_REG8(0x5943), 0x85 },
+++	{ CCI_REG8(0x5e12), 0x00 },
+++	{ CCI_REG8(0x5e13), 0x23 },
+++	{ CCI_REG8(0x5f06), 0x08 },
+++	{ CCI_REG8(0x5f07), 0x81 },
+++	{ CCI_REG8(0x5f0b), 0xeb },
+++	{ CCI_REG8(0x5f0c), 0xae },
+++	{ CCI_REG8(0x5f0d), 0x15 },
+++	{ CCI_REG8(0x5f0e), 0x6e },
+++	{ CCI_REG8(0x5f0f), 0x03 },
+++	{ CCI_REG8(0x5f10), 0xa5 },
+++	{ CCI_REG8(0x5f11), 0xc6 },
+++	{ CCI_REG8(0x5f12), 0x92 },
+++	{ CCI_REG8(0x5f13), 0xb9 },
+++	{ CCI_REG8(0x5f14), 0x5e },
+++	{ CCI_REG8(0x5f17), 0x5e },
+++	{ CCI_REG8(0x5f18), 0xdc },
+++	{ CCI_REG8(0x5f19), 0x23 },
+++	{ CCI_REG8(0x5f1a), 0xdb },
+++	{ CCI_REG8(0x5f1b), 0xc7 },
+++	{ CCI_REG8(0x5f1c), 0x5b },
+++	{ CCI_REG8(0x5f1d), 0x7e },
+++	{ CCI_REG8(0x5f1e), 0x20 },
+++	{ CCI_REG8(0x5f1f), 0x51 },
+++	{ CCI_REG8(0x5f20), 0xa2 },
+++	{ CCI_REG8(0x5f21), 0x46 },
+++	{ CCI_REG8(0x5f22), 0x87 },
+++	{ CCI_REG8(0x5f23), 0x2c },
+++	{ CCI_REG8(0x5f24), 0x1d },
+++	{ CCI_REG8(0x5f25), 0x10 },
+++	{ CCI_REG8(0x5f26), 0x76 },
+++	{ CCI_REG8(0x5f27), 0xa1 },
+++	{ CCI_REG8(0x5f28), 0xc6 },
+++	{ CCI_REG8(0x5f29), 0x07 },
+++	{ CCI_REG8(0x5f2a), 0x1a },
+++	{ CCI_REG8(0x5f2b), 0x1c },
+++	{ CCI_REG8(0x5f2c), 0xa8 },
+++	{ CCI_REG8(0x5f2d), 0x76 },
+++	{ CCI_REG8(0x5f2e), 0x61 },
+++	{ CCI_REG8(0x5f2f), 0xc6 },
+++	{ CCI_REG8(0x5f30), 0x87 },
+++	{ CCI_REG8(0x5f31), 0x2c },
+++	{ CCI_REG8(0x5f32), 0x1d },
+++	{ CCI_REG8(0x5f33), 0x10 },
+++	{ CCI_REG8(0x5f34), 0x76 },
+++	{ CCI_REG8(0x5f35), 0xa1 },
+++	{ CCI_REG8(0x5f36), 0xc6 },
+++	{ CCI_REG8(0x5f37), 0x07 },
+++	{ CCI_REG8(0x5f38), 0x1a },
+++	{ CCI_REG8(0x5f39), 0x1c },
+++	{ CCI_REG8(0x5f3a), 0xa8 },
+++	{ CCI_REG8(0x5f3b), 0x76 },
+++	{ CCI_REG8(0x5f3c), 0xa1 },
+++	{ CCI_REG8(0x5f3d), 0xc6 },
+++	{ CCI_REG8(0x5f3e), 0x87 },
+++	{ CCI_REG8(0x5f3f), 0x2c },
+++	{ CCI_REG8(0x5f40), 0x1d },
+++	{ CCI_REG8(0x5f41), 0x10 },
+++	{ CCI_REG8(0x5f42), 0x76 },
+++	{ CCI_REG8(0x5f43), 0xa1 },
+++	{ CCI_REG8(0x5f44), 0xc6 },
+++	{ CCI_REG8(0x5f45), 0x07 },
+++	{ CCI_REG8(0x5f46), 0x2a },
+++	{ CCI_REG8(0x5f47), 0x1d },
+++	{ CCI_REG8(0x5f48), 0x08 },
+++	{ CCI_REG8(0x5f49), 0x76 },
+++	{ CCI_REG8(0x5f4a), 0x81 },
+++	{ CCI_REG8(0x5f4b), 0xc0 },
+++	{ CCI_REG8(0x5f75), 0x27 },
+++	{ CCI_REG8(0x5f76), 0xee },
+++	{ CCI_REG8(0x5f77), 0xee },
+++	{ CCI_REG8(0x5f78), 0xee },
+++	{ CCI_REG8(0x5f79), 0xe5 },
+++	{ CCI_REG8(0x7990), 0x01 },
+++	{ CCI_REG8(0x7993), 0x5d },
+++	{ CCI_REG8(0x7994), 0x5d },
+++	{ CCI_REG8(0x7995), 0xa1 },
+++	{ CCI_REG8(0x799a), 0x01 },
+++	{ CCI_REG8(0x799d), 0x00 },
+++	{ CCI_REG8(0x8169), 0x01 },
+++	{ CCI_REG8(0x8359), 0x01 },
+++	{ CCI_REG8(0x9300), 0x2a },
+++	{ CCI_REG8(0x9301), 0x24 },
+++	{ CCI_REG8(0x9302), 0x1e },
+++	{ CCI_REG8(0x9304), 0x2c },
+++	{ CCI_REG8(0x9305), 0x23 },
+++	{ CCI_REG8(0x9306), 0x1f },
+++	{ CCI_REG8(0x9308), 0x2d },
+++	{ CCI_REG8(0x9309), 0x28 },
+++	{ CCI_REG8(0x930a), 0x26 },
+++	{ CCI_REG8(0x930c), 0x2e },
+++	{ CCI_REG8(0x930d), 0x2c },
+++	{ CCI_REG8(0x930e), 0x23 },
+++	{ CCI_REG8(0x9310), 0x2e },
+++	{ CCI_REG8(0x9311), 0x28 },
+++	{ CCI_REG8(0x9312), 0x23 },
+++	{ CCI_REG8(0x9314), 0x31 },
+++	{ CCI_REG8(0x9315), 0x31 },
+++	{ CCI_REG8(0x9316), 0x2c },
+++	{ CCI_REG8(0x9317), 0x19 },
+++	{ CCI_REG8(0xb046), 0x01 },
+++	{ CCI_REG8(0xb048), 0x01 },
+++	{ CCI_REG8(0xaa06), 0x3f },
+++	{ CCI_REG8(0xaa07), 0x05 },
+++	{ CCI_REG8(0xaa08), 0x04 },
+++	{ CCI_REG8(0xaa12), 0x3f },
+++	{ CCI_REG8(0xaa13), 0x04 },
+++	{ CCI_REG8(0xaa14), 0x03 },
+++	{ CCI_REG8(0xab55), 0x02 },
+++	{ CCI_REG8(0xab57), 0x01 },
+++	{ CCI_REG8(0xab59), 0x01 },
+++	{ CCI_REG8(0xabb4), 0x00 },
+++	{ CCI_REG8(0xabb5), 0x01 },
+++	{ CCI_REG8(0xabb6), 0x00 },
+++	{ CCI_REG8(0xabb7), 0x01 },
+++	{ CCI_REG8(0xabb8), 0x00 },
+++	{ CCI_REG8(0xabb9), 0x01 },
+++	{ CCI_REG8(0x0101), 0x03 },
+++	{ CCI_REG8(0x0106), 0x01 },
+++};
+++
+++static const struct cci_reg_sequence imx471_4656x3496_regs[] = {
+++	{ CCI_REG8(0x0112), 0x0a },
+++	{ CCI_REG8(0x0113), 0x0a },
+++	{ CCI_REG8(0x0114), 0x03 },
+++	{ CCI_REG8(0x0342), 0x14 },
+++	{ CCI_REG8(0x0343), 0x00 },
+++	{ CCI_REG8(0x0340), 0x0e },
+++	{ CCI_REG8(0x0341), 0xb2 },
+++	{ CCI_REG8(0x0344), 0x00 },
+++	{ CCI_REG8(0x0345), 0x00 },
+++	{ CCI_REG8(0x0346), 0x00 },
+++	{ CCI_REG8(0x0347), 0x00 },
+++	{ CCI_REG8(0x0348), 0x12 },
+++	{ CCI_REG8(0x0349), 0x2f },
+++	{ CCI_REG8(0x034a), 0x0d },
+++	{ CCI_REG8(0x034b), 0xa7 },
+++	{ CCI_REG8(0x0381), 0x01 },
+++	{ CCI_REG8(0x0383), 0x01 },
+++	{ CCI_REG8(0x0385), 0x01 },
+++	{ CCI_REG8(0x0387), 0x01 },
+++	{ CCI_REG8(0x0900), 0x00 },
+++	{ CCI_REG8(0x0901), 0x11 },
+++	{ CCI_REG8(0x0902), 0x0a },
+++	{ CCI_REG8(0x3f4c), 0x01 },
+++	{ CCI_REG8(0x3f4d), 0x01 },
+++	{ CCI_REG8(0x0408), 0x00 },
+++	{ CCI_REG8(0x0409), 0x00 },
+++	{ CCI_REG8(0x040a), 0x00 },
+++	{ CCI_REG8(0x040b), 0x00 },
+++	{ CCI_REG8(0x040c), 0x12 },
+++	{ CCI_REG8(0x040d), 0x30 },
+++	{ CCI_REG8(0x040e), 0x0d },
+++	{ CCI_REG8(0x040f), 0xa8 },
+++	{ CCI_REG8(0x034c), 0x12 },
+++	{ CCI_REG8(0x034d), 0x30 },
+++	{ CCI_REG8(0x034e), 0x0d },
+++	{ CCI_REG8(0x034f), 0xa8 },
+++	{ CCI_REG8(0x0301), 0x06 },
+++	{ CCI_REG8(0x0303), 0x02 },
+++	{ CCI_REG8(0x0305), 0x03 },
+++	{ CCI_REG8(0x0306), 0x01 },
+++	{ CCI_REG8(0x0307), 0x0f },
+++	{ CCI_REG8(0x030b), 0x01 },
+++	{ CCI_REG8(0x030d), 0x06 },
+++	{ CCI_REG8(0x030e), 0x01 },
+++	{ CCI_REG8(0x030f), 0xd4 },
+++	{ CCI_REG8(0x0310), 0x01 },
+++	{ CCI_REG8(0x3f78), 0x02 },
+++	{ CCI_REG8(0x3f79), 0x0a },
+++	{ CCI_REG8(0x3ffe), 0x00 },
+++	{ CCI_REG8(0x3fff), 0x18 },
+++	{ CCI_REG8(0x5f0a), 0xb2 },
+++	{ CCI_REG8(0x0202), 0x0e },
+++	{ CCI_REG8(0x0203), 0xa0 },
+++	{ CCI_REG8(0x0204), 0x00 },
+++	{ CCI_REG8(0x0205), 0x00 },
+++	{ CCI_REG8(0x020e), 0x01 },
+++	{ CCI_REG8(0x020f), 0x00 },
+++};
+++
+++static const struct cci_reg_sequence imx471_2328x1748_regs[] = {
+++	{ CCI_REG8(0x0112), 0x0a },
+++	{ CCI_REG8(0x0113), 0x0a },
+++	{ CCI_REG8(0x0114), 0x03 },
+++	{ CCI_REG8(0x0342), 0x0a },
+++	{ CCI_REG8(0x0343), 0x00 },
+++	{ CCI_REG8(0x0340), 0x08 },
+++	{ CCI_REG8(0x0341), 0x4c },
+++	{ CCI_REG8(0x0344), 0x00 },
+++	{ CCI_REG8(0x0345), 0x00 },
+++	{ CCI_REG8(0x0346), 0x00 },
+++	{ CCI_REG8(0x0347), 0x00 },
+++	{ CCI_REG8(0x0348), 0x12 },
+++	{ CCI_REG8(0x0349), 0x2f },
+++	{ CCI_REG8(0x034a), 0x0d },
+++	{ CCI_REG8(0x034b), 0xa7 },
+++	{ CCI_REG8(0x0381), 0x01 },
+++	{ CCI_REG8(0x0383), 0x01 },
+++	{ CCI_REG8(0x0385), 0x01 },
+++	{ CCI_REG8(0x0387), 0x01 },
+++	{ CCI_REG8(0x0900), 0x01 },
+++	{ CCI_REG8(0x0901), 0x22 },
+++	{ CCI_REG8(0x0902), 0x08 },
+++	{ CCI_REG8(0x3f4c), 0x81 },
+++	{ CCI_REG8(0x3f4d), 0x81 },
+++	{ CCI_REG8(0x0408), 0x00 },
+++	{ CCI_REG8(0x0409), 0x00 },
+++	{ CCI_REG8(0x040a), 0x00 },
+++	{ CCI_REG8(0x040b), 0x00 },
+++	{ CCI_REG8(0x040c), 0x09 },
+++	{ CCI_REG8(0x040d), 0x18 },
+++	{ CCI_REG8(0x040e), 0x06 },
+++	{ CCI_REG8(0x040f), 0xd4 },
+++	{ CCI_REG8(0x034c), 0x09 },
+++	{ CCI_REG8(0x034d), 0x18 },
+++	{ CCI_REG8(0x034e), 0x06 },
+++	{ CCI_REG8(0x034f), 0xd4 },
+++	{ CCI_REG8(0x0301), 0x06 },
+++	{ CCI_REG8(0x0303), 0x02 },
+++	{ CCI_REG8(0x0305), 0x03 },
+++	{ CCI_REG8(0x0306), 0x00 },
+++	{ CCI_REG8(0x0307), 0x99 },
+++	{ CCI_REG8(0x030b), 0x01 },
+++	{ CCI_REG8(0x030d), 0x06 },
+++	{ CCI_REG8(0x030e), 0x00 },
+++	{ CCI_REG8(0x030f), 0xfa },
+++	{ CCI_REG8(0x0310), 0x01 },
+++	{ CCI_REG8(0x3f78), 0x01 },
+++	{ CCI_REG8(0x3f79), 0x31 },
+++	{ CCI_REG8(0x3ffe), 0x00 },
+++	{ CCI_REG8(0x3fff), 0x8a },
+++	{ CCI_REG8(0x5f0a), 0xb6 },
+++	{ CCI_REG8(0x0202), 0x08 },
+++	{ CCI_REG8(0x0203), 0x3a },
+++	{ CCI_REG8(0x0204), 0x00 },
+++	{ CCI_REG8(0x0205), 0x00 },
+++	{ CCI_REG8(0x020e), 0x01 },
+++	{ CCI_REG8(0x020f), 0x00 },
+++};
+++
+++static const struct imx471_mode imx471_supported_modes[] = {
+++	{
+++		/* 30 fps */
+++		.width = 4656,
+++		.height = 3496,
+++		.hts = 5120,
+++		.vts = 3762,
+++		.link_freq_index = 0,
+++		.pixel_rate = 578133333,
+++		.crop = {
+++			.left = 0,
+++			.top = 0,
+++			.width = 4656,
+++			.height = 3496,
+++		},
+++		.reg_list = {
+++			.regs = imx471_4656x3496_regs,
+++			.num_regs = ARRAY_SIZE(imx471_4656x3496_regs),
+++		},
+++	},
+++	{
+++		/* 2x2 binned, 60 fps */
+++		.width = 2328,
+++		.height = 1748,
+++		.hts = 2560,
+++		.vts = 2124,
+++		.link_freq_index = 1,
+++		.pixel_rate = 326400000,
+++		.crop = {
+++			.left = 0,
+++			.top = 0,
+++			.width = 4656,
+++			.height = 3496,
+++		},
+++		.reg_list = {
+++			.regs = imx471_2328x1748_regs,
+++			.num_regs = ARRAY_SIZE(imx471_2328x1748_regs),
+++		},
+++	},
+++};
+++
+++static int imx471_set_ctrl(struct v4l2_ctrl *ctrl)
+++{
+++	struct imx471 *imx471 = container_of(ctrl->handler, struct imx471,
+++					     ctrl_handler);
+++	const struct imx471_mode *mode = imx471->mode;
+++	s64 exposure_max;
+++	int ret;
+++
+++	if (ctrl->id == V4L2_CID_VBLANK) {
+++		/* Update max exposure while meeting expected vblanking */
+++		exposure_max = mode->height + ctrl->val - IMX471_EXPOSURE_MARGIN;
+++		__v4l2_ctrl_modify_range(imx471->exposure,
+++					 imx471->exposure->minimum,
+++					 exposure_max,
+++					 imx471->exposure->step,
+++					 imx471->exposure->default_value);
+++	}
+++
+++	/* V4L2 controls are applied, when sensor is powered up for streaming */
+++	if (!pm_runtime_get_if_active(imx471->dev))
+++		return 0;
+++
+++	switch (ctrl->id) {
+++	case V4L2_CID_ANALOGUE_GAIN:
+++		ret = cci_write(imx471->regmap, IMX471_REG_AGAIN,
+++				ctrl->val, NULL);
+++		break;
+++	case V4L2_CID_EXPOSURE:
+++		ret = cci_write(imx471->regmap, IMX471_REG_EXPOSURE,
+++				ctrl->val, NULL);
+++		break;
+++	case V4L2_CID_VBLANK:
+++		ret = cci_write(imx471->regmap, IMX471_REG_VTS,
+++				ctrl->val + mode->height, NULL);
+++		break;
+++	case V4L2_CID_TEST_PATTERN:
+++		ret = cci_write(imx471->regmap, IMX471_REG_TEST_PATTERN,
+++				ctrl->val, NULL);
+++		break;
+++	default:
+++		ret = -EINVAL;
+++		break;
+++	}
+++
+++	pm_runtime_put(imx471->dev);
+++
+++	return ret;
+++}
+++
+++static const struct v4l2_ctrl_ops imx471_ctrl_ops = {
+++	.s_ctrl = imx471_set_ctrl,
+++};
+++
+++static int imx471_init_controls(struct imx471 *imx471)
+++{
+++	struct v4l2_ctrl_handler *ctrl_hdlr = &imx471->ctrl_handler;
+++	const struct imx471_mode *mode = imx471->mode;
+++	s64 hblank, vblank, exposure_max;
+++	struct v4l2_fwnode_device_properties props;
+++	int ret;
+++
+++	v4l2_ctrl_handler_init(ctrl_hdlr, 9);
+++
+++	imx471->link_freq = v4l2_ctrl_new_int_menu(ctrl_hdlr, &imx471_ctrl_ops,
+++						   V4L2_CID_LINK_FREQ,
+++						   ARRAY_SIZE(imx471_link_freq_menu) - 1,
+++						   mode->link_freq_index,
+++						   imx471_link_freq_menu);
+++	if (imx471->link_freq)
+++		imx471->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+++
+++	imx471->pixel_rate = v4l2_ctrl_new_std(ctrl_hdlr, &imx471_ctrl_ops,
+++					       V4L2_CID_PIXEL_RATE,
+++					       imx471_supported_modes[1].pixel_rate,
+++					       imx471_supported_modes[0].pixel_rate,
+++					       1, mode->pixel_rate);
+++	if (imx471->pixel_rate)
+++		imx471->pixel_rate->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+++
+++	hblank = mode->hts - mode->width;
+++	imx471->hblank = v4l2_ctrl_new_std(ctrl_hdlr, &imx471_ctrl_ops,
+++					   V4L2_CID_HBLANK, hblank,
+++					   hblank, 1, hblank);
+++	if (imx471->hblank)
+++		imx471->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+++
+++	vblank = mode->vts - mode->height;
+++	imx471->vblank = v4l2_ctrl_new_std(ctrl_hdlr, &imx471_ctrl_ops,
+++					   V4L2_CID_VBLANK, vblank,
+++					   IMX471_VTS_MAX - mode->height, 1,
+++					   vblank);
+++
+++	v4l2_ctrl_new_std(ctrl_hdlr, &imx471_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
+++			  IMX471_AGAIN_MIN, IMX471_AGAIN_MAX,
+++			  IMX471_AGAIN_STEP, IMX471_AGAIN_DEFAULT);
+++
+++	exposure_max = mode->vts - IMX471_EXPOSURE_MARGIN;
+++	imx471->exposure = v4l2_ctrl_new_std(ctrl_hdlr, &imx471_ctrl_ops,
+++					     V4L2_CID_EXPOSURE,
+++					     IMX471_EXPOSURE_MIN,
+++					     exposure_max,
+++					     IMX471_EXPOSURE_STEP,
+++					     IMX471_EXPOSURE_DEFAULT);
+++
+++	v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &imx471_ctrl_ops,
+++				     V4L2_CID_TEST_PATTERN,
+++				     ARRAY_SIZE(imx471_test_pattern_menu) - 1,
+++				     0, 0, imx471_test_pattern_menu);
+++
+++	ret = v4l2_fwnode_device_parse(imx471->dev, &props);
+++	if (ret)
+++		goto error_free_hdlr;
+++
+++	ret = v4l2_ctrl_new_fwnode_properties(ctrl_hdlr, &imx471_ctrl_ops,
+++					      &props);
+++	if (ret)
+++		goto error_free_hdlr;
+++
+++	if (ctrl_hdlr->error) {
+++		ret = ctrl_hdlr->error;
+++		goto error_free_hdlr;
+++	}
+++
+++	imx471->sd.ctrl_handler = ctrl_hdlr;
+++
+++	return 0;
+++
+++error_free_hdlr:
+++	v4l2_ctrl_handler_free(ctrl_hdlr);
+++
+++	return ret;
+++}
+++
+++static int imx471_enable_streams(struct v4l2_subdev *sd,
+++				 struct v4l2_subdev_state *state, u32 pad,
+++				 u64 streams_mask)
+++{
+++	struct imx471 *imx471 = to_imx471(sd);
+++	const struct imx471_reg_list *reg_list = &imx471->mode->reg_list;
+++	int ret;
+++
+++	ret = pm_runtime_resume_and_get(imx471->dev);
+++	if (ret)
+++		return ret;
+++
+++	ret = cci_multi_reg_write(imx471->regmap, imx471_init_regs,
+++				  ARRAY_SIZE(imx471_init_regs), NULL);
+++	cci_multi_reg_write(imx471->regmap, reg_list->regs,
+++			    reg_list->num_regs, &ret);
+++	if (ret)
+++		goto error;
+++
+++	ret = __v4l2_ctrl_handler_setup(imx471->sd.ctrl_handler);
+++	if (ret)
+++		goto error;
+++
+++	ret = cci_write(imx471->regmap, IMX471_REG_MODE_SELECT,
+++			IMX471_MODE_STREAMING, NULL);
+++	if (ret)
+++		goto error;
+++
+++	return 0;
+++
+++error:
+++	dev_err(imx471->dev, "failed to start streaming: %d\n", ret);
+++	pm_runtime_put_autosuspend(imx471->dev);
+++
+++	return ret;
+++}
+++
+++static int imx471_disable_streams(struct v4l2_subdev *sd,
+++				  struct v4l2_subdev_state *state, u32 pad,
+++				  u64 streams_mask)
+++{
+++	struct imx471 *imx471 = to_imx471(sd);
+++	int ret;
+++
+++	ret = cci_write(imx471->regmap, IMX471_REG_MODE_SELECT,
+++			IMX471_MODE_STANDBY, NULL);
+++	if (ret)
+++		dev_err(imx471->dev, "failed to stop streaming: %d\n", ret);
+++
+++	pm_runtime_put_autosuspend(imx471->dev);
+++
+++	return ret;
+++}
+++
+++static void imx471_update_pad_format(const struct imx471_mode *mode,
+++				     struct v4l2_mbus_framefmt *fmt)
+++{
+++	fmt->code = MEDIA_BUS_FMT_SBGGR10_1X10;
+++	fmt->width = mode->width;
+++	fmt->height = mode->height;
+++	fmt->field = V4L2_FIELD_NONE;
+++	fmt->colorspace = V4L2_COLORSPACE_RAW;
+++	fmt->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
+++	fmt->quantization = V4L2_QUANTIZATION_FULL_RANGE;
+++	fmt->xfer_func = V4L2_XFER_FUNC_NONE;
+++}
+++
+++static int imx471_set_pad_format(struct v4l2_subdev *sd,
+++				 struct v4l2_subdev_state *state,
+++				 struct v4l2_subdev_format *fmt)
+++{
+++	struct imx471 *imx471 = to_imx471(sd);
+++	s64 hblank, vblank, exposure_max;
+++	const struct imx471_mode *mode;
+++
+++	mode = v4l2_find_nearest_size(imx471_supported_modes,
+++				      ARRAY_SIZE(imx471_supported_modes),
+++				      width, height,
+++				      fmt->format.width, fmt->format.height);
+++
+++	imx471_update_pad_format(mode, &fmt->format);
+++
+++	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY || imx471->mode == mode)
+++		goto set_format;
+++
+++	__v4l2_ctrl_s_ctrl(imx471->link_freq, mode->link_freq_index);
+++	__v4l2_ctrl_s_ctrl_int64(imx471->pixel_rate, mode->pixel_rate);
+++
+++	hblank = mode->hts - mode->width;
+++	__v4l2_ctrl_modify_range(imx471->hblank, hblank, hblank, 1, hblank);
+++
+++	vblank = mode->vts - mode->height;
+++	__v4l2_ctrl_modify_range(imx471->vblank, vblank,
+++				 IMX471_VTS_MAX - mode->height, 1, vblank);
+++	__v4l2_ctrl_s_ctrl(imx471->vblank, vblank);
+++
+++	exposure_max = mode->vts - IMX471_EXPOSURE_MARGIN;
+++	__v4l2_ctrl_modify_range(imx471->exposure, IMX471_EXPOSURE_MIN,
+++				 exposure_max, IMX471_EXPOSURE_STEP,
+++				 IMX471_EXPOSURE_DEFAULT);
+++
+++	if (imx471->sd.ctrl_handler->error)
+++		return imx471->sd.ctrl_handler->error;
+++
+++	imx471->mode = mode;
+++
+++set_format:
+++	*v4l2_subdev_state_get_format(state, 0) = fmt->format;
+++
+++	return 0;
+++}
+++
+++static int imx471_enum_mbus_code(struct v4l2_subdev *sd,
+++				 struct v4l2_subdev_state *sd_state,
+++				 struct v4l2_subdev_mbus_code_enum *code)
+++{
+++	if (code->index > 0)
+++		return -EINVAL;
+++
+++	code->code = MEDIA_BUS_FMT_SBGGR10_1X10;
+++
+++	return 0;
+++}
+++
+++static int imx471_enum_frame_size(struct v4l2_subdev *sd,
+++				  struct v4l2_subdev_state *sd_state,
+++				  struct v4l2_subdev_frame_size_enum *fse)
+++{
+++	if (fse->index >= ARRAY_SIZE(imx471_supported_modes))
+++		return -EINVAL;
+++
+++	if (fse->code != MEDIA_BUS_FMT_SBGGR10_1X10)
+++		return -EINVAL;
+++
+++	fse->min_width = imx471_supported_modes[fse->index].width;
+++	fse->max_width = fse->min_width;
+++	fse->min_height = imx471_supported_modes[fse->index].height;
+++	fse->max_height = fse->min_height;
+++
+++	return 0;
+++}
+++
+++static int imx471_get_selection(struct v4l2_subdev *sd,
+++				struct v4l2_subdev_state *sd_state,
+++				struct v4l2_subdev_selection *sel)
+++{
+++	struct imx471 *imx471 = to_imx471(sd);
+++
+++	switch (sel->target) {
+++	case V4L2_SEL_TGT_CROP:
+++		sel->r = imx471->mode->crop;
+++		return 0;
+++	case V4L2_SEL_TGT_NATIVE_SIZE:
+++	case V4L2_SEL_TGT_CROP_BOUNDS:
+++	case V4L2_SEL_TGT_CROP_DEFAULT:
+++		sel->r.left = 0;
+++		sel->r.top = 0;
+++		sel->r.width = IMX471_NATIVE_WIDTH;
+++		sel->r.height = IMX471_NATIVE_HEIGHT;
+++		return 0;
+++	default:
+++		return -EINVAL;
+++	}
+++}
+++
+++static int imx471_init_state(struct v4l2_subdev *sd,
+++			     struct v4l2_subdev_state *state)
+++{
+++	struct imx471 *imx471 = to_imx471(sd);
+++	struct v4l2_subdev_format fmt = {
+++		.which = V4L2_SUBDEV_FORMAT_TRY,
+++		.pad = 0,
+++		.format = {
+++			.width = imx471->mode->width,
+++			.height = imx471->mode->height,
+++		},
+++	};
+++
+++	imx471_set_pad_format(sd, state, &fmt);
+++
+++	return 0;
+++}
+++
+++static const struct v4l2_subdev_video_ops imx471_video_ops = {
+++	.s_stream = v4l2_subdev_s_stream_helper,
+++};
+++
+++static const struct v4l2_subdev_pad_ops imx471_pad_ops = {
+++	.set_fmt = imx471_set_pad_format,
+++	.get_fmt = v4l2_subdev_get_fmt,
+++	.get_selection = imx471_get_selection,
+++	.enum_mbus_code = imx471_enum_mbus_code,
+++	.enum_frame_size = imx471_enum_frame_size,
+++	.enable_streams = imx471_enable_streams,
+++	.disable_streams = imx471_disable_streams,
+++};
+++
+++static const struct v4l2_subdev_ops imx471_subdev_ops = {
+++	.video = &imx471_video_ops,
+++	.pad = &imx471_pad_ops,
+++};
+++
+++static const struct v4l2_subdev_internal_ops imx471_internal_ops = {
+++	.init_state = imx471_init_state,
+++};
+++
+++static const struct media_entity_operations imx471_subdev_entity_ops = {
+++	.link_validate = v4l2_subdev_link_validate,
+++};
+++
+++static int imx471_identify_sensor(struct imx471 *imx471)
+++{
+++	u64 val;
+++	int ret;
+++
+++	ret = cci_read(imx471->regmap, IMX471_REG_CHIP_ID, &val, NULL);
+++	if (ret) {
+++		dev_err(imx471->dev, "failed to read chip id: %d\n", ret);
+++		return ret;
+++	}
+++
+++	if (val != IMX471_CHIP_ID) {
+++		dev_err(imx471->dev, "chip id mismatch: %x!=%llx\n",
+++			IMX471_CHIP_ID, val);
+++		return -ENODEV;
+++	}
+++
+++	return 0;
+++}
+++
+++static int imx471_check_hwcfg(struct imx471 *imx471)
+++{
+++	struct fwnode_handle *fwnode = dev_fwnode(imx471->dev), *ep;
+++	struct v4l2_fwnode_endpoint bus_cfg = {
+++		.bus_type = V4L2_MBUS_CSI2_DPHY,
+++	};
+++	unsigned long freq_bitmap;
+++	int ret;
+++
+++	if (!fwnode)
+++		return -ENODEV;
+++
+++	ep = fwnode_graph_get_next_endpoint(fwnode, NULL);
+++	if (!ep)
+++		return -EINVAL;
+++
+++	ret = v4l2_fwnode_endpoint_alloc_parse(ep, &bus_cfg);
+++	fwnode_handle_put(ep);
+++	if (ret)
+++		return ret;
+++
+++	if (bus_cfg.bus.mipi_csi2.num_data_lanes != IMX471_DATA_LANES) {
+++		dev_err(imx471->dev, "Invalid number of data lanes: %u\n",
+++			bus_cfg.bus.mipi_csi2.num_data_lanes);
+++		ret = -EINVAL;
+++		goto endpoint_free;
+++	}
+++
+++	ret = v4l2_link_freq_to_bitmap(imx471->dev, bus_cfg.link_frequencies,
+++				       bus_cfg.nr_of_link_frequencies,
+++				       imx471_link_freq_menu,
+++				       ARRAY_SIZE(imx471_link_freq_menu),
+++				       &freq_bitmap);
+++	if (ret)
+++		goto endpoint_free;
+++
+++	/* Both link frequencies are needed, one for each mode */
+++	if (freq_bitmap != GENMASK(ARRAY_SIZE(imx471_link_freq_menu) - 1, 0)) {
+++		dev_err(imx471->dev, "Not all link frequencies are supported\n");
+++		ret = -EINVAL;
+++	}
+++
+++endpoint_free:
+++	v4l2_fwnode_endpoint_free(&bus_cfg);
+++
+++	return ret;
+++}
+++
+++static int imx471_power_on(struct device *dev)
+++{
+++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+++	struct imx471 *imx471 = to_imx471(sd);
+++	int ret;
+++
+++	ret = regulator_bulk_enable(IMX471_NUM_SUPPLIES, imx471->supplies);
+++	if (ret)
+++		return ret;
+++
+++	/* Let the supplies settle before the clock is enabled */
+++	usleep_range(2 * USEC_PER_MSEC, 3 * USEC_PER_MSEC);
+++
+++	ret = clk_prepare_enable(imx471->mclk);
+++	if (ret)
+++		goto disable_regulators;
+++
+++	usleep_range(2 * USEC_PER_MSEC, 3 * USEC_PER_MSEC);
+++	gpiod_set_value_cansleep(imx471->reset_gpio, 0);
+++	usleep_range(10 * USEC_PER_MSEC, 15 * USEC_PER_MSEC);
+++
+++	return 0;
+++
+++disable_regulators:
+++	regulator_bulk_disable(IMX471_NUM_SUPPLIES, imx471->supplies);
+++
+++	return ret;
+++}
+++
+++static int imx471_power_off(struct device *dev)
+++{
+++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+++	struct imx471 *imx471 = to_imx471(sd);
+++
+++	gpiod_set_value_cansleep(imx471->reset_gpio, 1);
+++
+++	clk_disable_unprepare(imx471->mclk);
+++
+++	regulator_bulk_disable(IMX471_NUM_SUPPLIES, imx471->supplies);
+++
+++	return 0;
+++}
+++
+++static int imx471_probe(struct i2c_client *client)
+++{
+++	struct imx471 *imx471;
+++	unsigned long freq;
+++	unsigned int i;
+++	int ret;
+++
+++	imx471 = devm_kzalloc(&client->dev, sizeof(*imx471), GFP_KERNEL);
+++	if (!imx471)
+++		return -ENOMEM;
+++
+++	imx471->dev = &client->dev;
+++	v4l2_i2c_subdev_init(&imx471->sd, client, &imx471_subdev_ops);
+++
+++	imx471->regmap = devm_cci_regmap_init_i2c(client, 16);
+++	if (IS_ERR(imx471->regmap))
+++		return dev_err_probe(imx471->dev, PTR_ERR(imx471->regmap),
+++				     "failed to init CCI\n");
+++
+++	imx471->mclk = devm_v4l2_sensor_clk_get(imx471->dev, NULL);
+++	if (IS_ERR(imx471->mclk))
+++		return dev_err_probe(imx471->dev, PTR_ERR(imx471->mclk),
+++				     "failed to get MCLK clock\n");
+++
+++	freq = clk_get_rate(imx471->mclk);
+++	if (freq != IMX471_MCLK_FREQ)
+++		return dev_err_probe(imx471->dev, -EINVAL,
+++				     "MCLK clock frequency %lu is not supported\n",
+++				     freq);
+++
+++	ret = imx471_check_hwcfg(imx471);
+++	if (ret)
+++		return dev_err_probe(imx471->dev, ret,
+++				     "failed to check HW configuration\n");
+++
+++	imx471->reset_gpio = devm_gpiod_get_optional(imx471->dev, "reset",
+++						     GPIOD_OUT_HIGH);
+++	if (IS_ERR(imx471->reset_gpio))
+++		return dev_err_probe(imx471->dev, PTR_ERR(imx471->reset_gpio),
+++				     "cannot get reset GPIO\n");
+++
+++	for (i = 0; i < IMX471_NUM_SUPPLIES; i++)
+++		imx471->supplies[i].supply = imx471_supply_names[i];
+++
+++	ret = devm_regulator_bulk_get(imx471->dev, IMX471_NUM_SUPPLIES,
+++				      imx471->supplies);
+++	if (ret)
+++		return dev_err_probe(imx471->dev, ret,
+++				     "failed to get supply regulators\n");
+++
+++	/* The sensor must be powered on to read the CHIP_ID register */
+++	ret = imx471_power_on(imx471->dev);
+++	if (ret)
+++		return ret;
+++
+++	ret = imx471_identify_sensor(imx471);
+++	if (ret) {
+++		dev_err_probe(imx471->dev, ret, "failed to find sensor\n");
+++		goto power_off;
+++	}
+++
+++	imx471->mode = &imx471_supported_modes[0];
+++	ret = imx471_init_controls(imx471);
+++	if (ret) {
+++		dev_err_probe(imx471->dev, ret, "failed to init controls\n");
+++		goto power_off;
+++	}
+++
+++	imx471->sd.state_lock = imx471->ctrl_handler.lock;
+++	imx471->sd.internal_ops = &imx471_internal_ops;
+++	imx471->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+++	imx471->sd.entity.ops = &imx471_subdev_entity_ops;
+++	imx471->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
+++	imx471->pad.flags = MEDIA_PAD_FL_SOURCE;
+++
+++	ret = media_entity_pads_init(&imx471->sd.entity, 1, &imx471->pad);
+++	if (ret) {
+++		dev_err_probe(imx471->dev, ret,
+++			      "failed to init media entity pads\n");
+++		goto v4l2_ctrl_handler_free;
+++	}
+++
+++	ret = v4l2_subdev_init_finalize(&imx471->sd);
+++	if (ret < 0) {
+++		dev_err_probe(imx471->dev, ret,
+++			      "failed to finalize subdev init\n");
+++		goto media_entity_cleanup;
+++	}
+++
+++	pm_runtime_set_active(imx471->dev);
+++	pm_runtime_enable(imx471->dev);
+++
+++	ret = v4l2_async_register_subdev_sensor(&imx471->sd);
+++	if (ret < 0) {
+++		dev_err_probe(imx471->dev, ret,
+++			      "failed to register V4L2 subdev\n");
+++		goto subdev_cleanup;
+++	}
+++
+++	pm_runtime_set_autosuspend_delay(imx471->dev, 1000);
+++	pm_runtime_use_autosuspend(imx471->dev);
+++	pm_runtime_idle(imx471->dev);
+++
+++	return 0;
+++
+++subdev_cleanup:
+++	v4l2_subdev_cleanup(&imx471->sd);
+++	pm_runtime_disable(imx471->dev);
+++	pm_runtime_set_suspended(imx471->dev);
+++
+++media_entity_cleanup:
+++	media_entity_cleanup(&imx471->sd.entity);
+++
+++v4l2_ctrl_handler_free:
+++	v4l2_ctrl_handler_free(imx471->sd.ctrl_handler);
+++
+++power_off:
+++	imx471_power_off(imx471->dev);
+++
+++	return ret;
+++}
+++
+++static void imx471_remove(struct i2c_client *client)
+++{
+++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+++	struct imx471 *imx471 = to_imx471(sd);
+++
+++	v4l2_async_unregister_subdev(sd);
+++	v4l2_subdev_cleanup(sd);
+++	media_entity_cleanup(&sd->entity);
+++	v4l2_ctrl_handler_free(sd->ctrl_handler);
+++	pm_runtime_disable(imx471->dev);
+++
+++	if (!pm_runtime_status_suspended(imx471->dev)) {
+++		imx471_power_off(imx471->dev);
+++		pm_runtime_set_suspended(imx471->dev);
+++	}
+++}
+++
+++static const struct dev_pm_ops imx471_pm_ops = {
+++	SET_RUNTIME_PM_OPS(imx471_power_off, imx471_power_on, NULL)
+++};
+++
+++static const struct of_device_id imx471_of_match[] = {
+++	{ .compatible = "sony,imx471" },
+++	{ /* sentinel */ }
+++};
+++MODULE_DEVICE_TABLE(of, imx471_of_match);
+++
+++static struct i2c_driver imx471_i2c_driver = {
+++	.driver = {
+++		.name = "imx471",
+++		.pm = &imx471_pm_ops,
+++		.of_match_table = imx471_of_match,
+++	},
+++	.probe = imx471_probe,
+++	.remove = imx471_remove,
+++};
+++
+++module_i2c_driver(imx471_i2c_driver);
+++
+++MODULE_AUTHOR("Timo <1788603+darknagel@users.noreply.github.com>");
+++MODULE_DESCRIPTION("Sony IMX471 image sensor driver");
+++MODULE_LICENSE("GPL");
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0012-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-fro.patch b/device/testing/linux-postmarketos-qcom-sm8250/0012-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-fro.patch
+new file mode 100644
+index 0000000000..8c5259df62
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0012-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-fro.patch
+@@ -0,0 +1,142 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 26 Oct 2026 19:21:55 +0100
++Subject: [PATCH 12/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
++ front camera
++
++Add the Sony IMX471 front camera (slot 2 of the vendor device tree):
++CCI1 master 1, address 0x10, CSIPHY3 with four lanes, MCLK3 at
++19.2 MHz, reset on GPIO 78. The analog supply comes from an external
++LDO enabled by GPIO 24, the digital supply from PM8009 L3 (1.056 V),
++the I/O supply from PM8009 L7.
++
++The vendor reports a sensor orientation of 270 degrees clockwise, which
++is a rotation of 90 degrees in the counter-clockwise convention of the
++rotation property.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 79 +++++++++++++++++++
++ 1 file changed, 79 insertions(+)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index d41714d91..8b0abfa28 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -242,6 +242,21 @@ ramoops@b0000000 {
++ 	};
++ 
++ 	/* Values from the vendor device tree overlay of project 19811 */
+++	vreg_cam_front_avdd: regulator-cam-front-avdd {
+++		compatible = "regulator-fixed";
+++		regulator-name = "cam_front_avdd";
+++		regulator-min-microvolt = <2800000>;
+++		regulator-max-microvolt = <2800000>;
+++		startup-delay-us = <2000>;
+++
+++		gpio = <&tlmm 24 GPIO_ACTIVE_HIGH>;
+++		enable-active-high;
+++		vin-supply = <&vreg_bob>;
+++
+++		pinctrl-0 = <&cam_front_avdd_en>;
+++		pinctrl-names = "default";
+++	};
+++
++ 	vreg_cam_tele_avdd: regulator-cam-tele-avdd {
++ 		compatible = "regulator-fixed";
++ 		regulator-name = "cam_tele_avdd";
++@@ -484,6 +499,13 @@ vreg_l2f_1p2: ldo2 {
++ 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++ 		};
++ 
+++		vreg_l3f_1p05: ldo3 {
+++			regulator-name = "vreg_l3f_1p05";
+++			regulator-min-microvolt = <1056000>;
+++			regulator-max-microvolt = <1056000>;
+++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+++		};
+++
++ 		vreg_l4f_1p05: ldo4 {
++ 			regulator-name = "vreg_l4f_1p05";
++ 			regulator-min-microvolt = <1056000>;
++@@ -772,6 +794,14 @@ csiphy2_ep: endpoint {
++ 				remote-endpoint = <&cam_tele_ep>;
++ 			};
++ 		};
+++
+++		port@3 {
+++			csiphy3_ep: endpoint {
+++				clock-lanes = <7>;
+++				data-lanes = <0 1 2 3>;
+++				remote-endpoint = <&cam_front_ep>;
+++			};
+++		};
++ 	};
++ };
++ 
++@@ -814,6 +844,41 @@ cam_tele_ep: endpoint {
++ 	};
++ };
++ 
+++&cci1_i2c1 {
+++	#address-cells = <1>;
+++	#size-cells = <0>;
+++
+++	/* Front camera */
+++	camera@10 {
+++		compatible = "sony,imx471";
+++		reg = <0x10>;
+++
+++		clocks = <&camcc CAM_CC_MCLK3_CLK>;
+++		assigned-clocks = <&camcc CAM_CC_MCLK3_CLK>;
+++		assigned-clock-rates = <19200000>;
+++
+++		reset-gpios = <&tlmm 78 GPIO_ACTIVE_LOW>;
+++
+++		avdd-supply = <&vreg_cam_front_avdd>;
+++		dvdd-supply = <&vreg_l3f_1p05>;
+++		dovdd-supply = <&vreg_l7f_1p8>;
+++
+++		pinctrl-0 = <&cam_mclk3_default>, <&cam_front_default>;
+++		pinctrl-names = "default";
+++
+++		orientation = <0>;
+++		rotation = <90>;
+++
+++		port {
+++			cam_front_ep: endpoint {
+++				data-lanes = <1 2 3 4>;
+++				link-frequencies = /bits/ 64 <748800000 400000000>;
+++				remote-endpoint = <&csiphy3_ep>;
+++			};
+++		};
+++	};
+++};
+++
++ &cdsp {
++ 	firmware-name = "postmarketos/cdsp.mbn";
++ 	status = "okay";
++@@ -1233,6 +1298,20 @@ wcd_default: wcd-default-state {
++ 		output-low;
++ 	};
++ 
+++	cam_front_avdd_en: cam-front-avdd-en-state {
+++		pins = "gpio24";
+++		function = "gpio";
+++		drive-strength = <2>;
+++		bias-disable;
+++	};
+++
+++	cam_front_default: cam-front-default-state {
+++		pins = "gpio78";
+++		function = "gpio";
+++		drive-strength = <2>;
+++		bias-disable;
+++	};
+++
++ 	cam_tele_avdd_en: cam-tele-avdd-en-state {
++ 		pins = "gpio139";
++ 		function = "gpio";
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 82ab560109..257d7d5933 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=8
++pkgrel=11
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -50,6 +50,8 @@ source="
+ 	0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
+ 	0009-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
+ 	0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch
++	0011-media-i2c-Add-Sony-IMX471-image-sensor-driver.patch
++	0012-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-fro.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -96,15 +98,17 @@ package() {
+ 
+ sha512sums="
+ 05df1589411d2817fecc403402f1dea2c405c5de102bf92e23089e430fc2c623702bd778fbea5b87f70ea02e9eff7f02a7de292f895d47ff40ae88dafdfbab58  linux-postmarketos-qcom-sm8250-sm8250-7.2.0_git20261010.tar.gz
+-fdd58f97d19ae0f13b80b477dfc0db43f7bcdb3a1d677a11e864ac0d2e0c41f4d11c3df1c5dff33ba978037e36c1578c5662ca101f47b33a6499dfa9c378a471  config-postmarketos-qcom-sm8250.aarch64
+-1d6b4a37d231cccbeda804b9d88244fda2136a6ff12fad1f40852cba5708cf7d93f46920f5bd1a0b21b0396878ca25f3a962aebe19bcf41dd42c6434922c7ec0  0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+-de470289c4ed00b78b9b13f661ad88f8f401726a934037a41efb251fbf2e06f9d21ed9620f120903e0ac45a820c8d842908f281dc3d9627715d3b6e442188ee8  0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+-ef08fca004c36976b22cd22b0b3fd435a8c590ea08ec0b6d428f3b8dc4f64aa5f51ad5abc5780c9d9f44d5bcc0189fdd68d9fc9bd740238214f65855735a0664  0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+-85ad7662cbd2783949452c710cf5e26a1f2e2f5fe18e043c034014a8b977b8caa634863ef3db76e7fe35f36c872b4dfda4572382211e1138016f1615699d3e19  0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+-9cc37c18817e15348fd75f3602a278dd3f1e15997da7b6fa6b3769e0f013f269cd79a13aa0da40d4414d61c19a217d9de4041d52a0a58b7e5006832c77abac07  0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+-65dc304dec2efa1ef989f802284175cb719b512c5c9d7d74e5750335745435f93e858d9b44440242d727856ebfb2fa9eddf0739f0b1e0e5f7442d19e2888697a  0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
+-78f6341265ad64034ea4c7b642cfc53c113f66dd478db8574033ee6c56a1883b86c431052cdf0793fb177a0284af1ef56176f957c00f0d7a277268bbb30eeff6  0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
+-acf5b004cdd2d65ea864d58d9c921946e365628772cdca129437ec913a5f4cd16a21805ab1fccce0df539c427d026aa15daeee61827ffbd6ed96d83ebee70e3c  0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
+-c5e04b8ba57e311da6f8440c7247362202620893b5b1bfff0c0c5481f6d1632cc64d249478f7892eaab180c3c79b044d221d1eeef2b48c11c799d34f6658c43b  0009-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
+-dde35851e42455701c0d172585d3ed12fc60dd9746fe396005977f8a918e9048af23c3f46252ff7f088f486a5e8cc3407e6e3ce31cbdf43eba2fd41e21a327f5  0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch
++cc6030ab2fb1e273767a0ba2997f58149055f142814630df0d056c701aae57d424b31d9d66af26a737a7247afa2c8dc436ab40fbf053b7f09aaff3296841058c  config-postmarketos-qcom-sm8250.aarch64
++83cb859ba62434fbdac0b8c1f8bda2b9766ea58a121b3e224fc46a94ad1610a86a3d529ad12343a31aba7058c710bdc89b08db5d4a26d484e5757ab5d8d73260  0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
++1c955330b50679ab8f62664f7c8353b5d3967b8a9b6dd70cab4c35d9a940fe07ebb61da01360cb9877cccd27ff291d2a6069387e110538aa14aef88b31449042  0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
++91f00b0b7c45df737f6f106b96a394d9f8bc884c0b4a379fa2cf429d99c3c9946d8f6832d6be16be61a3ff2274fe9cf60473ceb16ac02451d827693114acdf48  0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++a447506a32871b9ede964ef96e50b5880c1f25d10cc6a6ceef78cfd56abd8441e3023bd8a500b284e11575995f51ef55017c3bbc604956d038b96935b63358d5  0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++33c85f4ecbee47980fe853ff3ee89080dbe442a6b61a5f1b7ce010db38948746236c195c5926b7bac4090e0d9a20078344fddd5d76ee1eabc6614672228b6cf6  0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++eeaffc68933eef97784dbf7a8efbfbff11e0fbd46979a8843c6f8a957f3e4048bb13271bc482ee566552ace27ff74b67ecb0f1af7f96a0a3dba61ad1ca91156c  0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
++8633d814d0edf5640cd98193f63b65a93c97952621d3ffce9938d489ba9102ed3b0c4d028243e54d02580906c5e20a96d887fc1090fdad8670b1c29610ee0cf3  0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
++c7949c0f8e09ac3491b732c2e6878c92b2add46717251197346cc9003c7cc70e7ffc963e8b0059668e9a8d5c4b56119bf2c4f6c49d8f32b5223d9bee870e27a9  0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
++c09e372009be552b2640e8e5bd00c7a85e9e73f61b9eed1bbfe319d09524a21db969e2f0be6aa5f781081134479381645ae7d01633c120c4ba65735649daa0f9  0009-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
++dba18610e90c2054aa2fbbe6dd4d311a09a4d6f00181bf390cf19a9c0c981d73f6e1ee0a0ad32623a77faf045c2ac0a61953c8d4f19a6039841a0321998c6763  0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch
++24347da30a97f4cb783a99354db358caace8281d5d842f97bbd11b68aadc2a0e3fb31d82a844c0a1edf28dc61c54bb75661bb65aaaee6ede1d3ea462053f935f  0011-media-i2c-Add-Sony-IMX471-image-sensor-driver.patch
++6f2448da87a80d1668db7341f3ac51db00fdf2a333107a51e0d38e4b211400554abbedc53263dc654ae5f3631932ba694efbd48f53fd0d7fc021eda13f8b297b  0012-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-fro.patch
+ "
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64 b/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
+index 663cd9d30c..c317b9dde3 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
++++ b/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
+@@ -4626,6 +4626,7 @@ CONFIG_VIDEO_OV8856=m
+ # CONFIG_VIDEO_RJ54N1 is not set
+ # CONFIG_VIDEO_S5C73M3 is not set
+ CONFIG_VIDEO_S5K3M5=m
++CONFIG_VIDEO_IMX471=m
+ # CONFIG_VIDEO_S5K5BAF is not set
+ # CONFIG_VIDEO_S5K6A3 is not set
+ # CONFIG_VIDEO_S5KJN1 is not set
+-- 
+2.43.0
+

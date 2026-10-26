@@ -1,0 +1,827 @@
+From 585253dc260f186b0d89badfd246286c65bf27ae Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 17:29:34 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: add OnePlus sensor device
+ info driver
+
+The OnePlus SLPI firmware reads the sensor hardware description (sensor
+type, bus, mount direction, calibration parameters) from SMEM item 130.
+The bootloader only allocates the item; the downstream kernel fills it
+from the device tree. Without it the DSP skips the accelerometer and the
+magnetometer.
+
+Add a small driver that fills SMEM item 130 from a "oneplus,sensor-devinfo"
+DT node, its binding, and the node for instantnoodlep (values from the
+vendor device tree, project 19811).
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ...-qcom-Add-OnePlus-sensor-device-info.patch | 126 +++++
+ ...dd-OnePlus-sensor-device-info-driver.patch | 456 ++++++++++++++++++
+ ...m8250-oneplus-instantnoodlep-Add-sen.patch | 146 ++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  10 +-
+ .../config-postmarketos-qcom-sm8250.aarch64   |   1 +
+ 5 files changed, 737 insertions(+), 2 deletions(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch b/device/testing/linux-postmarketos-qcom-sm8250/0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
+new file mode 100644
+index 0000000000..5e49df4f38
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
+@@ -0,0 +1,126 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 25 Oct 2026 23:40:26 +0100
++Subject: [PATCH 6/8] dt-bindings: soc: qcom: Add OnePlus sensor device info
++
++The sensor DSP firmware of OnePlus devices reads the fitted sensor chips,
++their orientation and tuning parameters from SMEM item 130. Describe them
++with the properties of the vendor device tree, so that the values can be
++taken over from it.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ .../soc/qcom/oneplus,sensor-devinfo.yaml      | 101 ++++++++++++++++++
++ 1 file changed, 101 insertions(+)
++ create mode 100755 Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
++
++diff --git a/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml b/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
++new file mode 100755
++index 000000000..403ab2f6a
++--- /dev/null
+++++ b/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
++@@ -0,0 +1,101 @@
+++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+++%YAML 1.2
+++---
+++$id: http://devicetree.org/schemas/soc/qcom/oneplus,sensor-devinfo.yaml#
+++$schema: http://devicetree.org/meta-schemas/core.yaml#
+++
+++title: OnePlus sensor device info
+++
+++maintainers:
+++  - Timo <1788603+darknagel@users.noreply.github.com>
+++
+++description:
+++  The sensor DSP (SLPI) firmware of OnePlus devices reads which sensor chips
+++  are fitted, how they are oriented and some tuning parameters from SMEM item
+++  130, which the operating system fills. The child nodes describe the physical
+++  and virtual sensors with the properties of the vendor device tree.
+++
+++properties:
+++  compatible:
+++    const: oneplus,sensor-devinfo
+++
+++patternProperties:
+++  "^(gsensor|msensor|lsensor|lrsensor|psensor|ssensor|sdsensor|cctsensor|cctrsensor)-[0-9]$":
+++    type: object
+++    description:
+++      A physical sensor. Properties other than the ones listed are vendor
+++      tuning parameters that are passed to the firmware unchanged.
+++
+++    properties:
+++      sensor-type:
+++        $ref: /schemas/types.yaml#/definitions/uint32
+++        maximum: 10
+++        description:
+++          0 accelerometer, 1 gyroscope, 2 magnetometer, 3 light, 4 proximity,
+++          5 SAR, 6 CCT, 7 rear CCT, 8 barometer, 9 second SAR, 10 rear light
+++
+++      sensor-index:
+++        $ref: /schemas/types.yaml#/definitions/uint32
+++        maximum: 2
+++        description: Index of the alternative chip for this sensor type
+++
+++      sensor-name:
+++        $ref: /schemas/types.yaml#/definitions/uint32
+++        description: Vendor ID of the chip, specific to the sensor type
+++
+++      sensor-direction:
+++        $ref: /schemas/types.yaml#/definitions/uint32
+++        description: Mounting orientation of the chip
+++
+++      bus-number:
+++        $ref: /schemas/types.yaml#/definitions/uint32
+++
+++      irq-number:
+++        $ref: /schemas/types.yaml#/definitions/uint32
+++
+++    required:
+++      - sensor-type
+++      - sensor-index
+++
+++    additionalProperties: true
+++
+++  "^(pickup_detect|lux_aod|fp_display|free_fall|mag_fusion|oplus_measurement)$":
+++    type: object
+++    description: A virtual sensor implemented in the firmware
+++
+++    properties:
+++      sensor-type:
+++        $ref: /schemas/types.yaml#/definitions/uint32
+++        maximum: 7
+++
+++      is-virtual-sensor:
+++        type: boolean
+++
+++    required:
+++      - sensor-type
+++      - is-virtual-sensor
+++
+++    additionalProperties: true
+++
+++required:
+++  - compatible
+++
+++additionalProperties: false
+++
+++examples:
+++  - |
+++    sensor-devinfo {
+++        compatible = "oneplus,sensor-devinfo";
+++
+++        gsensor-0 {
+++            sensor-type = <0>;
+++            sensor-index = <0>;
+++            sensor-name = <0x01>;
+++            sensor-direction = <5>;
+++        };
+++
+++        free_fall {
+++            sensor-type = <4>;
+++            is-virtual-sensor;
+++        };
+++    };
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch b/device/testing/linux-postmarketos-qcom-sm8250/0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
+new file mode 100644
+index 0000000000..b4046945ae
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
+@@ -0,0 +1,456 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 25 Oct 2026 23:40:26 +0100
++Subject: [PATCH 7/8] soc: qcom: Add OnePlus sensor device info driver
++
++The sensor DSP (SLPI) firmware of OnePlus devices reads which sensor
++chips are fitted, how they are oriented and some tuning parameters from
++SMEM item 130. The bootloader allocates the item and leaves it empty,
++the vendor kernel fills it from the device tree. Without it, the
++firmware does not bring up sensors like the accelerometer and the
++magnetometer.
++
++Fill the item from the device tree like the vendor driver does. The
++number of chips per sensor type differs between firmware versions and is
++detected from the size of the item.
++
++The item must be filled before the sensor DSP is started, so the driver
++should be built in.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ drivers/soc/qcom/Kconfig                  |  12 +
++ drivers/soc/qcom/Makefile                 |   1 +
++ drivers/soc/qcom/oneplus-sensor-devinfo.c | 385 ++++++++++++++++++++++
++ 3 files changed, 398 insertions(+)
++ create mode 100755 drivers/soc/qcom/oneplus-sensor-devinfo.c
++
++diff --git a/drivers/soc/qcom/Kconfig b/drivers/soc/qcom/Kconfig
++index 2caadbbcf..a0ce7ff5c 100644
++--- a/drivers/soc/qcom/Kconfig
+++++ b/drivers/soc/qcom/Kconfig
++@@ -72,6 +72,18 @@ config QCOM_OCMEM
++ 	  requirements. This is typically used by the GPU, camera/video, and
++ 	  audio components on some Snapdragon SoCs.
++ 
+++config QCOM_ONEPLUS_SENSOR_DEVINFO
+++	tristate "OnePlus sensor device info"
+++	depends on QCOM_SMEM
+++	depends on ARCH_QCOM || COMPILE_TEST
+++	help
+++	  Fill the SMEM item that describes the fitted sensor chips for the
+++	  sensor DSP of OnePlus devices from the device tree. The DSP firmware
+++	  needs it to bring up sensors like the accelerometer. It must be
+++	  filled before the sensor DSP is started.
+++
+++	  Say Y here if you have a OnePlus device with a Qualcomm SoC.
+++
++ config QCOM_PD_MAPPER
++ 	tristate "Qualcomm Protection Domain Mapper"
++ 	select QCOM_QMI_HELPERS
++diff --git a/drivers/soc/qcom/Makefile b/drivers/soc/qcom/Makefile
++index b7f1d2a57..436f490cf 100644
++--- a/drivers/soc/qcom/Makefile
+++++ b/drivers/soc/qcom/Makefile
++@@ -7,6 +7,7 @@ obj-$(CONFIG_QCOM_COMMAND_DB) += cmd-db.o
++ obj-$(CONFIG_QCOM_GSBI)	+=	qcom_gsbi.o
++ obj-$(CONFIG_QCOM_MDT_LOADER)	+= mdt_loader.o
++ obj-$(CONFIG_QCOM_OCMEM)	+= ocmem.o
+++obj-$(CONFIG_QCOM_ONEPLUS_SENSOR_DEVINFO)	+= oneplus-sensor-devinfo.o
++ obj-$(CONFIG_QCOM_PD_MAPPER)	+= qcom_pd_mapper.o
++ obj-$(CONFIG_QCOM_PDR_HELPERS)	+= pdr_interface.o
++ obj-$(CONFIG_QCOM_PDR_MSG)	+= qcom_pdr_msg.o
++diff --git a/drivers/soc/qcom/oneplus-sensor-devinfo.c b/drivers/soc/qcom/oneplus-sensor-devinfo.c
++new file mode 100755
++index 000000000..6e1625b0b
++--- /dev/null
+++++ b/drivers/soc/qcom/oneplus-sensor-devinfo.c
++@@ -0,0 +1,385 @@
+++// SPDX-License-Identifier: GPL-2.0-only
+++/*
+++ * OnePlus sensor device info
+++ *
+++ * The sensor DSP (SLPI) firmware of OnePlus devices reads which sensor chips
+++ * are fitted, how they are oriented and some tuning parameters from SMEM item
+++ * 130. The bootloader allocates the item and the kernel has to fill it from
+++ * the device tree, otherwise the firmware does not bring up sensors like the
+++ * accelerometer and the magnetometer.
+++ *
+++ * The device tree properties and the layout of the item follow the downstream
+++ * oplus,sensor-devinfo driver, Copyright (C) 2018-2020 Oplus.
+++ */
+++
+++#include <linux/err.h>
+++#include <linux/kernel.h>
+++#include <linux/module.h>
+++#include <linux/of.h>
+++#include <linux/platform_device.h>
+++#include <linux/soc/qcom/smem.h>
+++#include <linux/string.h>
+++
+++#define SMEM_SENSOR		130
+++
+++#define REG_NUM			10
+++#define PARAMETER_NUM		25
+++#define FEATURE_NUM		10
+++#define ALGO_PARAMETER_NUM	15
+++#define ALGO_FEATURE_NUM	5
+++#define SENSORS_NUM		11
+++#define SENSOR_ALGO_NUM		8
+++#define SAR_MAX_CH_NUM		5
+++#define DEFAULT_CONFIG		0xff
+++
+++struct sensor_feature {
+++	s32 reg[REG_NUM];
+++	s32 parameter[PARAMETER_NUM];
+++	s32 feature[FEATURE_NUM];
+++};
+++
+++struct sensor_hw {
+++	u8 sensor_name;
+++	u8 bus_number;
+++	u8 direction;
+++	u8 irq_number;
+++	struct sensor_feature feature;
+++};
+++
+++struct sensor_algorithm {
+++	s32 sensor_id;
+++	s32 parameter[ALGO_PARAMETER_NUM];
+++	s32 feature[ALGO_FEATURE_NUM];
+++};
+++
+++/*
+++ * The item contains a magic number, one vector per sensor type with the
+++ * hardware of each source and one entry per virtual sensor. Older firmware
+++ * uses 2 sources per sensor, newer firmware 3, which is detected from the
+++ * size of the item.
+++ */
+++struct oneplus_sensor_devinfo {
+++	void *info;
+++	unsigned int n_sources;
+++};
+++
+++static size_t vector_size(unsigned int n_sources)
+++{
+++	return sizeof(s32) + n_sources * sizeof(struct sensor_hw);
+++}
+++
+++static size_t info_size(unsigned int n_sources)
+++{
+++	return sizeof(s32) + SENSORS_NUM * vector_size(n_sources)
+++	     + SENSOR_ALGO_NUM * sizeof(struct sensor_algorithm);
+++}
+++
+++static struct sensor_hw *get_hw(struct oneplus_sensor_devinfo *di,
+++				unsigned int type, unsigned int index)
+++{
+++	char *vec = (char *)di->info + sizeof(s32) + type * vector_size(di->n_sources);
+++
+++	*(s32 *)vec = type;
+++
+++	return (struct sensor_hw *)(vec + sizeof(s32)) + index;
+++}
+++
+++static struct sensor_algorithm *get_algo(struct oneplus_sensor_devinfo *di,
+++					 unsigned int type)
+++{
+++	struct sensor_algorithm *algos;
+++
+++	algos = (void *)((char *)di->info + sizeof(s32)
+++			 + SENSORS_NUM * vector_size(di->n_sources));
+++	algos[type].sensor_id = type;
+++
+++	return &algos[type];
+++}
+++
+++static void read_s32(struct device_node *np, const char *name, s32 *val)
+++{
+++	u32 tmp;
+++
+++	if (!of_property_read_u32(np, name, &tmp))
+++		*val = tmp;
+++}
+++
+++static void read_s32_list(struct device_node *np, const char *const *names,
+++			  unsigned int n_names, s32 *vals)
+++{
+++	unsigned int i;
+++
+++	for (i = 0; i < n_names; i++)
+++		read_s32(np, names[i], &vals[i]);
+++}
+++
+++/* Read "parameter-number" values of the property into the array */
+++static int read_counted_array(struct device_node *np, const char *name,
+++			      s32 *vals, unsigned int max)
+++{
+++	u32 n;
+++
+++	if (of_property_read_u32(np, "parameter-number", &n) || !n || n >= max)
+++		return 0;
+++
+++	if (of_property_read_u32_array(np, name, (u32 *)vals, n))
+++		return 0;
+++
+++	return n;
+++}
+++
+++static u8 read_u8_default(struct device_node *np, const char *name, u8 def)
+++{
+++	u32 tmp;
+++
+++	return of_property_read_u32(np, name, &tmp) ? def : tmp;
+++}
+++
+++static void parse_accel(struct sensor_hw *hw, struct device_node *np)
+++{
+++	static const char *const features[] = { "use-sois", "single-acc" };
+++
+++	read_s32_list(np, features, ARRAY_SIZE(features), hw->feature.feature);
+++}
+++
+++static void parse_mag(struct sensor_hw *hw, struct device_node *np)
+++{
+++	/* Identity soft iron matrix unless the device tree has one */
+++	hw->feature.parameter[0] = 10000;
+++	hw->feature.parameter[8] = 10000;
+++	hw->feature.parameter[16] = 10000;
+++
+++	read_counted_array(np, "soft-mag-parameter", hw->feature.parameter,
+++			   PARAMETER_NUM);
+++}
+++
+++static void parse_prox(struct sensor_hw *hw, struct device_node *np)
+++{
+++	static const char *const params[] = {
+++		"low_step", "high_step", "low_limit", "high_limit",
+++		"dirty_low_step", "dirty_high_step", "ps_dirty_limit",
+++		"ps_ir_limit", "ps_adjust_min", "ps_adjust_max",
+++		"sampling_count", "step_max", "step_min", "step_div",
+++		"anti_shake_delta", "dynamic_cali_max", "raw2offset_radio",
+++		"offset_max", "offset_range_min", "offset_range_max",
+++		"force_cali_limit", "cali_jitter_limit", "cal_offset_margin",
+++		"esd_gpio_use",
+++	};
+++	s32 close_pd = 0;
+++	int n;
+++
+++	read_s32(np, "ps-type", &hw->feature.feature[0]);
+++	read_s32(np, "ps_saturation", &hw->feature.feature[1]);
+++	read_s32(np, "is_need_close_pd", &close_pd);
+++	hw->feature.feature[2] = close_pd == 1;
+++	read_s32(np, "ps_factory_cali_max", &hw->feature.feature[3]);
+++
+++	read_s32_list(np, params, ARRAY_SIZE(params), hw->feature.parameter);
+++
+++	n = read_counted_array(np, "sensor-reg", &hw->feature.reg[1], REG_NUM - 1);
+++	hw->feature.reg[0] = n;
+++}
+++
+++static void parse_light(struct sensor_hw *hw, struct device_node *np)
+++{
+++	static const char *const features[] = {
+++		"als-type", "is-unit-device", "is-als-dri", "als-factor",
+++		"is_als_initialed", "als_buffer_length", "normalization_value",
+++		"use_lb_algo", "para-matrix", "als_ratio_type",
+++	};
+++	static const char *const params[] = {
+++		"coef_a", "coef_b", "coef_c", "coef_d", "coef_e",
+++		"coef_ratio", "gold-reset-scale", "lcd_type",
+++		"linear_comp_scope", "linear_comp_intercept", "temp_lux",
+++		"coef", "bal_coef", "ir_coef_stage_0", "ir_coef_stage_1",
+++		"ir_coef_stage_2", "ir_coef_stage_3", "ir_coef_val_0",
+++		"ir_coef_val_1", "ir_coef_val_2", "ir_coef_val_3",
+++		"ir_coef_val_4", "lb-dbv-coefs-id", "light-cut",
+++	};
+++
+++	hw->feature.feature[6] = 1057;	/* normalization_value */
+++	hw->feature.parameter[6] = 1001;	/* gold-reset-scale */
+++
+++	read_s32_list(np, features, ARRAY_SIZE(features), hw->feature.feature);
+++	read_s32_list(np, params, ARRAY_SIZE(params), hw->feature.parameter);
+++}
+++
+++static void parse_light_rear(struct sensor_hw *hw, struct device_node *np)
+++{
+++	read_s32(np, "als-factor", &hw->feature.feature[0]);
+++}
+++
+++static void parse_sar(struct sensor_hw *hw, struct device_node *np)
+++{
+++	static const s32 dc_offset_default[SAR_MAX_CH_NUM * 2] = {
+++		0, 0, 0, 0, 0, 30000, 30000, 30000, 30000, 30000,
+++	};
+++	s32 dc_offset = 0;
+++	u32 channels;
+++	int n;
+++
+++	n = read_counted_array(np, "sensor-reg", hw->feature.parameter,
+++			       PARAMETER_NUM);
+++
+++	/* The downstream driver stores the channel count after the register pairs */
+++	if (!of_property_read_u32(np, "channel-num", &channels) &&
+++	    channels < SAR_MAX_CH_NUM)
+++		hw->feature.feature[n / 2] = channels;
+++
+++	read_s32(np, "is-dc-offset", &dc_offset);
+++	if (dc_offset == 1) {
+++		memcpy(hw->feature.reg, dc_offset_default, sizeof(dc_offset_default));
+++		of_property_read_u32_array(np, "dc-offset", (u32 *)hw->feature.reg,
+++					   ARRAY_SIZE(dc_offset_default));
+++	}
+++}
+++
+++static void parse_down_sar(struct sensor_hw *hw, struct device_node *np)
+++{
+++	read_counted_array(np, "sensor-reg", hw->feature.parameter, PARAMETER_NUM);
+++}
+++
+++static void parse_cct(struct sensor_hw *hw, struct device_node *np, bool rear)
+++{
+++	static const char *const features[] = {
+++		"decoupled-driver", "publish-sensors", "is-ch-dri",
+++		"timer-size", "fac-cali-sensor",
+++	};
+++	static const char *const params[] = {
+++		"para-matrix", "atime", "first-atime", "fac-cali-atime",
+++		"first-again", "fac-cali-again", "fd-time", "fac-cali-fd-time",
+++		"first-fd-gain", "fac-cali-fd-gain", "algo-flag",
+++	};
+++
+++	/* Use the decoupled driver unless the device tree says otherwise */
+++	hw->feature.feature[0] = 1;
+++
+++	read_s32_list(np, features, ARRAY_SIZE(features), hw->feature.feature);
+++	read_s32_list(np, params, ARRAY_SIZE(params) - rear, hw->feature.parameter);
+++}
+++
+++static void parse_physical(struct oneplus_sensor_devinfo *di,
+++			   struct device_node *np, unsigned int type)
+++{
+++	struct sensor_hw *hw;
+++	u32 index;
+++
+++	if (of_property_read_u32(np, "sensor-index", &index) ||
+++	    index >= di->n_sources)
+++		return;
+++
+++	hw = get_hw(di, type, index);
+++
+++	hw->sensor_name = read_u8_default(np, "sensor-name", 0);
+++	hw->bus_number = read_u8_default(np, "bus-number", DEFAULT_CONFIG);
+++	hw->direction = read_u8_default(np, "sensor-direction", DEFAULT_CONFIG);
+++	hw->irq_number = read_u8_default(np, "irq-number", DEFAULT_CONFIG);
+++
+++	if (of_node_name_prefix(np, "gsensor"))
+++		parse_accel(hw, np);
+++	else if (of_node_name_prefix(np, "msensor"))
+++		parse_mag(hw, np);
+++	else if (of_node_name_prefix(np, "psensor"))
+++		parse_prox(hw, np);
+++	else if (of_node_name_prefix(np, "lsensor"))
+++		parse_light(hw, np);
+++	else if (of_node_name_prefix(np, "lrsensor"))
+++		parse_light_rear(hw, np);
+++	else if (of_node_name_prefix(np, "ssensor"))
+++		parse_sar(hw, np);
+++	else if (of_node_name_prefix(np, "sdsensor"))
+++		parse_down_sar(hw, np);
+++	else if (of_node_name_prefix(np, "cctsensor"))
+++		parse_cct(hw, np, false);
+++	else if (of_node_name_prefix(np, "cctrsensor"))
+++		parse_cct(hw, np, true);
+++}
+++
+++static void parse_virtual(struct oneplus_sensor_devinfo *di,
+++			  struct device_node *np, unsigned int type)
+++{
+++	struct sensor_algorithm *algo = get_algo(di, type);
+++
+++	if (of_node_name_prefix(np, "pickup")) {
+++		read_s32(np, "is-need-prox", &algo->feature[0]);
+++		read_s32(np, "prox-type", &algo->parameter[0]);
+++	} else if (of_node_name_prefix(np, "lux_aod")) {
+++		read_s32(np, "thrd-low", &algo->parameter[0]);
+++		read_s32(np, "thrd-high", &algo->parameter[1]);
+++		read_s32(np, "als-type", &algo->parameter[2]);
+++		read_s32(np, "fold-feature", &algo->feature[0]);
+++	} else if (of_node_name_prefix(np, "fp_display")) {
+++		read_s32(np, "prox-type", &algo->parameter[0]);
+++	} else if (of_node_name_prefix(np, "mag_fusion")) {
+++		read_s32(np, "fusion-type", &algo->feature[0]);
+++		read_s32(np, "mag-type", &algo->feature[1]);
+++	} else if (of_node_name_prefix(np, "oplus_measurement")) {
+++		read_s32(np, "acc-range", &algo->parameter[0]);
+++		read_s32(np, "gyro-range", &algo->parameter[1]);
+++	}
+++}
+++
+++static int oneplus_sensor_devinfo_probe(struct platform_device *pdev)
+++{
+++	struct oneplus_sensor_devinfo di;
+++	struct device *dev = &pdev->dev;
+++	size_t size = 0;
+++	u32 type;
+++	int ret;
+++
+++	di.info = qcom_smem_get(QCOM_SMEM_HOST_ANY, SMEM_SENSOR, &size);
+++	if (PTR_ERR(di.info) == -ENOENT) {
+++		ret = qcom_smem_alloc(QCOM_SMEM_HOST_ANY, SMEM_SENSOR, info_size(3));
+++		if (ret && ret != -EEXIST)
+++			return dev_err_probe(dev, ret, "failed to allocate SMEM item\n");
+++
+++		di.info = qcom_smem_get(QCOM_SMEM_HOST_ANY, SMEM_SENSOR, &size);
+++	}
+++	if (IS_ERR(di.info))
+++		return dev_err_probe(dev, PTR_ERR(di.info), "failed to get SMEM item\n");
+++
+++	if (size == info_size(3))
+++		di.n_sources = 3;
+++	else if (size == info_size(2))
+++		di.n_sources = 2;
+++	else
+++		return dev_err_probe(dev, -EINVAL, "unexpected SMEM item size %zu\n", size);
+++
+++	memset(di.info, 0, size);
+++
+++	for_each_available_child_of_node_scoped(dev->of_node, np) {
+++		bool is_virtual = of_property_read_bool(np, "is-virtual-sensor");
+++
+++		if (of_property_read_u32(np, "sensor-type", &type))
+++			continue;
+++
+++		if (is_virtual && type < SENSOR_ALGO_NUM)
+++			parse_virtual(&di, np, type);
+++		else if (!is_virtual && type < SENSORS_NUM)
+++			parse_physical(&di, np, type);
+++		else
+++			dev_warn(dev, "%pOFn: invalid sensor type %u\n", np, type);
+++	}
+++
+++	dev_dbg(dev, "filled SMEM item (%u sources per sensor)\n", di.n_sources);
+++
+++	return 0;
+++}
+++
+++static const struct of_device_id oneplus_sensor_devinfo_of_match[] = {
+++	{ .compatible = "oneplus,sensor-devinfo" },
+++	{}
+++};
+++MODULE_DEVICE_TABLE(of, oneplus_sensor_devinfo_of_match);
+++
+++static struct platform_driver oneplus_sensor_devinfo_driver = {
+++	.probe = oneplus_sensor_devinfo_probe,
+++	.driver = {
+++		.name = "oneplus-sensor-devinfo",
+++		.of_match_table = oneplus_sensor_devinfo_of_match,
+++	},
+++};
+++module_platform_driver(oneplus_sensor_devinfo_driver);
+++
+++MODULE_DESCRIPTION("OnePlus sensor device info for the sensor DSP");
+++MODULE_LICENSE("GPL");
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch b/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
+new file mode 100644
+index 0000000000..e64beba851
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
+@@ -0,0 +1,146 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 25 Oct 2026 23:40:27 +0100
++Subject: [PATCH 8/8] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
++ sensor device info
++
++Describe the sensor chips for the sensor DSP with the values of the vendor
++device tree overlay (project 19811), so that the firmware brings up the
++accelerometer.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 117 ++++++++++++++++++
++ 1 file changed, 117 insertions(+)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 140fc607d..135c16963 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -241,6 +241,123 @@ ramoops@b0000000 {
++ 		};
++ 	};
++ 
+++	/* Values from the vendor device tree overlay of project 19811 */
+++	sensor-devinfo {
+++		compatible = "oneplus,sensor-devinfo";
+++
+++		/* LSM6DSM */
+++		gsensor-0 {
+++			sensor-type = <0>;
+++			sensor-index = <0>;
+++			sensor-name = <0x01>;
+++			sensor-direction = <5>;
+++		};
+++
+++		/* AK09918 */
+++		msensor-0 {
+++			sensor-type = <2>;
+++			sensor-index = <0>;
+++			sensor-name = <0x01>;
+++			sensor-direction = <4>;
+++			parameter-number = <18>;
+++			soft-mag-parameter = <10000 0 0 0 0 0 0 0 10000
+++					      0 0 0 0 0 0 0 10000 0>;
+++		};
+++
+++		/* MMC5603 */
+++		msensor-1 {
+++			sensor-type = <2>;
+++			sensor-index = <1>;
+++			sensor-name = <0x02>;
+++			sensor-direction = <0>;
+++			parameter-number = <18>;
+++			soft-mag-parameter = <0x2703 0 0x188 1 0x144 0 0x123 1 0x26db
+++					      0 0x1df 0 0x6f 0 0x217 1 0x2b3e 0>;
+++		};
+++
+++		/* TCS3701 */
+++		lsensor-0 {
+++			sensor-type = <3>;
+++			sensor-index = <0>;
+++			sensor-name = <0x02>;
+++			bus-number = <5>;
+++			irq-number = <122>;
+++			als-type = <1>;
+++			is-unit-device = <0>;
+++			is-als-dri = <0>;
+++			als-factor = <116>;
+++			is_als_initialed = <0>;
+++			als_buffer_length = <10>;
+++		};
+++
+++		/* STK3A5X */
+++		psensor-0 {
+++			sensor-type = <4>;
+++			sensor-index = <0>;
+++			sensor-name = <0x01>;
+++			bus-number = <5>;
+++			irq-number = <122>;
+++			ps-type = <1>;
+++			ps_saturation = <2600>;
+++			is_need_close_pd = <0>;
+++			parameter-number = <4>;
+++			sensor-reg = <0x01 0x32 0x03 0x80 0xdb 0x00>;
+++		};
+++
+++		/* SX9324 */
+++		ssensor-0 {
+++			sensor-type = <5>;
+++			sensor-index = <0>;
+++			sensor-name = <0x01>;
+++			parameter-number = <18>;
+++			sensor-reg = <0x10 0x16 0x24 0x5f 0x26 0x00 0x27 0x5f 0x28
+++				      0x37 0x29 0x1f 0x2a 0x3d 0x36 0x24 0x37 0x24>;
+++		};
+++
+++		sdsensor-0 {
+++			sensor-type = <9>;
+++			sensor-index = <0>;
+++			sensor-name = <0x01>;
+++			parameter-number = <18>;
+++			sensor-reg = <0x23 0x00 0x24 0x5f 0x26 0x00 0x27 0x5f 0x28
+++				      0x3d 0x29 0x1f 0x2a 0x37 0x36 0x32 0x37 0x24>;
+++		};
+++
+++		cctrsensor-0 {
+++			sensor-type = <7>;
+++			sensor-index = <0>;
+++			sensor-name = <0x01>;
+++			decoupled-driver = <0>;
+++			para-matrix = <4>;
+++		};
+++
+++		pickup_detect {
+++			sensor-type = <0>;
+++			is-virtual-sensor;
+++			is-need-prox = <1>;
+++			prox-type = <0>;
+++		};
+++
+++		lux_aod {
+++			sensor-type = <1>;
+++			is-virtual-sensor;
+++			thrd-low = <12>;
+++			thrd-high = <50>;
+++			als-type = <0>;
+++		};
+++
+++		fp_display {
+++			sensor-type = <3>;
+++			is-virtual-sensor;
+++			prox-type = <0>;
+++		};
+++
+++		free_fall {
+++			sensor-type = <4>;
+++			is-virtual-sensor;
+++		};
+++	};
+++
++ 	vph_pwr: vph-pwr-regulator {
++ 		compatible = "regulator-fixed";
++ 		regulator-name = "vph_pwr";
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 928765f349..1d34c2a13b 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=2
++pkgrel=3
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -45,6 +45,9 @@ source="
+ 	0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+ 	0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+ 	0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++	0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
++	0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
++	0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -91,10 +94,13 @@ package() {
+ 
+ sha512sums="
+ 05df1589411d2817fecc403402f1dea2c405c5de102bf92e23089e430fc2c623702bd778fbea5b87f70ea02e9eff7f02a7de292f895d47ff40ae88dafdfbab58  linux-postmarketos-qcom-sm8250-sm8250-7.2.0_git20261010.tar.gz
+-0648368da35867dbd691b31a77a55f2d42b7bb40342c4f96b34ea186224eb616f69f0ca67ecb75bbd41376b92d04d636bd47977d7adee7b72957340f015f0d30  config-postmarketos-qcom-sm8250.aarch64
++556000a855860d389604875565d079f3f38bcd6ea9bf6d0cd544e142844d600c761f5a388d932b0c2d64633a24d8912e8f3cbfc7f2e5b82b7f46bd83405afc5c  config-postmarketos-qcom-sm8250.aarch64
+ 5e537d2bb93ddf60885d6becfe45236471283635625ec91dc1e08d850b379ab76864feeba82cafe76c91dce8b38745c03a7db6d8c7ada189de6fb0088b03c978  0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+ ae35a05a2f8ffa27034aa93de1f290515a37707aca6ec2d62f97f999959dad81dedf2698641a0b0d40618eb3a7ba6892cb06d0c42713db12df978e511a283479  0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+ 98cd21aec44485188a558d4d778b7ae11774b7afdc01d0a67ab3eebefa1a9601f490361c03b31d051c5b6303384bef5f3f9a6bd78552ebadacc52ed6273fa81d  0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+ 8ff2a91cb703ce90acf389ae138b66685814309acc9689b3104fd556f8032778a94abcc392813a5985ce795a870fe2a2496605e9a42876d153114bec5df69bf3  0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+ fd2a19e3daf796c10a3b6c260e1dfed42b5c7656460d34e45c345fa16b74f275e60b753f89ae2a71b9144784612d8aefc83ecca8edb6d709faf16540a68ea17d  0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++881f1a7156a361ca874a997bf008e235230d8c2f7e2c1ad46beeefbfb22228473d9b5befb749095cec885a4848774d222b2f82d574cbddb738e011b75ecad718  0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
++755cf27066228b52fd557c8bbba8beab520c51f9a19fd6396bda726728e82e0646d3690e79d9bf4fd8b2e5872c814bdf11a3f3b8891cbd16f2a31e238e1a12df  0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
++9a73f49605a302663c04623860b6aacc5c9c1cfd11863f4e5971f8b17628ae11eebde133a93efc562cb166f410d5f222b21c7184548cc7401b03a06510f8f704  0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
+ "
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64 b/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
+index 02f88d8e88..5293339df5 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
++++ b/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
+@@ -6945,6 +6945,7 @@ CONFIG_QCOM_LLCC=y
+ CONFIG_QCOM_KRYO_L2_ACCESSORS=y
+ CONFIG_QCOM_MDT_LOADER=y
+ # CONFIG_QCOM_OCMEM is not set
++CONFIG_QCOM_ONEPLUS_SENSOR_DEVINFO=y
+ CONFIG_QCOM_PD_MAPPER=y
+ CONFIG_QCOM_PDR_HELPERS=y
+ CONFIG_QCOM_PDR_MSG=y
+-- 
+2.43.0
+

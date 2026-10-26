@@ -1,0 +1,165 @@
+From 2b909a365f9128eb860667a01e4af59d3451d0ff Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 19:02:43 +0100
+Subject: [PATCH] temp/libcamera: add Samsung S5K3M5 sensor support
+
+Add the camera sensor helper and sensor properties for the Samsung
+S5K3M5 (telephoto camera of the OnePlus 8 Pro) and a tuning file for the
+software ISP with the black level of 64 at 10 bits measured on the
+sensor. Without the helper the AGC can only change the exposure time and
+the image stays far too dark.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ..._sensor-Add-Samsung-S5K3M5-sensor-pr.patch | 75 +++++++++++++++++++
+ temp/libcamera/APKBUILD                       |  6 +-
+ temp/libcamera/s5k3m5.yaml                    | 11 +++
+ 3 files changed, 91 insertions(+), 1 deletion(-)
+ create mode 100644 temp/libcamera/0007-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch
+ create mode 100755 temp/libcamera/s5k3m5.yaml
+
+diff --git a/temp/libcamera/0007-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch b/temp/libcamera/0007-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch
+new file mode 100644
+index 0000000000..c2ff24ad61
+--- /dev/null
++++ b/temp/libcamera/0007-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch
+@@ -0,0 +1,75 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 26 Oct 2026 18:42:05 +0100
++Subject: [PATCH] libcamera: camera_sensor: Add Samsung S5K3M5 sensor
++ properties and helper
++
++Add the camera sensor properties and the camera sensor helper for the
++Samsung S5K3M5, used as telephoto camera in the OnePlus 8 Pro.
++
++The mainline driver exposes the analogue gain as an integer multiplier
++(it writes the value shifted by 5 to the gain register, where 0x20 is
++1x), so the gain model is linear with a factor of 1. The black level of
++64 at 10 bits was measured on the sensor. The test pattern modes follow
++the menu of the driver.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ src/ipa/libipa/camera_sensor_helper.cpp          | 13 +++++++++++++
++ .../sensor/camera_sensor_properties.cpp          | 16 ++++++++++++++++
++ 2 files changed, 29 insertions(+)
++
++diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
++index bb95700..2085730 100644
++--- a/src/ipa/libipa/camera_sensor_helper.cpp
+++++ b/src/ipa/libipa/camera_sensor_helper.cpp
++@@ -839,6 +839,19 @@ public:
++ };
++ REGISTER_CAMERA_SENSOR_HELPER("ov13858", CameraSensorHelperOv13858)
++ 
+++class CameraSensorHelperS5k3m5 : public CameraSensorHelper
+++{
+++public:
+++	CameraSensorHelperS5k3m5()
+++	{
+++		/* Measured on the sensor: 64 at 10bits. */
+++		blackLevel_ = 4096;
+++		/* The driver exposes the analogue gain as a multiplier. */
+++		gain_ = AnalogueGainLinear{ 1, 0, 0, 1 };
+++	}
+++};
+++REGISTER_CAMERA_SENSOR_HELPER("s5k3m5", CameraSensorHelperS5k3m5)
+++
++ class CameraSensorHelperVd55g1 : public CameraSensorHelper
++ {
++ public:
++diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
++index cbe55bc..592002c 100644
++--- a/src/libcamera/sensor/camera_sensor_properties.cpp
+++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
++@@ -519,6 +519,22 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
++ 			},
++ 			.sensorDelays = { },
++ 		} },
+++		{ "s5k3m5", {
+++			.unitCellSize = { 1000, 1000 },
+++			.testPatternModes = {
+++				{ controls::draft::TestPatternModeOff, 0 },
+++				{ controls::draft::TestPatternModeSolidColor, 1 },
+++				{ controls::draft::TestPatternModeColorBars, 2 },
+++				{ controls::draft::TestPatternModeColorBarsFadeToGray, 3 },
+++				{ controls::draft::TestPatternModePn9, 4 },
+++			},
+++			.sensorDelays = {
+++				.exposureDelay = 2,
+++				.gainDelay = 2,
+++				.vblankDelay = 2,
+++				.hblankDelay = 2
+++			},
+++		} },
++ 		{ "vd55g1", {
++ 			.unitCellSize = { 2160, 2160 },
++ 			.testPatternModes = {
++-- 
++2.43.0
++
+diff --git a/temp/libcamera/APKBUILD b/temp/libcamera/APKBUILD
+index 93c64d78d2..fbc30359c2 100644
+--- a/temp/libcamera/APKBUILD
++++ b/temp/libcamera/APKBUILD
+@@ -3,7 +3,7 @@ maintainer="Robert Mader <robert.mader@collabora.com>"
+ pkgname=libcamera
+ _pkgver=0.7.2
+ pkgver=9999$_pkgver
+-pkgrel=4
++pkgrel=5
+ pkgdesc="Linux camera framework"
+ url="https://libcamera.org/"
+ arch="all"
+@@ -55,6 +55,7 @@ _tuning_files="
+ 	imx800.yaml
+ 	imx858.yaml
+ 	s5k3l6xx.yaml
++	s5k3m5.yaml
+ 	s5kjn1.yaml
+ 	"
+ source="https://gitlab.freedesktop.org/camera/libcamera/-/archive/v$_pkgver/libcamera-v$_pkgver.tar.gz
+@@ -64,6 +65,7 @@ source="https://gitlab.freedesktop.org/camera/libcamera/-/archive/v$_pkgver/libc
+ 	0004-debayer-Further-demote-Unsupported-input-format-log.patch
+ 	0005-ipa-simple-Derive-AGC-minimum-gain-step-from-sensor-.patch
+ 	0006-libcamera-Add-quad-Bayer-CFA-layout-support.patch
++	0007-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch
+ 	qcam.desktop
+ 	$_tuning_files
+ 	"
+@@ -184,6 +186,7 @@ b317cdc96f61682ee0bf26dfb7c4d6441db9a9c5b93ab53528121a8cd44862b3d59cbaa3881bb083
+ 915dcc65861cb27485636647586155f3dc9ace914b4df51e1889c05e15a82a87a35ef06c44a3f09153d29fc834bc10aa60394c594233fe72a52b6fa0a8605c9a  0004-debayer-Further-demote-Unsupported-input-format-log.patch
+ 50fd6a28353534e143418207ee07d462f017078091c2909ca2d495840facf7849dfebb061a7ed29a62f57dbf4e506aa9ec085b0c05ccd054d19c31a987b7e37d  0005-ipa-simple-Derive-AGC-minimum-gain-step-from-sensor-.patch
+ 47277fedc943ad45391ba150f1c4ae70b7bd041fb162239996fe5430429c50fe27a1c5915c9de90cb714ec578c68c4ba5e4c25a3431e35e721fdd232368b703f  0006-libcamera-Add-quad-Bayer-CFA-layout-support.patch
++24f5fced54c2e1c65e2ed022db66c0f865869dcde829e3d310fc5321a3f88d77c22eda1dd7ff6777286518f3da6acf82e447dd498834f81bc38101b05aafab41  0007-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch
+ 22167a4eceb6d1b40b0b7c45fdf116c71684f5340de7f767535cb8e160ad9d2ae0f00cb3d461f73a344520a48a4641cf46226841d78bee06bfbfd2a91337f754  qcam.desktop
+ 2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  hi846.yaml
+ 4942edd551dcf51630246f71e600c17760d3574d5d45e5530d6cfeefe2c9ab1a812fbe220f8e89d92e19a499c592b2507c801ca4eb74cd15fcecb60bff5c650b  imx355.yaml
+@@ -194,5 +197,6 @@ b317cdc96f61682ee0bf26dfb7c4d6441db9a9c5b93ab53528121a8cd44862b3d59cbaa3881bb083
+ 55dab9dcb9b1982143b9d63e4e51138c5bffd7c8f4a8e4e122750b3ad9d475446956bc297d9f564819ade4be75a575d06633a064e14f8ba3ef77986783c5f067  imx800.yaml
+ 55dab9dcb9b1982143b9d63e4e51138c5bffd7c8f4a8e4e122750b3ad9d475446956bc297d9f564819ade4be75a575d06633a064e14f8ba3ef77986783c5f067  imx858.yaml
+ 2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  s5k3l6xx.yaml
++2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  s5k3m5.yaml
+ d59020e62520ee622282c85ce7bcdfe453c99becf48cc1005c5f8a4bb8b2511b19c89f38fb3c994e7c6a79d1f84e2ed5f5a09b4c5bdc1dc4a44b071dbccf0d44  s5kjn1.yaml
+ "
+diff --git a/temp/libcamera/s5k3m5.yaml b/temp/libcamera/s5k3m5.yaml
+new file mode 100755
+index 0000000000..e903d96a8f
+--- /dev/null
++++ b/temp/libcamera/s5k3m5.yaml
+@@ -0,0 +1,11 @@
++# SPDX-License-Identifier: CC0-1.0
++%YAML 1.1
++---
++version: 1
++algorithms:
++  - BlackLevel:
++      blackLevel: 4096
++  - Awb:
++  - Adjust:
++  - Agc:
++...
+-- 
+2.43.0
+

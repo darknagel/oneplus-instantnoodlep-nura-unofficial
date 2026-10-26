@@ -1,0 +1,75 @@
+From b4b39954dbbe9398050fe2af65475bd67b9b00f7 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 18:42:05 +0100
+Subject: [PATCH 1/2] libcamera: camera_sensor: Add Samsung S5K3M5 sensor
+ properties and helper
+
+Add the camera sensor properties and the camera sensor helper for the
+Samsung S5K3M5, used as telephoto camera in the OnePlus 8 Pro.
+
+The mainline driver exposes the analogue gain as an integer multiplier
+(it writes the value shifted by 5 to the gain register, where 0x20 is
+1x), so the gain model is linear with a factor of 1. The black level of
+64 at 10 bits was measured on the sensor. The test pattern modes follow
+the menu of the driver.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ src/ipa/libipa/camera_sensor_helper.cpp          | 13 +++++++++++++
+ .../sensor/camera_sensor_properties.cpp          | 16 ++++++++++++++++
+ 2 files changed, 29 insertions(+)
+
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+index bb95700..2085730 100644
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -839,6 +839,19 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("ov13858", CameraSensorHelperOv13858)
+ 
++class CameraSensorHelperS5k3m5 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperS5k3m5()
++	{
++		/* Measured on the sensor: 64 at 10bits. */
++		blackLevel_ = 4096;
++		/* The driver exposes the analogue gain as a multiplier. */
++		gain_ = AnalogueGainLinear{ 1, 0, 0, 1 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("s5k3m5", CameraSensorHelperS5k3m5)
++
+ class CameraSensorHelperVd55g1 : public CameraSensorHelper
+ {
+ public:
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+index cbe55bc..592002c 100644
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -519,6 +519,22 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 			},
+ 			.sensorDelays = { },
+ 		} },
++		{ "s5k3m5", {
++			.unitCellSize = { 1000, 1000 },
++			.testPatternModes = {
++				{ controls::draft::TestPatternModeOff, 0 },
++				{ controls::draft::TestPatternModeSolidColor, 1 },
++				{ controls::draft::TestPatternModeColorBars, 2 },
++				{ controls::draft::TestPatternModeColorBarsFadeToGray, 3 },
++				{ controls::draft::TestPatternModePn9, 4 },
++			},
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
+ 		{ "vd55g1", {
+ 			.unitCellSize = { 2160, 2160 },
+ 			.testPatternModes = {
+-- 
+2.43.0
+

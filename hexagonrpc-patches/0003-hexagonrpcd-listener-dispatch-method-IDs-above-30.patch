@@ -1,0 +1,40 @@
+From b66a4288bc31e8b019d8b1ee39b4771535c79785 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 23:02:57 +0100
+Subject: [PATCH 3/5] hexagonrpcd: listener: dispatch method IDs above 30
+
+The method ID in the scalars only has 5 bits. Remote processors call
+methods with higher IDs as method 31 and pass the actual method ID as
+the first input number. This is why apps_std_stat (31) already has an
+extra input number.
+
+Read the actual method ID for method 31, so that methods like
+apps_std_frename (33) can be implemented.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ hexagonrpcd/listener.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/hexagonrpcd/listener.c b/hexagonrpcd/listener.c
+index 81ef614..b070b56 100644
+--- a/hexagonrpcd/listener.c
++++ b/hexagonrpcd/listener.c
+@@ -285,6 +285,14 @@ static int invoke_requested_procedure(size_t n_ifaces,
+ 		return 1;
+ 	}
+ 
++	/*
++	 * Method IDs above 30 do not fit in the scalars. The remote processor
++	 * sends them as method 31 with the actual method ID as the first input
++	 * number, which the method definition must account for.
++	 */
++	if (method == 31 && REMOTE_SCALARS_INBUFS(sc) > 0 && decoded[0].s >= 4)
++		method = ((const uint32_t *) decoded[0].p)[0];
++
+ 	if (method >= ifaces[handle]->n_procs) {
+ 		fprintf(stderr, "Unsupported method: %u (%08x)\n", method, sc);
+ 		*result = AEE_EUNSUPPORTED;
+-- 
+2.43.0
+

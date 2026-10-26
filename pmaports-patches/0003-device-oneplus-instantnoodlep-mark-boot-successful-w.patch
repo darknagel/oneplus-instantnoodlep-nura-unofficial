@@ -1,0 +1,43 @@
+From 5ee4ce122c00523d292af37b2ea04e7936a25e9e Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 22:17:54 +0100
+Subject: [PATCH] device-oneplus-instantnoodlep: mark boot successful with
+ qbootctl
+
+Without this, the bootloader decrements the retry counter of the active
+slot on every boot. After a few boots the slot is marked unbootable and
+the device switches to the other slot, which does not boot postmarketOS
+(black screen). Depend on soc-qcom-qbootctl like oneplus-kebab does.
+
+Recovery if already affected: fastboot set_active a (or the slot that
+holds postmarketOS).
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ device/testing/device-oneplus-instantnoodlep/APKBUILD | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/device/testing/device-oneplus-instantnoodlep/APKBUILD b/device/testing/device-oneplus-instantnoodlep/APKBUILD
+index 2d787232b5..48368c3882 100644
+--- a/device/testing/device-oneplus-instantnoodlep/APKBUILD
++++ b/device/testing/device-oneplus-instantnoodlep/APKBUILD
+@@ -3,7 +3,7 @@ maintainer="kouling <k0ul1ng@proton.me>"
+ pkgname=device-oneplus-instantnoodlep
+ pkgdesc="OnePlus 8 Pro"
+ pkgver=7
+-pkgrel=2
++pkgrel=3
+ url="https://postmarketos.org"
+ license="MIT"
+ arch="aarch64"
+@@ -16,6 +16,7 @@ depends="
+ 	linux-postmarketos-qcom-sm8250
+ 	mkbootimg
+ 	postmarketos-base
++	soc-qcom-qbootctl
+ "
+ makedepends="
+ 	devicepkg-dev
+-- 
+2.43.0
+

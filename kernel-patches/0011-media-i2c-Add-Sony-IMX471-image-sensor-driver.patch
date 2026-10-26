@@ -1,0 +1,1116 @@
+From 2356a4d7c3d5cf630c53c846b754a3b7f74e3f2a Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 19:21:55 +0100
+Subject: [PATCH 11/12] media: i2c: Add Sony IMX471 image sensor driver
+
+Add a driver for the Sony IMX471, a 16 MP sensor used as front camera
+in the OnePlus 8 Pro. It supports two RAW10 modes over four CSI-2 D-PHY
+lanes with a 19.2 MHz MCLK:
+
+  4656x3496 at 30 fps (link frequency 748.8 MHz)
+  2328x1748 at 60 fps, 2x2 binned (link frequency 400 MHz)
+
+The register settings come from the camera module data of the phone.
+Exposure, analogue gain (1024 / (1024 - code), up to 16x), vertical
+blanking and the test patterns are exposed as controls.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/media/i2c/Kconfig  |   10 +
+ drivers/media/i2c/Makefile |    1 +
+ drivers/media/i2c/imx471.c | 1050 ++++++++++++++++++++++++++++++++++++
+ 3 files changed, 1061 insertions(+)
+ create mode 100755 drivers/media/i2c/imx471.c
+
+diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
+index 5d173e0ec..b7199f9f5 100644
+--- a/drivers/media/i2c/Kconfig
++++ b/drivers/media/i2c/Kconfig
+@@ -287,6 +287,16 @@ config VIDEO_IMX415
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called imx415.
+ 
++config VIDEO_IMX471
++	tristate "Sony IMX471 sensor support"
++	select V4L2_CCI_I2C
++	help
++	  This is a Video4Linux2 sensor driver for the Sony
++	  IMX471 camera.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called imx471.
++
+ config VIDEO_MAX9271_LIB
+ 	tristate
+ 
+diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
+index e45359efe..acbd321fc 100644
+--- a/drivers/media/i2c/Makefile
++++ b/drivers/media/i2c/Makefile
+@@ -61,6 +61,7 @@ obj-$(CONFIG_VIDEO_IMX335) += imx335.o
+ obj-$(CONFIG_VIDEO_IMX355) += imx355.o
+ obj-$(CONFIG_VIDEO_IMX412) += imx412.o
+ obj-$(CONFIG_VIDEO_IMX415) += imx415.o
++obj-$(CONFIG_VIDEO_IMX471) += imx471.o
+ obj-$(CONFIG_VIDEO_IR_I2C) += ir-kbd-i2c.o
+ obj-$(CONFIG_VIDEO_ISL7998X) += isl7998x.o
+ obj-$(CONFIG_VIDEO_KS0127) += ks0127.o
+diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
+new file mode 100755
+index 000000000..f8eeb42d2
+--- /dev/null
++++ b/drivers/media/i2c/imx471.c
+@@ -0,0 +1,1050 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Sony IMX471 image sensor driver
++ *
++ * The register settings are taken from the camera module data of the
++ * OnePlus 8 Pro, which uses the IMX471 as front camera with a 19.2 MHz
++ * MCLK and four CSI-2 D-PHY data lanes.
++ */
++
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/pm_runtime.h>
++#include <linux/regulator/consumer.h>
++#include <linux/units.h>
++#include <media/v4l2-cci.h>
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-fwnode.h>
++
++#define IMX471_MCLK_FREQ		(19200 * HZ_PER_KHZ)
++#define IMX471_DATA_LANES		4
++
++#define IMX471_REG_CHIP_ID		CCI_REG16(0x0016)
++#define IMX471_CHIP_ID			0x0471
++
++#define IMX471_REG_MODE_SELECT		CCI_REG8(0x0100)
++#define IMX471_MODE_STANDBY		0x00
++#define IMX471_MODE_STREAMING		0x01
++
++#define IMX471_REG_EXPOSURE		CCI_REG16(0x0202)
++#define IMX471_EXPOSURE_MIN		4
++#define IMX471_EXPOSURE_STEP		1
++#define IMX471_EXPOSURE_MARGIN		10
++#define IMX471_EXPOSURE_DEFAULT		1000
++
++/* Analogue gain = 1024 / (1024 - code), up to 16x */
++#define IMX471_REG_AGAIN		CCI_REG16(0x0204)
++#define IMX471_AGAIN_MIN		0
++#define IMX471_AGAIN_MAX		960
++#define IMX471_AGAIN_STEP		1
++#define IMX471_AGAIN_DEFAULT		0
++
++#define IMX471_REG_VTS			CCI_REG16(0x0340)
++#define IMX471_VTS_MAX			0xffff
++
++#define IMX471_REG_TEST_PATTERN		CCI_REG16(0x0600)
++
++#define IMX471_NATIVE_WIDTH		4656
++#define IMX471_NATIVE_HEIGHT		3496
++
++#define to_imx471(_sd)			container_of(_sd, struct imx471, sd)
++
++static const s64 imx471_link_freq_menu[] = {
++	748800000,
++	400000000,
++};
++
++struct imx471_reg_list {
++	const struct cci_reg_sequence *regs;
++	unsigned int num_regs;
++};
++
++struct imx471_mode {
++	u32 width;			/* Frame width in pixels */
++	u32 height;			/* Frame height in pixels */
++	u32 hts;			/* Horizontal timing size */
++	u32 vts;			/* Default vertical timing size */
++	u32 link_freq_index;		/* Index into imx471_link_freq_menu */
++	u64 pixel_rate;			/* Pixel rate matching hts and vts */
++	struct v4l2_rect crop;		/* Analogue crop rectangle */
++
++	const struct imx471_reg_list reg_list;	/* Sensor register setting */
++};
++
++static const char * const imx471_test_pattern_menu[] = {
++	"Disabled",
++	"Solid colour",
++	"Colour bars",
++	"Fade to grey colour bars",
++	"PN9",
++};
++
++static const char * const imx471_supply_names[] = {
++	"avdd",		/* Analog power */
++	"dvdd",		/* Digital core power */
++	"dovdd",	/* Digital I/O power */
++};
++
++#define IMX471_NUM_SUPPLIES	ARRAY_SIZE(imx471_supply_names)
++
++struct imx471 {
++	struct device *dev;
++	struct regmap *regmap;
++	struct clk *mclk;
++	struct gpio_desc *reset_gpio;
++	struct regulator_bulk_data supplies[IMX471_NUM_SUPPLIES];
++
++	struct v4l2_subdev sd;
++	struct media_pad pad;
++
++	struct v4l2_ctrl_handler ctrl_handler;
++	struct v4l2_ctrl *link_freq;
++	struct v4l2_ctrl *pixel_rate;
++	struct v4l2_ctrl *hblank;
++	struct v4l2_ctrl *vblank;
++	struct v4l2_ctrl *exposure;
++
++	const struct imx471_mode *mode;
++};
++
++static const struct cci_reg_sequence imx471_init_regs[] = {
++	{ CCI_REG8(0x0136), 0x13 },
++	{ CCI_REG8(0x0137), 0x33 },
++	{ CCI_REG8(0x3c7e), 0x04 },
++	{ CCI_REG8(0x3c7f), 0x04 },
++	{ CCI_REG8(0x300a), 0x02 },
++	{ CCI_REG8(0x3e35), 0x00 },
++	{ CCI_REG8(0x3e36), 0x00 },
++	{ CCI_REG8(0x3e37), 0x00 },
++	{ CCI_REG8(0x3f7f), 0x01 },
++	{ CCI_REG8(0x4431), 0x04 },
++	{ CCI_REG8(0x531c), 0x01 },
++	{ CCI_REG8(0x531d), 0x02 },
++	{ CCI_REG8(0x531e), 0x04 },
++	{ CCI_REG8(0x5928), 0x00 },
++	{ CCI_REG8(0x5929), 0x2f },
++	{ CCI_REG8(0x592a), 0x00 },
++	{ CCI_REG8(0x592b), 0x85 },
++	{ CCI_REG8(0x592c), 0x00 },
++	{ CCI_REG8(0x592d), 0x32 },
++	{ CCI_REG8(0x592e), 0x00 },
++	{ CCI_REG8(0x592f), 0x88 },
++	{ CCI_REG8(0x5930), 0x00 },
++	{ CCI_REG8(0x5931), 0x3d },
++	{ CCI_REG8(0x5932), 0x00 },
++	{ CCI_REG8(0x5933), 0x93 },
++	{ CCI_REG8(0x5938), 0x00 },
++	{ CCI_REG8(0x5939), 0x24 },
++	{ CCI_REG8(0x593a), 0x00 },
++	{ CCI_REG8(0x593b), 0x7a },
++	{ CCI_REG8(0x593c), 0x00 },
++	{ CCI_REG8(0x593d), 0x24 },
++	{ CCI_REG8(0x593e), 0x00 },
++	{ CCI_REG8(0x593f), 0x7a },
++	{ CCI_REG8(0x5940), 0x00 },
++	{ CCI_REG8(0x5941), 0x2f },
++	{ CCI_REG8(0x5942), 0x00 },
++	{ CCI_REG8(0x5943), 0x85 },
++	{ CCI_REG8(0x5e12), 0x00 },
++	{ CCI_REG8(0x5e13), 0x23 },
++	{ CCI_REG8(0x5f06), 0x08 },
++	{ CCI_REG8(0x5f07), 0x81 },
++	{ CCI_REG8(0x5f0b), 0xeb },
++	{ CCI_REG8(0x5f0c), 0xae },
++	{ CCI_REG8(0x5f0d), 0x15 },
++	{ CCI_REG8(0x5f0e), 0x6e },
++	{ CCI_REG8(0x5f0f), 0x03 },
++	{ CCI_REG8(0x5f10), 0xa5 },
++	{ CCI_REG8(0x5f11), 0xc6 },
++	{ CCI_REG8(0x5f12), 0x92 },
++	{ CCI_REG8(0x5f13), 0xb9 },
++	{ CCI_REG8(0x5f14), 0x5e },
++	{ CCI_REG8(0x5f17), 0x5e },
++	{ CCI_REG8(0x5f18), 0xdc },
++	{ CCI_REG8(0x5f19), 0x23 },
++	{ CCI_REG8(0x5f1a), 0xdb },
++	{ CCI_REG8(0x5f1b), 0xc7 },
++	{ CCI_REG8(0x5f1c), 0x5b },
++	{ CCI_REG8(0x5f1d), 0x7e },
++	{ CCI_REG8(0x5f1e), 0x20 },
++	{ CCI_REG8(0x5f1f), 0x51 },
++	{ CCI_REG8(0x5f20), 0xa2 },
++	{ CCI_REG8(0x5f21), 0x46 },
++	{ CCI_REG8(0x5f22), 0x87 },
++	{ CCI_REG8(0x5f23), 0x2c },
++	{ CCI_REG8(0x5f24), 0x1d },
++	{ CCI_REG8(0x5f25), 0x10 },
++	{ CCI_REG8(0x5f26), 0x76 },
++	{ CCI_REG8(0x5f27), 0xa1 },
++	{ CCI_REG8(0x5f28), 0xc6 },
++	{ CCI_REG8(0x5f29), 0x07 },
++	{ CCI_REG8(0x5f2a), 0x1a },
++	{ CCI_REG8(0x5f2b), 0x1c },
++	{ CCI_REG8(0x5f2c), 0xa8 },
++	{ CCI_REG8(0x5f2d), 0x76 },
++	{ CCI_REG8(0x5f2e), 0x61 },
++	{ CCI_REG8(0x5f2f), 0xc6 },
++	{ CCI_REG8(0x5f30), 0x87 },
++	{ CCI_REG8(0x5f31), 0x2c },
++	{ CCI_REG8(0x5f32), 0x1d },
++	{ CCI_REG8(0x5f33), 0x10 },
++	{ CCI_REG8(0x5f34), 0x76 },
++	{ CCI_REG8(0x5f35), 0xa1 },
++	{ CCI_REG8(0x5f36), 0xc6 },
++	{ CCI_REG8(0x5f37), 0x07 },
++	{ CCI_REG8(0x5f38), 0x1a },
++	{ CCI_REG8(0x5f39), 0x1c },
++	{ CCI_REG8(0x5f3a), 0xa8 },
++	{ CCI_REG8(0x5f3b), 0x76 },
++	{ CCI_REG8(0x5f3c), 0xa1 },
++	{ CCI_REG8(0x5f3d), 0xc6 },
++	{ CCI_REG8(0x5f3e), 0x87 },
++	{ CCI_REG8(0x5f3f), 0x2c },
++	{ CCI_REG8(0x5f40), 0x1d },
++	{ CCI_REG8(0x5f41), 0x10 },
++	{ CCI_REG8(0x5f42), 0x76 },
++	{ CCI_REG8(0x5f43), 0xa1 },
++	{ CCI_REG8(0x5f44), 0xc6 },
++	{ CCI_REG8(0x5f45), 0x07 },
++	{ CCI_REG8(0x5f46), 0x2a },
++	{ CCI_REG8(0x5f47), 0x1d },
++	{ CCI_REG8(0x5f48), 0x08 },
++	{ CCI_REG8(0x5f49), 0x76 },
++	{ CCI_REG8(0x5f4a), 0x81 },
++	{ CCI_REG8(0x5f4b), 0xc0 },
++	{ CCI_REG8(0x5f75), 0x27 },
++	{ CCI_REG8(0x5f76), 0xee },
++	{ CCI_REG8(0x5f77), 0xee },
++	{ CCI_REG8(0x5f78), 0xee },
++	{ CCI_REG8(0x5f79), 0xe5 },
++	{ CCI_REG8(0x7990), 0x01 },
++	{ CCI_REG8(0x7993), 0x5d },
++	{ CCI_REG8(0x7994), 0x5d },
++	{ CCI_REG8(0x7995), 0xa1 },
++	{ CCI_REG8(0x799a), 0x01 },
++	{ CCI_REG8(0x799d), 0x00 },
++	{ CCI_REG8(0x8169), 0x01 },
++	{ CCI_REG8(0x8359), 0x01 },
++	{ CCI_REG8(0x9300), 0x2a },
++	{ CCI_REG8(0x9301), 0x24 },
++	{ CCI_REG8(0x9302), 0x1e },
++	{ CCI_REG8(0x9304), 0x2c },
++	{ CCI_REG8(0x9305), 0x23 },
++	{ CCI_REG8(0x9306), 0x1f },
++	{ CCI_REG8(0x9308), 0x2d },
++	{ CCI_REG8(0x9309), 0x28 },
++	{ CCI_REG8(0x930a), 0x26 },
++	{ CCI_REG8(0x930c), 0x2e },
++	{ CCI_REG8(0x930d), 0x2c },
++	{ CCI_REG8(0x930e), 0x23 },
++	{ CCI_REG8(0x9310), 0x2e },
++	{ CCI_REG8(0x9311), 0x28 },
++	{ CCI_REG8(0x9312), 0x23 },
++	{ CCI_REG8(0x9314), 0x31 },
++	{ CCI_REG8(0x9315), 0x31 },
++	{ CCI_REG8(0x9316), 0x2c },
++	{ CCI_REG8(0x9317), 0x19 },
++	{ CCI_REG8(0xb046), 0x01 },
++	{ CCI_REG8(0xb048), 0x01 },
++	{ CCI_REG8(0xaa06), 0x3f },
++	{ CCI_REG8(0xaa07), 0x05 },
++	{ CCI_REG8(0xaa08), 0x04 },
++	{ CCI_REG8(0xaa12), 0x3f },
++	{ CCI_REG8(0xaa13), 0x04 },
++	{ CCI_REG8(0xaa14), 0x03 },
++	{ CCI_REG8(0xab55), 0x02 },
++	{ CCI_REG8(0xab57), 0x01 },
++	{ CCI_REG8(0xab59), 0x01 },
++	{ CCI_REG8(0xabb4), 0x00 },
++	{ CCI_REG8(0xabb5), 0x01 },
++	{ CCI_REG8(0xabb6), 0x00 },
++	{ CCI_REG8(0xabb7), 0x01 },
++	{ CCI_REG8(0xabb8), 0x00 },
++	{ CCI_REG8(0xabb9), 0x01 },
++	{ CCI_REG8(0x0101), 0x03 },
++	{ CCI_REG8(0x0106), 0x01 },
++};
++
++static const struct cci_reg_sequence imx471_4656x3496_regs[] = {
++	{ CCI_REG8(0x0112), 0x0a },
++	{ CCI_REG8(0x0113), 0x0a },
++	{ CCI_REG8(0x0114), 0x03 },
++	{ CCI_REG8(0x0342), 0x14 },
++	{ CCI_REG8(0x0343), 0x00 },
++	{ CCI_REG8(0x0340), 0x0e },
++	{ CCI_REG8(0x0341), 0xb2 },
++	{ CCI_REG8(0x0344), 0x00 },
++	{ CCI_REG8(0x0345), 0x00 },
++	{ CCI_REG8(0x0346), 0x00 },
++	{ CCI_REG8(0x0347), 0x00 },
++	{ CCI_REG8(0x0348), 0x12 },
++	{ CCI_REG8(0x0349), 0x2f },
++	{ CCI_REG8(0x034a), 0x0d },
++	{ CCI_REG8(0x034b), 0xa7 },
++	{ CCI_REG8(0x0381), 0x01 },
++	{ CCI_REG8(0x0383), 0x01 },
++	{ CCI_REG8(0x0385), 0x01 },
++	{ CCI_REG8(0x0387), 0x01 },
++	{ CCI_REG8(0x0900), 0x00 },
++	{ CCI_REG8(0x0901), 0x11 },
++	{ CCI_REG8(0x0902), 0x0a },
++	{ CCI_REG8(0x3f4c), 0x01 },
++	{ CCI_REG8(0x3f4d), 0x01 },
++	{ CCI_REG8(0x0408), 0x00 },
++	{ CCI_REG8(0x0409), 0x00 },
++	{ CCI_REG8(0x040a), 0x00 },
++	{ CCI_REG8(0x040b), 0x00 },
++	{ CCI_REG8(0x040c), 0x12 },
++	{ CCI_REG8(0x040d), 0x30 },
++	{ CCI_REG8(0x040e), 0x0d },
++	{ CCI_REG8(0x040f), 0xa8 },
++	{ CCI_REG8(0x034c), 0x12 },
++	{ CCI_REG8(0x034d), 0x30 },
++	{ CCI_REG8(0x034e), 0x0d },
++	{ CCI_REG8(0x034f), 0xa8 },
++	{ CCI_REG8(0x0301), 0x06 },
++	{ CCI_REG8(0x0303), 0x02 },
++	{ CCI_REG8(0x0305), 0x03 },
++	{ CCI_REG8(0x0306), 0x01 },
++	{ CCI_REG8(0x0307), 0x0f },
++	{ CCI_REG8(0x030b), 0x01 },
++	{ CCI_REG8(0x030d), 0x06 },
++	{ CCI_REG8(0x030e), 0x01 },
++	{ CCI_REG8(0x030f), 0xd4 },
++	{ CCI_REG8(0x0310), 0x01 },
++	{ CCI_REG8(0x3f78), 0x02 },
++	{ CCI_REG8(0x3f79), 0x0a },
++	{ CCI_REG8(0x3ffe), 0x00 },
++	{ CCI_REG8(0x3fff), 0x18 },
++	{ CCI_REG8(0x5f0a), 0xb2 },
++	{ CCI_REG8(0x0202), 0x0e },
++	{ CCI_REG8(0x0203), 0xa0 },
++	{ CCI_REG8(0x0204), 0x00 },
++	{ CCI_REG8(0x0205), 0x00 },
++	{ CCI_REG8(0x020e), 0x01 },
++	{ CCI_REG8(0x020f), 0x00 },
++};
++
++static const struct cci_reg_sequence imx471_2328x1748_regs[] = {
++	{ CCI_REG8(0x0112), 0x0a },
++	{ CCI_REG8(0x0113), 0x0a },
++	{ CCI_REG8(0x0114), 0x03 },
++	{ CCI_REG8(0x0342), 0x0a },
++	{ CCI_REG8(0x0343), 0x00 },
++	{ CCI_REG8(0x0340), 0x08 },
++	{ CCI_REG8(0x0341), 0x4c },
++	{ CCI_REG8(0x0344), 0x00 },
++	{ CCI_REG8(0x0345), 0x00 },
++	{ CCI_REG8(0x0346), 0x00 },
++	{ CCI_REG8(0x0347), 0x00 },
++	{ CCI_REG8(0x0348), 0x12 },
++	{ CCI_REG8(0x0349), 0x2f },
++	{ CCI_REG8(0x034a), 0x0d },
++	{ CCI_REG8(0x034b), 0xa7 },
++	{ CCI_REG8(0x0381), 0x01 },
++	{ CCI_REG8(0x0383), 0x01 },
++	{ CCI_REG8(0x0385), 0x01 },
++	{ CCI_REG8(0x0387), 0x01 },
++	{ CCI_REG8(0x0900), 0x01 },
++	{ CCI_REG8(0x0901), 0x22 },
++	{ CCI_REG8(0x0902), 0x08 },
++	{ CCI_REG8(0x3f4c), 0x81 },
++	{ CCI_REG8(0x3f4d), 0x81 },
++	{ CCI_REG8(0x0408), 0x00 },
++	{ CCI_REG8(0x0409), 0x00 },
++	{ CCI_REG8(0x040a), 0x00 },
++	{ CCI_REG8(0x040b), 0x00 },
++	{ CCI_REG8(0x040c), 0x09 },
++	{ CCI_REG8(0x040d), 0x18 },
++	{ CCI_REG8(0x040e), 0x06 },
++	{ CCI_REG8(0x040f), 0xd4 },
++	{ CCI_REG8(0x034c), 0x09 },
++	{ CCI_REG8(0x034d), 0x18 },
++	{ CCI_REG8(0x034e), 0x06 },
++	{ CCI_REG8(0x034f), 0xd4 },
++	{ CCI_REG8(0x0301), 0x06 },
++	{ CCI_REG8(0x0303), 0x02 },
++	{ CCI_REG8(0x0305), 0x03 },
++	{ CCI_REG8(0x0306), 0x00 },
++	{ CCI_REG8(0x0307), 0x99 },
++	{ CCI_REG8(0x030b), 0x01 },
++	{ CCI_REG8(0x030d), 0x06 },
++	{ CCI_REG8(0x030e), 0x00 },
++	{ CCI_REG8(0x030f), 0xfa },
++	{ CCI_REG8(0x0310), 0x01 },
++	{ CCI_REG8(0x3f78), 0x01 },
++	{ CCI_REG8(0x3f79), 0x31 },
++	{ CCI_REG8(0x3ffe), 0x00 },
++	{ CCI_REG8(0x3fff), 0x8a },
++	{ CCI_REG8(0x5f0a), 0xb6 },
++	{ CCI_REG8(0x0202), 0x08 },
++	{ CCI_REG8(0x0203), 0x3a },
++	{ CCI_REG8(0x0204), 0x00 },
++	{ CCI_REG8(0x0205), 0x00 },
++	{ CCI_REG8(0x020e), 0x01 },
++	{ CCI_REG8(0x020f), 0x00 },
++};
++
++static const struct imx471_mode imx471_supported_modes[] = {
++	{
++		/* 30 fps */
++		.width = 4656,
++		.height = 3496,
++		.hts = 5120,
++		.vts = 3762,
++		.link_freq_index = 0,
++		.pixel_rate = 578133333,
++		.crop = {
++			.left = 0,
++			.top = 0,
++			.width = 4656,
++			.height = 3496,
++		},
++		.reg_list = {
++			.regs = imx471_4656x3496_regs,
++			.num_regs = ARRAY_SIZE(imx471_4656x3496_regs),
++		},
++	},
++	{
++		/* 2x2 binned, 60 fps */
++		.width = 2328,
++		.height = 1748,
++		.hts = 2560,
++		.vts = 2124,
++		.link_freq_index = 1,
++		.pixel_rate = 326400000,
++		.crop = {
++			.left = 0,
++			.top = 0,
++			.width = 4656,
++			.height = 3496,
++		},
++		.reg_list = {
++			.regs = imx471_2328x1748_regs,
++			.num_regs = ARRAY_SIZE(imx471_2328x1748_regs),
++		},
++	},
++};
++
++static int imx471_set_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct imx471 *imx471 = container_of(ctrl->handler, struct imx471,
++					     ctrl_handler);
++	const struct imx471_mode *mode = imx471->mode;
++	s64 exposure_max;
++	int ret;
++
++	if (ctrl->id == V4L2_CID_VBLANK) {
++		/* Update max exposure while meeting expected vblanking */
++		exposure_max = mode->height + ctrl->val - IMX471_EXPOSURE_MARGIN;
++		__v4l2_ctrl_modify_range(imx471->exposure,
++					 imx471->exposure->minimum,
++					 exposure_max,
++					 imx471->exposure->step,
++					 imx471->exposure->default_value);
++	}
++
++	/* V4L2 controls are applied, when sensor is powered up for streaming */
++	if (!pm_runtime_get_if_active(imx471->dev))
++		return 0;
++
++	switch (ctrl->id) {
++	case V4L2_CID_ANALOGUE_GAIN:
++		ret = cci_write(imx471->regmap, IMX471_REG_AGAIN,
++				ctrl->val, NULL);
++		break;
++	case V4L2_CID_EXPOSURE:
++		ret = cci_write(imx471->regmap, IMX471_REG_EXPOSURE,
++				ctrl->val, NULL);
++		break;
++	case V4L2_CID_VBLANK:
++		ret = cci_write(imx471->regmap, IMX471_REG_VTS,
++				ctrl->val + mode->height, NULL);
++		break;
++	case V4L2_CID_TEST_PATTERN:
++		ret = cci_write(imx471->regmap, IMX471_REG_TEST_PATTERN,
++				ctrl->val, NULL);
++		break;
++	default:
++		ret = -EINVAL;
++		break;
++	}
++
++	pm_runtime_put(imx471->dev);
++
++	return ret;
++}
++
++static const struct v4l2_ctrl_ops imx471_ctrl_ops = {
++	.s_ctrl = imx471_set_ctrl,
++};
++
++static int imx471_init_controls(struct imx471 *imx471)
++{
++	struct v4l2_ctrl_handler *ctrl_hdlr = &imx471->ctrl_handler;
++	const struct imx471_mode *mode = imx471->mode;
++	s64 hblank, vblank, exposure_max;
++	struct v4l2_fwnode_device_properties props;
++	int ret;
++
++	v4l2_ctrl_handler_init(ctrl_hdlr, 9);
++
++	imx471->link_freq = v4l2_ctrl_new_int_menu(ctrl_hdlr, &imx471_ctrl_ops,
++						   V4L2_CID_LINK_FREQ,
++						   ARRAY_SIZE(imx471_link_freq_menu) - 1,
++						   mode->link_freq_index,
++						   imx471_link_freq_menu);
++	if (imx471->link_freq)
++		imx471->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	imx471->pixel_rate = v4l2_ctrl_new_std(ctrl_hdlr, &imx471_ctrl_ops,
++					       V4L2_CID_PIXEL_RATE,
++					       imx471_supported_modes[1].pixel_rate,
++					       imx471_supported_modes[0].pixel_rate,
++					       1, mode->pixel_rate);
++	if (imx471->pixel_rate)
++		imx471->pixel_rate->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	hblank = mode->hts - mode->width;
++	imx471->hblank = v4l2_ctrl_new_std(ctrl_hdlr, &imx471_ctrl_ops,
++					   V4L2_CID_HBLANK, hblank,
++					   hblank, 1, hblank);
++	if (imx471->hblank)
++		imx471->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	vblank = mode->vts - mode->height;
++	imx471->vblank = v4l2_ctrl_new_std(ctrl_hdlr, &imx471_ctrl_ops,
++					   V4L2_CID_VBLANK, vblank,
++					   IMX471_VTS_MAX - mode->height, 1,
++					   vblank);
++
++	v4l2_ctrl_new_std(ctrl_hdlr, &imx471_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
++			  IMX471_AGAIN_MIN, IMX471_AGAIN_MAX,
++			  IMX471_AGAIN_STEP, IMX471_AGAIN_DEFAULT);
++
++	exposure_max = mode->vts - IMX471_EXPOSURE_MARGIN;
++	imx471->exposure = v4l2_ctrl_new_std(ctrl_hdlr, &imx471_ctrl_ops,
++					     V4L2_CID_EXPOSURE,
++					     IMX471_EXPOSURE_MIN,
++					     exposure_max,
++					     IMX471_EXPOSURE_STEP,
++					     IMX471_EXPOSURE_DEFAULT);
++
++	v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &imx471_ctrl_ops,
++				     V4L2_CID_TEST_PATTERN,
++				     ARRAY_SIZE(imx471_test_pattern_menu) - 1,
++				     0, 0, imx471_test_pattern_menu);
++
++	ret = v4l2_fwnode_device_parse(imx471->dev, &props);
++	if (ret)
++		goto error_free_hdlr;
++
++	ret = v4l2_ctrl_new_fwnode_properties(ctrl_hdlr, &imx471_ctrl_ops,
++					      &props);
++	if (ret)
++		goto error_free_hdlr;
++
++	if (ctrl_hdlr->error) {
++		ret = ctrl_hdlr->error;
++		goto error_free_hdlr;
++	}
++
++	imx471->sd.ctrl_handler = ctrl_hdlr;
++
++	return 0;
++
++error_free_hdlr:
++	v4l2_ctrl_handler_free(ctrl_hdlr);
++
++	return ret;
++}
++
++static int imx471_enable_streams(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state, u32 pad,
++				 u64 streams_mask)
++{
++	struct imx471 *imx471 = to_imx471(sd);
++	const struct imx471_reg_list *reg_list = &imx471->mode->reg_list;
++	int ret;
++
++	ret = pm_runtime_resume_and_get(imx471->dev);
++	if (ret)
++		return ret;
++
++	ret = cci_multi_reg_write(imx471->regmap, imx471_init_regs,
++				  ARRAY_SIZE(imx471_init_regs), NULL);
++	cci_multi_reg_write(imx471->regmap, reg_list->regs,
++			    reg_list->num_regs, &ret);
++	if (ret)
++		goto error;
++
++	ret = __v4l2_ctrl_handler_setup(imx471->sd.ctrl_handler);
++	if (ret)
++		goto error;
++
++	ret = cci_write(imx471->regmap, IMX471_REG_MODE_SELECT,
++			IMX471_MODE_STREAMING, NULL);
++	if (ret)
++		goto error;
++
++	return 0;
++
++error:
++	dev_err(imx471->dev, "failed to start streaming: %d\n", ret);
++	pm_runtime_put_autosuspend(imx471->dev);
++
++	return ret;
++}
++
++static int imx471_disable_streams(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *state, u32 pad,
++				  u64 streams_mask)
++{
++	struct imx471 *imx471 = to_imx471(sd);
++	int ret;
++
++	ret = cci_write(imx471->regmap, IMX471_REG_MODE_SELECT,
++			IMX471_MODE_STANDBY, NULL);
++	if (ret)
++		dev_err(imx471->dev, "failed to stop streaming: %d\n", ret);
++
++	pm_runtime_put_autosuspend(imx471->dev);
++
++	return ret;
++}
++
++static void imx471_update_pad_format(const struct imx471_mode *mode,
++				     struct v4l2_mbus_framefmt *fmt)
++{
++	fmt->code = MEDIA_BUS_FMT_SBGGR10_1X10;
++	fmt->width = mode->width;
++	fmt->height = mode->height;
++	fmt->field = V4L2_FIELD_NONE;
++	fmt->colorspace = V4L2_COLORSPACE_RAW;
++	fmt->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
++	fmt->quantization = V4L2_QUANTIZATION_FULL_RANGE;
++	fmt->xfer_func = V4L2_XFER_FUNC_NONE;
++}
++
++static int imx471_set_pad_format(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state,
++				 struct v4l2_subdev_format *fmt)
++{
++	struct imx471 *imx471 = to_imx471(sd);
++	s64 hblank, vblank, exposure_max;
++	const struct imx471_mode *mode;
++
++	mode = v4l2_find_nearest_size(imx471_supported_modes,
++				      ARRAY_SIZE(imx471_supported_modes),
++				      width, height,
++				      fmt->format.width, fmt->format.height);
++
++	imx471_update_pad_format(mode, &fmt->format);
++
++	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY || imx471->mode == mode)
++		goto set_format;
++
++	__v4l2_ctrl_s_ctrl(imx471->link_freq, mode->link_freq_index);
++	__v4l2_ctrl_s_ctrl_int64(imx471->pixel_rate, mode->pixel_rate);
++
++	hblank = mode->hts - mode->width;
++	__v4l2_ctrl_modify_range(imx471->hblank, hblank, hblank, 1, hblank);
++
++	vblank = mode->vts - mode->height;
++	__v4l2_ctrl_modify_range(imx471->vblank, vblank,
++				 IMX471_VTS_MAX - mode->height, 1, vblank);
++	__v4l2_ctrl_s_ctrl(imx471->vblank, vblank);
++
++	exposure_max = mode->vts - IMX471_EXPOSURE_MARGIN;
++	__v4l2_ctrl_modify_range(imx471->exposure, IMX471_EXPOSURE_MIN,
++				 exposure_max, IMX471_EXPOSURE_STEP,
++				 IMX471_EXPOSURE_DEFAULT);
++
++	if (imx471->sd.ctrl_handler->error)
++		return imx471->sd.ctrl_handler->error;
++
++	imx471->mode = mode;
++
++set_format:
++	*v4l2_subdev_state_get_format(state, 0) = fmt->format;
++
++	return 0;
++}
++
++static int imx471_enum_mbus_code(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *sd_state,
++				 struct v4l2_subdev_mbus_code_enum *code)
++{
++	if (code->index > 0)
++		return -EINVAL;
++
++	code->code = MEDIA_BUS_FMT_SBGGR10_1X10;
++
++	return 0;
++}
++
++static int imx471_enum_frame_size(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *sd_state,
++				  struct v4l2_subdev_frame_size_enum *fse)
++{
++	if (fse->index >= ARRAY_SIZE(imx471_supported_modes))
++		return -EINVAL;
++
++	if (fse->code != MEDIA_BUS_FMT_SBGGR10_1X10)
++		return -EINVAL;
++
++	fse->min_width = imx471_supported_modes[fse->index].width;
++	fse->max_width = fse->min_width;
++	fse->min_height = imx471_supported_modes[fse->index].height;
++	fse->max_height = fse->min_height;
++
++	return 0;
++}
++
++static int imx471_get_selection(struct v4l2_subdev *sd,
++				struct v4l2_subdev_state *sd_state,
++				struct v4l2_subdev_selection *sel)
++{
++	struct imx471 *imx471 = to_imx471(sd);
++
++	switch (sel->target) {
++	case V4L2_SEL_TGT_CROP:
++		sel->r = imx471->mode->crop;
++		return 0;
++	case V4L2_SEL_TGT_NATIVE_SIZE:
++	case V4L2_SEL_TGT_CROP_BOUNDS:
++	case V4L2_SEL_TGT_CROP_DEFAULT:
++		sel->r.left = 0;
++		sel->r.top = 0;
++		sel->r.width = IMX471_NATIVE_WIDTH;
++		sel->r.height = IMX471_NATIVE_HEIGHT;
++		return 0;
++	default:
++		return -EINVAL;
++	}
++}
++
++static int imx471_init_state(struct v4l2_subdev *sd,
++			     struct v4l2_subdev_state *state)
++{
++	struct imx471 *imx471 = to_imx471(sd);
++	struct v4l2_subdev_format fmt = {
++		.which = V4L2_SUBDEV_FORMAT_TRY,
++		.pad = 0,
++		.format = {
++			.width = imx471->mode->width,
++			.height = imx471->mode->height,
++		},
++	};
++
++	imx471_set_pad_format(sd, state, &fmt);
++
++	return 0;
++}
++
++static const struct v4l2_subdev_video_ops imx471_video_ops = {
++	.s_stream = v4l2_subdev_s_stream_helper,
++};
++
++static const struct v4l2_subdev_pad_ops imx471_pad_ops = {
++	.set_fmt = imx471_set_pad_format,
++	.get_fmt = v4l2_subdev_get_fmt,
++	.get_selection = imx471_get_selection,
++	.enum_mbus_code = imx471_enum_mbus_code,
++	.enum_frame_size = imx471_enum_frame_size,
++	.enable_streams = imx471_enable_streams,
++	.disable_streams = imx471_disable_streams,
++};
++
++static const struct v4l2_subdev_ops imx471_subdev_ops = {
++	.video = &imx471_video_ops,
++	.pad = &imx471_pad_ops,
++};
++
++static const struct v4l2_subdev_internal_ops imx471_internal_ops = {
++	.init_state = imx471_init_state,
++};
++
++static const struct media_entity_operations imx471_subdev_entity_ops = {
++	.link_validate = v4l2_subdev_link_validate,
++};
++
++static int imx471_identify_sensor(struct imx471 *imx471)
++{
++	u64 val;
++	int ret;
++
++	ret = cci_read(imx471->regmap, IMX471_REG_CHIP_ID, &val, NULL);
++	if (ret) {
++		dev_err(imx471->dev, "failed to read chip id: %d\n", ret);
++		return ret;
++	}
++
++	if (val != IMX471_CHIP_ID) {
++		dev_err(imx471->dev, "chip id mismatch: %x!=%llx\n",
++			IMX471_CHIP_ID, val);
++		return -ENODEV;
++	}
++
++	return 0;
++}
++
++static int imx471_check_hwcfg(struct imx471 *imx471)
++{
++	struct fwnode_handle *fwnode = dev_fwnode(imx471->dev), *ep;
++	struct v4l2_fwnode_endpoint bus_cfg = {
++		.bus_type = V4L2_MBUS_CSI2_DPHY,
++	};
++	unsigned long freq_bitmap;
++	int ret;
++
++	if (!fwnode)
++		return -ENODEV;
++
++	ep = fwnode_graph_get_next_endpoint(fwnode, NULL);
++	if (!ep)
++		return -EINVAL;
++
++	ret = v4l2_fwnode_endpoint_alloc_parse(ep, &bus_cfg);
++	fwnode_handle_put(ep);
++	if (ret)
++		return ret;
++
++	if (bus_cfg.bus.mipi_csi2.num_data_lanes != IMX471_DATA_LANES) {
++		dev_err(imx471->dev, "Invalid number of data lanes: %u\n",
++			bus_cfg.bus.mipi_csi2.num_data_lanes);
++		ret = -EINVAL;
++		goto endpoint_free;
++	}
++
++	ret = v4l2_link_freq_to_bitmap(imx471->dev, bus_cfg.link_frequencies,
++				       bus_cfg.nr_of_link_frequencies,
++				       imx471_link_freq_menu,
++				       ARRAY_SIZE(imx471_link_freq_menu),
++				       &freq_bitmap);
++	if (ret)
++		goto endpoint_free;
++
++	/* Both link frequencies are needed, one for each mode */
++	if (freq_bitmap != GENMASK(ARRAY_SIZE(imx471_link_freq_menu) - 1, 0)) {
++		dev_err(imx471->dev, "Not all link frequencies are supported\n");
++		ret = -EINVAL;
++	}
++
++endpoint_free:
++	v4l2_fwnode_endpoint_free(&bus_cfg);
++
++	return ret;
++}
++
++static int imx471_power_on(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct imx471 *imx471 = to_imx471(sd);
++	int ret;
++
++	ret = regulator_bulk_enable(IMX471_NUM_SUPPLIES, imx471->supplies);
++	if (ret)
++		return ret;
++
++	/* Let the supplies settle before the clock is enabled */
++	usleep_range(2 * USEC_PER_MSEC, 3 * USEC_PER_MSEC);
++
++	ret = clk_prepare_enable(imx471->mclk);
++	if (ret)
++		goto disable_regulators;
++
++	usleep_range(2 * USEC_PER_MSEC, 3 * USEC_PER_MSEC);
++	gpiod_set_value_cansleep(imx471->reset_gpio, 0);
++	usleep_range(10 * USEC_PER_MSEC, 15 * USEC_PER_MSEC);
++
++	return 0;
++
++disable_regulators:
++	regulator_bulk_disable(IMX471_NUM_SUPPLIES, imx471->supplies);
++
++	return ret;
++}
++
++static int imx471_power_off(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct imx471 *imx471 = to_imx471(sd);
++
++	gpiod_set_value_cansleep(imx471->reset_gpio, 1);
++
++	clk_disable_unprepare(imx471->mclk);
++
++	regulator_bulk_disable(IMX471_NUM_SUPPLIES, imx471->supplies);
++
++	return 0;
++}
++
++static int imx471_probe(struct i2c_client *client)
++{
++	struct imx471 *imx471;
++	unsigned long freq;
++	unsigned int i;
++	int ret;
++
++	imx471 = devm_kzalloc(&client->dev, sizeof(*imx471), GFP_KERNEL);
++	if (!imx471)
++		return -ENOMEM;
++
++	imx471->dev = &client->dev;
++	v4l2_i2c_subdev_init(&imx471->sd, client, &imx471_subdev_ops);
++
++	imx471->regmap = devm_cci_regmap_init_i2c(client, 16);
++	if (IS_ERR(imx471->regmap))
++		return dev_err_probe(imx471->dev, PTR_ERR(imx471->regmap),
++				     "failed to init CCI\n");
++
++	imx471->mclk = devm_v4l2_sensor_clk_get(imx471->dev, NULL);
++	if (IS_ERR(imx471->mclk))
++		return dev_err_probe(imx471->dev, PTR_ERR(imx471->mclk),
++				     "failed to get MCLK clock\n");
++
++	freq = clk_get_rate(imx471->mclk);
++	if (freq != IMX471_MCLK_FREQ)
++		return dev_err_probe(imx471->dev, -EINVAL,
++				     "MCLK clock frequency %lu is not supported\n",
++				     freq);
++
++	ret = imx471_check_hwcfg(imx471);
++	if (ret)
++		return dev_err_probe(imx471->dev, ret,
++				     "failed to check HW configuration\n");
++
++	imx471->reset_gpio = devm_gpiod_get_optional(imx471->dev, "reset",
++						     GPIOD_OUT_HIGH);
++	if (IS_ERR(imx471->reset_gpio))
++		return dev_err_probe(imx471->dev, PTR_ERR(imx471->reset_gpio),
++				     "cannot get reset GPIO\n");
++
++	for (i = 0; i < IMX471_NUM_SUPPLIES; i++)
++		imx471->supplies[i].supply = imx471_supply_names[i];
++
++	ret = devm_regulator_bulk_get(imx471->dev, IMX471_NUM_SUPPLIES,
++				      imx471->supplies);
++	if (ret)
++		return dev_err_probe(imx471->dev, ret,
++				     "failed to get supply regulators\n");
++
++	/* The sensor must be powered on to read the CHIP_ID register */
++	ret = imx471_power_on(imx471->dev);
++	if (ret)
++		return ret;
++
++	ret = imx471_identify_sensor(imx471);
++	if (ret) {
++		dev_err_probe(imx471->dev, ret, "failed to find sensor\n");
++		goto power_off;
++	}
++
++	imx471->mode = &imx471_supported_modes[0];
++	ret = imx471_init_controls(imx471);
++	if (ret) {
++		dev_err_probe(imx471->dev, ret, "failed to init controls\n");
++		goto power_off;
++	}
++
++	imx471->sd.state_lock = imx471->ctrl_handler.lock;
++	imx471->sd.internal_ops = &imx471_internal_ops;
++	imx471->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	imx471->sd.entity.ops = &imx471_subdev_entity_ops;
++	imx471->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
++	imx471->pad.flags = MEDIA_PAD_FL_SOURCE;
++
++	ret = media_entity_pads_init(&imx471->sd.entity, 1, &imx471->pad);
++	if (ret) {
++		dev_err_probe(imx471->dev, ret,
++			      "failed to init media entity pads\n");
++		goto v4l2_ctrl_handler_free;
++	}
++
++	ret = v4l2_subdev_init_finalize(&imx471->sd);
++	if (ret < 0) {
++		dev_err_probe(imx471->dev, ret,
++			      "failed to finalize subdev init\n");
++		goto media_entity_cleanup;
++	}
++
++	pm_runtime_set_active(imx471->dev);
++	pm_runtime_enable(imx471->dev);
++
++	ret = v4l2_async_register_subdev_sensor(&imx471->sd);
++	if (ret < 0) {
++		dev_err_probe(imx471->dev, ret,
++			      "failed to register V4L2 subdev\n");
++		goto subdev_cleanup;
++	}
++
++	pm_runtime_set_autosuspend_delay(imx471->dev, 1000);
++	pm_runtime_use_autosuspend(imx471->dev);
++	pm_runtime_idle(imx471->dev);
++
++	return 0;
++
++subdev_cleanup:
++	v4l2_subdev_cleanup(&imx471->sd);
++	pm_runtime_disable(imx471->dev);
++	pm_runtime_set_suspended(imx471->dev);
++
++media_entity_cleanup:
++	media_entity_cleanup(&imx471->sd.entity);
++
++v4l2_ctrl_handler_free:
++	v4l2_ctrl_handler_free(imx471->sd.ctrl_handler);
++
++power_off:
++	imx471_power_off(imx471->dev);
++
++	return ret;
++}
++
++static void imx471_remove(struct i2c_client *client)
++{
++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
++	struct imx471 *imx471 = to_imx471(sd);
++
++	v4l2_async_unregister_subdev(sd);
++	v4l2_subdev_cleanup(sd);
++	media_entity_cleanup(&sd->entity);
++	v4l2_ctrl_handler_free(sd->ctrl_handler);
++	pm_runtime_disable(imx471->dev);
++
++	if (!pm_runtime_status_suspended(imx471->dev)) {
++		imx471_power_off(imx471->dev);
++		pm_runtime_set_suspended(imx471->dev);
++	}
++}
++
++static const struct dev_pm_ops imx471_pm_ops = {
++	SET_RUNTIME_PM_OPS(imx471_power_off, imx471_power_on, NULL)
++};
++
++static const struct of_device_id imx471_of_match[] = {
++	{ .compatible = "sony,imx471" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, imx471_of_match);
++
++static struct i2c_driver imx471_i2c_driver = {
++	.driver = {
++		.name = "imx471",
++		.pm = &imx471_pm_ops,
++		.of_match_table = imx471_of_match,
++	},
++	.probe = imx471_probe,
++	.remove = imx471_remove,
++};
++
++module_i2c_driver(imx471_i2c_driver);
++
++MODULE_AUTHOR("Timo <1788603+darknagel@users.noreply.github.com>");
++MODULE_DESCRIPTION("Sony IMX471 image sensor driver");
++MODULE_LICENSE("GPL");
+-- 
+2.43.0
+

@@ -1,0 +1,508 @@
+From 5ad4dc982498a2e0ba2245ef3c84c4fd661c0c43 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 23:02:57 +0100
+Subject: [PATCH 5/5] hexagonrpcd: support writing files in a writable persist
+ directory
+
+Implement the fwrite, fsync, fremove, ftrunc and frename methods of
+apps_std and open files for writing in fopen_with_env.
+
+Add the -w option to serve a writable directory as
+/mnt/vendor/persist/sensors/registry. The sensor DSP of some devices
+(e.g. the OnePlus 8 Pro) keeps trying to write registry groups to it and
+does not bring up all sensors when this fails.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ hexagonrpcd/apps_std.c              | 199 +++++++++++++++++++++++++---
+ hexagonrpcd/hexagonrpcd.1           |   5 +
+ hexagonrpcd/interfaces/apps_std.def |   5 +
+ hexagonrpcd/rpcd.c                  |  16 ++-
+ hexagonrpcd/rpcd_builder.c          |  45 +++++--
+ hexagonrpcd/rpcd_builder.h          |   3 +-
+ 6 files changed, 244 insertions(+), 29 deletions(-)
+
+diff --git a/hexagonrpcd/apps_std.c b/hexagonrpcd/apps_std.c
+index ff4d5a7..413e7ca 100644
+--- a/hexagonrpcd/apps_std.c
++++ b/hexagonrpcd/apps_std.c
+@@ -20,6 +20,7 @@
+  */
+ 
+ #include <errno.h>
++#include <fcntl.h>
+ #include <stdio.h>
+ #include <stdint.h>
+ #include <string.h>
+@@ -120,6 +121,34 @@ static uint32_t apps_std_fread(void *data,
+ 	return 0;
+ }
+ 
++static uint32_t apps_std_fwrite(void *data,
++				const struct fastrpc_io_buffer *inbufs,
++				struct fastrpc_io_buffer *outbufs)
++{
++	struct apps_std_ctx *ctx = data;
++	const uint32_t *fd = inbufs[0].p;
++	struct {
++		uint32_t written;
++		uint32_t is_eof;
++	} *first_out = outbufs[0].p;
++	ssize_t ret;
++
++	ret = hexagonfs_write(ctx->fds, *fd, inbufs[1].s, inbufs[1].p);
++	if (ret < 0) {
++		fprintf(stderr, "Could not write file: %s\n", strerror(-ret));
++		return AEE_EFAILED;
++	}
++
++#ifdef HEXAGONRPC_VERBOSE
++	printf("write(%u, %u) -> %ld\n", *fd, inbufs[1].s, ret);
++#endif
++
++	first_out->written = ret;
++	first_out->is_eof = 0;
++
++	return 0;
++}
++
+ static uint32_t apps_std_fseek(void *data,
+ 			       const struct fastrpc_io_buffer *inbufs,
+ 			       struct fastrpc_io_buffer *outbufs)
+@@ -150,14 +179,32 @@ static uint32_t apps_std_fseek(void *data,
+ 	return 0;
+ }
+ 
++/*
++ * Convert a fopen(3) mode string to open(2) flags.
++ */
++static int apps_std_mode_to_flags(const char *mode)
++{
++	int rw = strchr(mode, '+') != NULL ? O_RDWR : O_WRONLY;
++
++	switch (mode[0]) {
++		case 'r':
++			return rw == O_RDWR ? O_RDWR : O_RDONLY;
++		case 'w':
++			return rw | O_CREAT | O_TRUNC;
++		case 'a':
++			return rw | O_CREAT | O_APPEND;
++		default:
++			return -1;
++	}
++}
++
+ static uint32_t apps_std_fopen_with_env(void *data,
+ 					const struct fastrpc_io_buffer *inbufs,
+ 					struct fastrpc_io_buffer *outbufs)
+ {
+ 	struct apps_std_ctx *ctx = data;
+ 	uint32_t *out = outbufs[0].p;
+-	char rw_mode;
+-	int dirfd, fd;
++	int dirfd, fd, flags;
+ 
+ 	// The name and environment variable must also be NULL-terminated
+ 	if (((const char *) inbufs[1].p)[inbufs[1].s - 1] != 0
+@@ -165,11 +212,12 @@ static uint32_t apps_std_fopen_with_env(void *data,
+ 	 || ((const char *) inbufs[4].p)[inbufs[4].s - 1] != 0)
+ 		return AEE_EBADPARM;
+ 
+-	rw_mode = ((const char *) inbufs[4].p)[0];
+-	if (rw_mode == 'w' || rw_mode == 'a') {
+-		fprintf(stderr, "Tried to open %s for writing\n",
++	flags = apps_std_mode_to_flags(inbufs[4].p);
++	if (flags < 0) {
++		fprintf(stderr, "Unknown mode %s to open %s\n",
++				(const char *) inbufs[4].p,
+ 				(const char *) inbufs[3].p);
+-		return AEE_EUNSUPPORTED;
++		return AEE_EBADPARM;
+ 	}
+ 
+ 	if (!strcmp(inbufs[1].p, "ADSP_LIBRARY_PATH")) {
+@@ -188,18 +236,20 @@ static uint32_t apps_std_fopen_with_env(void *data,
+ 		return AEE_EFAILED;
+ 	}
+ 
+-	fd = hexagonfs_openat(ctx->fds, ctx->rootfd, dirfd, inbufs[3].p);
++	fd = hexagonfs_openat_flags(ctx->fds, ctx->rootfd, dirfd,
++				    inbufs[3].p, flags);
+ 	if (fd < 0) {
+-		fprintf(stderr, "Could not open %s: %s\n",
++		fprintf(stderr, "Could not open %s (%s): %s\n",
+ 				(const char *) inbufs[3].p,
+-				strerror(errno));
++				(const char *) inbufs[4].p,
++				strerror(-fd));
+ 		return AEE_EFAILED;
+ 	}
+ 
+ #ifdef HEXAGONRPC_VERBOSE
+-	printf("openat($%s, %s, %c) -> %d\n", (const char *) inbufs[1].p,
++	printf("openat($%s, %s, %s) -> %d\n", (const char *) inbufs[1].p,
+ 					      (const char *) inbufs[3].p,
+-					      rw_mode,
++					      (const char *) inbufs[4].p,
+ 					      fd);
+ #endif
+ 
+@@ -208,6 +258,53 @@ static uint32_t apps_std_fopen_with_env(void *data,
+ 	return 0;
+ }
+ 
++static uint32_t apps_std_fsync(void *data,
++			       const struct fastrpc_io_buffer *inbufs,
++			       struct fastrpc_io_buffer *outbufs)
++{
++	struct apps_std_ctx *ctx = data;
++	const uint32_t *fd = inbufs[0].p;
++	int ret;
++
++	ret = hexagonfs_fsync(ctx->fds, *fd);
++	if (ret) {
++		fprintf(stderr, "Could not sync file: %s\n", strerror(-ret));
++		return AEE_EFAILED;
++	}
++
++#ifdef HEXAGONRPC_VERBOSE
++	printf("fsync(%u)\n", *fd);
++#endif
++
++	return 0;
++}
++
++static uint32_t apps_std_fremove(void *data,
++				 const struct fastrpc_io_buffer *inbufs,
++				 struct fastrpc_io_buffer *outbufs)
++{
++	struct apps_std_ctx *ctx = data;
++	int ret;
++
++	// The name must be NULL-terminated
++	if (((const char *) inbufs[1].p)[inbufs[1].s - 1] != 0)
++		return AEE_EBADPARM;
++
++	ret = hexagonfs_unlink(ctx->fds, ctx->rootfd, ctx->rootfd, inbufs[1].p);
++	if (ret) {
++		fprintf(stderr, "Could not remove %s: %s\n",
++				(const char *) inbufs[1].p,
++				strerror(-ret));
++		return AEE_EFAILED;
++	}
++
++#ifdef HEXAGONRPC_VERBOSE
++	printf("remove(%s)\n", (const char *) inbufs[1].p);
++#endif
++
++	return 0;
++}
++
+ static uint32_t apps_std_opendir(void *data,
+ 				 const struct fastrpc_io_buffer *inbufs,
+ 				 struct fastrpc_io_buffer *outbufs)
+@@ -351,6 +448,61 @@ static uint32_t apps_std_stat(void *data,
+ 	return 0;
+ }
+ 
++static uint32_t apps_std_ftrunc(void *data,
++				const struct fastrpc_io_buffer *inbufs,
++				struct fastrpc_io_buffer *outbufs)
++{
++	struct apps_std_ctx *ctx = data;
++	const struct {
++		uint32_t mid;
++		uint32_t fd;
++		uint32_t len;
++	} *first_in = inbufs[0].p;
++	int ret;
++
++	ret = hexagonfs_ftruncate(ctx->fds, first_in->fd, first_in->len);
++	if (ret) {
++		fprintf(stderr, "Could not truncate file: %s\n", strerror(-ret));
++		return AEE_EFAILED;
++	}
++
++#ifdef HEXAGONRPC_VERBOSE
++	printf("ftruncate(%u, %u)\n", first_in->fd, first_in->len);
++#endif
++
++	return 0;
++}
++
++static uint32_t apps_std_frename(void *data,
++				 const struct fastrpc_io_buffer *inbufs,
++				 struct fastrpc_io_buffer *outbufs)
++{
++	struct apps_std_ctx *ctx = data;
++	int ret;
++
++	// The names must be NULL-terminated
++	if (((const char *) inbufs[1].p)[inbufs[1].s - 1] != 0
++	 || ((const char *) inbufs[2].p)[inbufs[2].s - 1] != 0)
++		return AEE_EBADPARM;
++
++	ret = hexagonfs_rename(ctx->fds, ctx->rootfd, ctx->rootfd,
++			       inbufs[1].p, inbufs[2].p);
++	if (ret) {
++		fprintf(stderr, "Could not rename %s to %s: %s\n",
++				(const char *) inbufs[1].p,
++				(const char *) inbufs[2].p,
++				strerror(-ret));
++		return AEE_EFAILED;
++	}
++
++#ifdef HEXAGONRPC_VERBOSE
++	printf("rename(%s, %s)\n", (const char *) inbufs[1].p,
++				    (const char *) inbufs[2].p);
++#endif
++
++	return 0;
++}
++
+ struct fastrpc_interface *fastrpc_apps_std_init(struct hexagonfs_dirent *root)
+ {
+ 	struct fastrpc_interface *iface;
+@@ -420,7 +572,10 @@ static const struct fastrpc_function_impl apps_std_procs[] = {
+ 		.def = &apps_std_fread_def,
+ 		.impl = apps_std_fread,
+ 	},
+-	{ .def = NULL, .impl = NULL, },
++	{
++		.def = &apps_std_fwrite_def,
++		.impl = apps_std_fwrite,
++	},
+ 	{ .def = NULL, .impl = NULL, },
+ 	{ .def = NULL, .impl = NULL, },
+ 	{ .def = NULL, .impl = NULL, },
+@@ -444,8 +599,14 @@ static const struct fastrpc_function_impl apps_std_procs[] = {
+ 	{ .def = NULL, .impl = NULL, },
+ 	{ .def = NULL, .impl = NULL, },
+ 	{ .def = NULL, .impl = NULL, },
+-	{ .def = NULL, .impl = NULL, },
+-	{ .def = NULL, .impl = NULL, },
++	{
++		.def = &apps_std_fsync_def,
++		.impl = apps_std_fsync,
++	},
++	{
++		.def = &apps_std_fremove_def,
++		.impl = apps_std_fremove,
++	},
+ 	{ .def = NULL, .impl = NULL, },
+ 	{
+ 		.def = &apps_std_opendir_def,
+@@ -465,10 +626,18 @@ static const struct fastrpc_function_impl apps_std_procs[] = {
+ 		.def = &apps_std_stat_def,
+ 		.impl = apps_std_stat,
+ 	},
++	{
++		.def = &apps_std_ftrunc_def,
++		.impl = apps_std_ftrunc,
++	},
++	{
++		.def = &apps_std_frename_def,
++		.impl = apps_std_frename,
++	},
+ };
+ 
+ const struct fastrpc_interface apps_std_interface = {
+ 	.name = "apps_std",
+-	.n_procs = 32,
++	.n_procs = 34,
+ 	.procs = apps_std_procs,
+ };
+diff --git a/hexagonrpcd/hexagonrpcd.1 b/hexagonrpcd/hexagonrpcd.1
+index 54c77bb..d4b1e5c 100644
+--- a/hexagonrpcd/hexagonrpcd.1
++++ b/hexagonrpcd/hexagonrpcd.1
+@@ -25,6 +25,11 @@ Root directory of served files (default: /usr/share/qcom/)
+ .TP
+ \fB\-s\fP
+ Attach to sensorspd
++.TP
++\fB\-w \fIDIR\fP
++Writable directory served as /mnt/vendor/persist/sensors/registry, so that the
++sensor registry can save its state. It contains the registry directory and the
++sns_reg_version file.
+ .PP
+ .SH NOTES
+ 
+diff --git a/hexagonrpcd/interfaces/apps_std.def b/hexagonrpcd/interfaces/apps_std.def
+index 2fbbdb1..23ed5c2 100644
+--- a/hexagonrpcd/interfaces/apps_std.def
++++ b/hexagonrpcd/interfaces/apps_std.def
+@@ -28,11 +28,16 @@ HEXAGONRPC_DEFINE_REMOTE_METHOD(1, apps_std_freopen, 1, 0, 1, 1)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(2, apps_std_fflush, 8, 0, 0, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(3, apps_std_fclose, 1, 0, 0, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(4, apps_std_fread, 1, 0, 2, 1)
++HEXAGONRPC_DEFINE_REMOTE_METHOD(5, apps_std_fwrite, 1, 1, 2, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(9, apps_std_fseek, 3, 0, 0, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(19, apps_std_fopen_with_env, 0, 4, 1, 0)
++HEXAGONRPC_DEFINE_REMOTE_METHOD(23, apps_std_fsync, 1, 0, 0, 0)
++HEXAGONRPC_DEFINE_REMOTE_METHOD(24, apps_std_fremove, 0, 1, 0, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(26, apps_std_opendir, 0, 1, 2, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(27, apps_std_closedir, 2, 0, 0, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(28, apps_std_readdir, 2, 0, 66, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(31, apps_std_stat, 1, 1, 24, 0)
++HEXAGONRPC_DEFINE_REMOTE_METHOD(32, apps_std_ftrunc, 3, 0, 0, 0)
++HEXAGONRPC_DEFINE_REMOTE_METHOD(33, apps_std_frename, 1, 2, 0, 0)
+ 
+ #endif /* INTERFACE_APPS_STD_DEF */
+diff --git a/hexagonrpcd/rpcd.c b/hexagonrpcd/rpcd.c
+index cc1f5cf..db7806d 100644
+--- a/hexagonrpcd/rpcd.c
++++ b/hexagonrpcd/rpcd.c
+@@ -140,7 +140,8 @@ static void print_usage(const char *argv0)
+ 	       "\t-f DEVICE\tFastRPC device node to attach to\n"
+ 	       "\t-p PROGRAM\tRun client program with shared file descriptor\n"
+ 	       "\t-R DIR\t\tRoot directory of served files (default: /usr/share/qcom/)\n"
+-	       "\t-s\t\tAttach to sensorspd\n");
++	       "\t-s\t\tAttach to sensorspd\n"
++	       "\t-w DIR\t\tWritable directory for persist/sensors/registry\n");
+ }
+ 
+ static int create_shell_pd(int fd, const char *create_shell)
+@@ -250,7 +251,8 @@ static int start_clients(size_t n_progs, const char **progs, pid_t *pids)
+ 	return 0;
+ }
+ 
+-static void *start_reverse_tunnel(int fd, const char *device_dir, const char *dsp)
++static void *start_reverse_tunnel(int fd, const char *device_dir, const char *dsp,
++				  const char *persist_rw)
+ {
+ 	struct fastrpc_interface **ifaces;
+ 	struct hexagonfs_dirent *root_dir;
+@@ -261,7 +263,7 @@ static void *start_reverse_tunnel(int fd, const char *device_dir, const char *ds
+ 	if (ifaces == NULL)
+ 		return NULL;
+ 
+-	root_dir = construct_root_dir(device_dir, dsp);
++	root_dir = construct_root_dir(device_dir, dsp, persist_rw);
+ 
+ 	/*
+ 	 * The apps_remotectl interface patiently waits for this function to
+@@ -412,6 +414,7 @@ int main(int argc, char* argv[])
+ 	const char *device_dir = "/usr/share/qcom/";
+ 	const char *dsp = "";
+ 	const char *create_shell = NULL;
++	const char *persist_rw = NULL;
+ 	const char *guessed_device_dir;
+ 	const char **progs;
+ 	pid_t *pids;
+@@ -435,7 +438,7 @@ int main(int argc, char* argv[])
+ 	if (guessed_device_dir != NULL)
+ 		device_dir = guessed_device_dir;
+ 
+-	while ((opt = getopt(argc, argv, "c:d:f:p:R:s")) != -1) {
++	while ((opt = getopt(argc, argv, "c:d:f:p:R:sw:")) != -1) {
+ 		switch (opt) {
+ 			case 'c':
+ 				create_shell = optarg;
+@@ -456,6 +459,9 @@ int main(int argc, char* argv[])
+ 			case 's':
+ 				attach_sns = true;
+ 				break;
++			case 'w':
++				persist_rw = optarg;
++				break;
+ 			default:
+ 				print_usage(argv[0]);
+ 				goto err_free_pids;
+@@ -496,7 +502,7 @@ int main(int argc, char* argv[])
+ 	if (ret)
+ 		goto err_close_dev;
+ 
+-	start_reverse_tunnel(fd, device_dir, dsp);
++	start_reverse_tunnel(fd, device_dir, dsp, persist_rw);
+ 
+ 	terminate_clients(n_progs, pids);
+ 
+diff --git a/hexagonrpcd/rpcd_builder.c b/hexagonrpcd/rpcd_builder.c
+index bd166e8..254c8e9 100644
+--- a/hexagonrpcd/rpcd_builder.c
++++ b/hexagonrpcd/rpcd_builder.c
+@@ -90,6 +90,21 @@ static struct hexagonfs_dirent *hfs_map(const char *name, const char *path)
+ 	return file;
+ }
+ 
++static struct hexagonfs_dirent *hfs_map_rw(const char *name, const char *path)
++{
++	struct hexagonfs_dirent *file;
++
++	file = malloc(sizeof(struct hexagonfs_dirent));
++	if (file == NULL)
++		return NULL;
++
++	file->name = name;
++	file->ops = &hexagonfs_mapped_rw_ops;
++	file->u.phys = path;
++
++	return file;
++}
++
+ static struct hexagonfs_dirent *hfs_map_or_empty(const char *name, const char *path)
+ {
+ 	struct hexagonfs_dirent *file;
+@@ -110,7 +125,8 @@ static struct hexagonfs_dirent *hfs_map_or_empty(const char *name, const char *p
+  *
+  * TODO: Make this free()-able with reference counts
+  */
+-struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp)
++struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp,
++					    const char *persist_rw)
+ {
+ 	char *acdbdata, *dsp_libs, *sns_cfg, *sns_reg, *sns_reg_config, *sns_reg_version, *socinfo;
+ 	size_t n_prefix;
+@@ -166,15 +182,28 @@ struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp)
+ 	/*
+ 	 * Some platforms need this in / and some need it in /mnt/vendor. Form
+ 	 * a hard link between both locations.
++	 *
++	 * If a writable directory is given, it replaces the read-only registry
++	 * directory, so that the sensor registry can save its state. It
++	 * contains the registry/ directory and sns_reg_version like the
++	 * persist partition on Android.
+ 	 */
+-	persist_dir = hfs_mkdir("persist", 1,
+-				hfs_mkdir("sensors", 1,
+-					hfs_mkdir("registry", 2,
+-						hfs_map("registry", sns_reg),
+-						hfs_map("sns_reg_version", sns_reg_version)
++	if (persist_rw != NULL) {
++		persist_dir = hfs_mkdir("persist", 1,
++					hfs_mkdir("sensors", 1,
++						hfs_map_rw("registry", persist_rw)
+ 					)
+-				)
+-		      );
++			      );
++	} else {
++		persist_dir = hfs_mkdir("persist", 1,
++					hfs_mkdir("sensors", 1,
++						hfs_mkdir("registry", 2,
++							hfs_map("registry", sns_reg),
++							hfs_map("sns_reg_version", sns_reg_version)
++						)
++					)
++			      );
++	}
+ 
+ 	/*
+ 	 * Some platforms need vendor in / and some need it in /system. Form
+diff --git a/hexagonrpcd/rpcd_builder.h b/hexagonrpcd/rpcd_builder.h
+index b68e6c4..d289b11 100644
+--- a/hexagonrpcd/rpcd_builder.h
++++ b/hexagonrpcd/rpcd_builder.h
+@@ -24,6 +24,7 @@
+ 
+ #include "hexagonfs.h"
+ 
+-struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp);
++struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp,
++					    const char *persist_rw);
+ 
+ #endif
+-- 
+2.43.0
+

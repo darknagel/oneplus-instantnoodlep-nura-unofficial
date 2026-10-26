@@ -1,0 +1,135 @@
+From 30e0eeed3d9147371156fa5bd49e489fc0886ef2 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 23:02:57 +0100
+Subject: [PATCH 2/5] hexagonrpcd: listener: fetch input buffers larger than
+ 256 bytes
+
+The next2 method of the listener only returns the first 256 bytes of the
+input buffers of a request. Requests with larger input buffers, like
+writes of sensor registry groups, made hexagonrpcd exit.
+
+Fetch the remaining bytes with the get_in_bufs2 method and decode them.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ hexagonrpcd/interfaces/adsp_listener.def |  1 +
+ hexagonrpcd/listener.c                   | 66 +++++++++++++++++++++---
+ 2 files changed, 60 insertions(+), 7 deletions(-)
+
+diff --git a/hexagonrpcd/interfaces/adsp_listener.def b/hexagonrpcd/interfaces/adsp_listener.def
+index 4f521c0..1620471 100644
+--- a/hexagonrpcd/interfaces/adsp_listener.def
++++ b/hexagonrpcd/interfaces/adsp_listener.def
+@@ -28,5 +28,6 @@
+ 
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(3, adsp_listener_init2, 0, 0, 0, 0)
+ HEXAGONRPC_DEFINE_REMOTE_METHOD(4, adsp_listener_next2, 2, 1, 4, 1)
++HEXAGONRPC_DEFINE_REMOTE_METHOD(5, adsp_listener_get_in_bufs2, 2, 0, 1, 1)
+ 
+ #endif /* INTERFACE_ADSP_LISTENER_DEF */
+diff --git a/hexagonrpcd/listener.c b/hexagonrpcd/listener.c
+index e298688..81ef614 100644
+--- a/hexagonrpcd/listener.c
++++ b/hexagonrpcd/listener.c
+@@ -24,6 +24,7 @@
+ #include <libhexagonrpc/interfaces/remotectl.def>
+ #include <stddef.h>
+ #include <stdio.h>
++#include <stdlib.h>
+ 
+ #include "aee_error.h"
+ #include "interfaces/adsp_listener.def"
+@@ -56,6 +57,57 @@ static int adsp_listener_next2(int fd,
+ 			inbufs_size, inbufs);
+ }
+ 
++static int adsp_listener_get_in_bufs2(int fd,
++				      uint32_t rctx,
++				      uint32_t offset,
++				      uint32_t *bufs_len,
++				      uint32_t bufs_size, void *bufs)
++{
++	return fastrpc2(&adsp_listener_get_in_bufs2_def, fd, ADSP_LISTENER_HANDLE,
++			rctx,
++			offset,
++			bufs_len,
++			bufs_size, bufs);
++}
++
++/*
++ * The listener only receives the first 256 bytes of the input buffers with the
++ * next message. Fetch the rest from the remote processor and decode it.
++ */
++static int fetch_remaining_inbufs(int fd, uint32_t rctx,
++				  uint32_t offset, uint32_t inbufs_len,
++				  struct fastrpc_decoder_context *ctx)
++{
++	uint32_t bufs_len;
++	char *bufs;
++	int ret;
++
++	bufs = malloc(inbufs_len - offset);
++	if (bufs == NULL) {
++		perror("Could not allocate input buffers");
++		return -1;
++	}
++
++	ret = adsp_listener_get_in_bufs2(fd, rctx, offset, &bufs_len,
++					 inbufs_len - offset, bufs);
++	if (ret) {
++		if (ret == -1)
++			perror("Could not fetch large input buffers");
++		else
++			fprintf(stderr, "Could not fetch large input buffers: %d\n", ret);
++
++		goto err_free_bufs;
++	}
++
++	ret = inbuf_decode(ctx, inbufs_len - offset, bufs);
++	if (ret)
++		perror("Could not decode");
++
++err_free_bufs:
++	free(bufs);
++	return ret;
++}
++
+ static struct fastrpc_io_buffer *allocate_outbufs(const struct fastrpc_function_def_interp2 *def,
+ 						  uint32_t *first_inbuf)
+ {
+@@ -174,12 +226,6 @@ static int return_for_next_invoke(int fd,
+ 		goto err_free_outbufs;
+ 	}
+ 
+-	if (inbufs_len > 256) {
+-		fprintf(stderr, "Large (>256B) input buffers aren't implemented\n");
+-		ret = -1;
+-		goto err_free_outbufs;
+-	}
+-
+ 	ctx = inbuf_decode_start(*sc);
+ 	if (!ctx) {
+ 		perror("Could not start decoding");
+@@ -187,12 +233,18 @@ static int return_for_next_invoke(int fd,
+ 		goto err_free_outbufs;
+ 	}
+ 
+-	ret = inbuf_decode(ctx, inbufs_len, inbufs);
++	ret = inbuf_decode(ctx, inbufs_len > 256 ? 256 : inbufs_len, inbufs);
+ 	if (ret) {
+ 		perror("Could not decode");
+ 		goto err_free_outbufs;
+ 	}
+ 
++	if (inbufs_len > 256) {
++		ret = fetch_remaining_inbufs(fd, *rctx, 256, inbufs_len, ctx);
++		if (ret)
++			goto err_free_outbufs;
++	}
++
+ 	if (!inbuf_decode_is_complete(ctx)) {
+ 		fprintf(stderr, "Expected more input buffers\n");
+ 		ret = -1;
+-- 
+2.43.0
+

@@ -1,0 +1,267 @@
+From 79f81dc9b4562ef00efd8bcbf888a24d6eef4f94 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 18:07:25 +0100
+Subject: [PATCH] oneplus-instantnoodlep: enable microphones
+
+- linux-postmarketos-qcom-sm8250: the three digital microphones are
+  powered from other WCD9385 micbias outputs than on the 8T; take the
+  micbias routing from the vendor device tree (updated patch 0005).
+- alsa-ucm-conf-oneplus-instantnoodlep: add the "Mic" device: DMIC2
+  (main microphone) and DMIC1 on the VA macro, decimator gain +24 dB.
+
+Tested with PulseAudio: speech at 30 cm peaks around -22 dBFS.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../APKBUILD                                  |  4 +--
+ .../HiFi.conf                                 | 34 +++++++++++++++++++
+ ...display-panel-Add-Samsung-AMS678UW01.patch |  4 +--
+ ...-Add-Samsung-AMS678UW01-panel-driver.patch |  4 +--
+ ...m8250-oneplus-instantnoodlep-Enable-.patch |  4 +--
+ ...m8250-oneplus-instantnoodlep-Enable-.patch |  4 +--
+ ...m8250-oneplus-instantnoodlep-Enable-.patch | 25 ++++++++------
+ ...m8250-oneplus-instantnoodlep-Add-sen.patch |  2 +-
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   | 14 ++++----
+ 9 files changed, 67 insertions(+), 28 deletions(-)
+
+diff --git a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD
+index db9a2915ce..00f27fedcb 100644
+--- a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD
++++ b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD
+@@ -1,7 +1,7 @@
+ # Maintainer: Timo <1788603+darknagel@users.noreply.github.com>
+ pkgname=alsa-ucm-conf-oneplus-instantnoodlep
+ pkgver=1
+-pkgrel=0
++pkgrel=2
+ pkgdesc="ALSA UCM configuration for OnePlus 8 Pro"
+ url="https://postmarketos.org"
+ arch="aarch64"
+@@ -20,5 +20,5 @@ package() {
+ }
+ sha512sums="
+ 3fcef09550eca80d37edf813d842057379338897d36cfcd02b13b553050fc2f3b00aceae5777781c5c4307b533d2dac779b533edd7c0c03bbacd496eafa0a98a  OnePlus8Pro.conf
+-b462cb8bd94963ac7b9041e9c36699dc72069c5a1dc5d3d0554f8f951618cb57210044673d99bd1c3d6a7629ce7b549554de37ec661c06cbab745c0cd6b082b4  HiFi.conf
++78cb1afe80d03342599b65d3cccc9dde41873b0acc246119d833bfcbc52503a8c78850659b5f010cac86c25bc3fe59fdf27fefb091c15a19e950bfff16e8fc86  HiFi.conf
+ "
+diff --git a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/HiFi.conf b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/HiFi.conf
+index 522d0f061b..f1d56d15e3 100644
+--- a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/HiFi.conf
++++ b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/HiFi.conf
+@@ -3,10 +3,12 @@ Syntax 3
+ SectionVerb {
+ 	EnableSequence [
+ 		cset "name='TERT_MI2S_RX Audio Mixer MultiMedia1' 1"
++		cset "name='MultiMedia3 Mixer VA_CODEC_DMA_TX_0' 1"
+ 	]
+ 
+ 	DisableSequence [
+ 		cset "name='TERT_MI2S_RX Audio Mixer MultiMedia1' 0"
++		cset "name='MultiMedia3 Mixer VA_CODEC_DMA_TX_0' 0"
+ 	]
+ 
+ 	Value {
+@@ -23,3 +25,35 @@ SectionDevice."Speaker" {
+ 		PlaybackChannels 2
+ 	}
+ }
++
++# Digital microphones on the VA macro, as in the vendor mixer paths:
++# DMIC1 (bias 1), DMIC2 (bias 3, main microphone), DMIC3 (bias 4).
++# The decimators add 24 dB (108): speech at 30 cm peaks around -22 dBFS.
++SectionDevice."Mic" {
++	Comment "Stereo Microphones"
++
++	EnableSequence [
++		cset "name='VA_AIF1_CAP Mixer DEC0' 1"
++		cset "name='VA_AIF1_CAP Mixer DEC1' 1"
++
++		cset "name='VA DEC0 MUX' VA_DMIC"
++		cset "name='VA DEC1 MUX' VA_DMIC"
++
++		cset "name='VA DMIC MUX0' DMIC2"
++		cset "name='VA DMIC MUX1' DMIC1"
++
++		cset "name='VA_DEC0 Volume' 108"
++		cset "name='VA_DEC1 Volume' 108"
++	]
++
++	DisableSequence [
++		cset "name='VA_AIF1_CAP Mixer DEC0' 0"
++		cset "name='VA_AIF1_CAP Mixer DEC1' 0"
++	]
++
++	Value {
++		CapturePriority 100
++		CapturePCM "hw:${CardId},2"
++		CaptureChannels 2
++	}
++}
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch b/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+index 0863209c5d..ddec3178c0 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+@@ -1,7 +1,7 @@
+-From 655a4b8b2894b8f945e3ad5e3ef839cf738cfda2 Mon Sep 17 00:00:00 2001
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 17:43:49 +0100
+-Subject: [PATCH 1/5] dt-bindings: display: panel: Add Samsung AMS678UW01
++Subject: [PATCH 1/8] dt-bindings: display: panel: Add Samsung AMS678UW01
+ 
+ Add bindings for the Samsung AMS678UW01 6.78" 1440x3168 DSC command
+ mode AMOLED panel found in the OnePlus 8 Pro.
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch b/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+index 9cae9633bd..bfd106ebdf 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+@@ -1,7 +1,7 @@
+-From 1975afee4af99085932dbb5c75ee6c798d8218e9 Mon Sep 17 00:00:00 2001
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 17:43:49 +0100
+-Subject: [PATCH 2/5] drm/panel: Add Samsung AMS678UW01 panel driver
++Subject: [PATCH 2/8] drm/panel: Add Samsung AMS678UW01 panel driver
+ 
+ Add a driver for the Samsung AMS678UW01 DSC command mode panel used in
+ the OnePlus 8 Pro (instantnoodlep). It was generated with
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+index 9ca5e15676..de89ae8c3a 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+@@ -1,7 +1,7 @@
+-From a75d6049c023358e26d071313726a7b239bdacbf Mon Sep 17 00:00:00 2001
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 17:43:50 +0100
+-Subject: [PATCH 3/5] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
++Subject: [PATCH 3/8] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
+  display
+ 
+ Enable the display clock controller, DSI0 and its PHY, and describe the
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+index 5fbf6e4618..ab8a2c782a 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+@@ -1,7 +1,7 @@
+-From 9ed2046be20039597997e415b597a4d8959c4f35 Mon Sep 17 00:00:00 2001
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 17:43:50 +0100
+-Subject: [PATCH 4/5] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
++Subject: [PATCH 4/8] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
+  GPU
+ 
+ Enable the Adreno 650 GPU and point the zap shader to the OnePlus
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+index a8ca3002d1..3d72cb2895 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+@@ -1,7 +1,7 @@
+-From 3556f6333b894a31f7deec4e4d79846b4d09ded1 Mon Sep 17 00:00:00 2001
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 18:46:35 +0100
+-Subject: [PATCH 5/5] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
++Subject: [PATCH 5/8] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
+  audio
+ 
+ The OnePlus 8 Pro uses the same audio hardware as the OnePlus 8T
+@@ -14,8 +14,13 @@ based on the 8T description. The DisplayPort audio link and the FSA4480
+ are left out, as DisplayPort and the USB-C SBU routing are not described
+ for this device yet.
+ 
+-Tested: both speakers play audio through PulseAudio. The microphones do
+-not deliver a signal yet.
++The three digital microphones (DMIC1, DMIC2 and DMIC3) are powered from
++other WCD9385 micbias outputs than on the 8T. Take the micbias routing
++from the vendor device tree: DMIC0/1 on MIC BIAS1, DMIC2 on MIC BIAS3
++and DMIC3 on MIC BIAS4.
++
++Tested: both speakers play audio, and all three microphones record
++through the VA macro with PulseAudio.
+ 
+ Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+ ---
+@@ -23,7 +28,7 @@ Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+  1 file changed, 448 insertions(+)
+ 
+ diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+-index 0b599fbea..140fc607d 100644
++index 0b599fbea..a073f85b2 100644
+ --- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+ +++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+ @@ -7,6 +7,8 @@
+@@ -262,8 +267,8 @@ index 0b599fbea..140fc607d 100644
+ +		"AMIC2", "MIC BIAS2",
+ +		"TX DMIC0", "MIC BIAS1",
+ +		"TX DMIC1", "MIC BIAS1",
+-+		"TX DMIC2", "MIC BIAS4",
+-+		"TX DMIC3", "MIC BIAS3",
+++		"TX DMIC2", "MIC BIAS3",
+++		"TX DMIC3", "MIC BIAS4",
+ +		"TX DMIC4", "MIC BIAS4",
+ +		"TX DMIC5", "MIC BIAS4",
+ +		"DMIC1", "MIC BIAS1",
+@@ -291,10 +296,10 @@ index 0b599fbea..140fc607d 100644
+ +		"RX_TX DEC1_INP", "TX DEC1 MUX",
+ +		"RX_TX DEC2_INP", "TX DEC2 MUX",
+ +		"RX_TX DEC3_INP", "TX DEC3 MUX",
+-+		"VA DMIC0", "VA MIC BIAS3",
+++		"VA DMIC0", "VA MIC BIAS1",
+ +		"VA DMIC1", "VA MIC BIAS1",
+-+		"VA DMIC2", "VA MIC BIAS1",
+-+		"VA DMIC3", "VA MIC BIAS3",
+++		"VA DMIC2", "VA MIC BIAS3",
+++		"VA DMIC3", "VA MIC BIAS4",
+ +		"VA DMIC4", "VA MIC BIAS4",
+ +		"VA DMIC5", "VA MIC BIAS4",
+ +		"VA SWR_ADC0", "ADC1_OUTPUT",
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch b/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
+index e64beba851..9eefb8a9fa 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
+@@ -14,7 +14,7 @@ Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+  1 file changed, 117 insertions(+)
+ 
+ diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+-index 140fc607d..135c16963 100644
++index a073f85b2..06a1155bb 100644
+ --- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+ +++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+ @@ -241,6 +241,123 @@ ramoops@b0000000 {
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 1d34c2a13b..beb5ca76ce 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=3
++pkgrel=4
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -95,12 +95,12 @@ package() {
+ sha512sums="
+ 05df1589411d2817fecc403402f1dea2c405c5de102bf92e23089e430fc2c623702bd778fbea5b87f70ea02e9eff7f02a7de292f895d47ff40ae88dafdfbab58  linux-postmarketos-qcom-sm8250-sm8250-7.2.0_git20261010.tar.gz
+ 556000a855860d389604875565d079f3f38bcd6ea9bf6d0cd544e142844d600c761f5a388d932b0c2d64633a24d8912e8f3cbfc7f2e5b82b7f46bd83405afc5c  config-postmarketos-qcom-sm8250.aarch64
+-5e537d2bb93ddf60885d6becfe45236471283635625ec91dc1e08d850b379ab76864feeba82cafe76c91dce8b38745c03a7db6d8c7ada189de6fb0088b03c978  0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+-ae35a05a2f8ffa27034aa93de1f290515a37707aca6ec2d62f97f999959dad81dedf2698641a0b0d40618eb3a7ba6892cb06d0c42713db12df978e511a283479  0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+-98cd21aec44485188a558d4d778b7ae11774b7afdc01d0a67ab3eebefa1a9601f490361c03b31d051c5b6303384bef5f3f9a6bd78552ebadacc52ed6273fa81d  0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+-8ff2a91cb703ce90acf389ae138b66685814309acc9689b3104fd556f8032778a94abcc392813a5985ce795a870fe2a2496605e9a42876d153114bec5df69bf3  0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+-fd2a19e3daf796c10a3b6c260e1dfed42b5c7656460d34e45c345fa16b74f275e60b753f89ae2a71b9144784612d8aefc83ecca8edb6d709faf16540a68ea17d  0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++04f3aa15d65b9bd45b8f497191ab1609e881d51696961284b0f46dd2dbd57e0f9d23a7e7d0309b0a886ac57b3c445df21f34078fb99a421590e1562b440bd7ad  0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
++da674d3897be3a0b42cd02e7c603c172773ed17549ce7cd154b5284b7d13cb8d10417ad2c0ebbb0bf32945b85685591250c49356b7c79c07d5d3ffe6fe8a21a3  0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
++912cb3e01ad376df0293f97c2e20e5e5f89b42d56cec7ab9dd25ea9af50c3bbde214537ca16ba41f1f67a6d3fd7dca48179a35bc28ba2fdf4ae050ef351c2e3b  0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++36e247370556335ea429fecef4c4c425a080614a923189ba2b26964dd6ee376fa4850db316b984f30dd183bb45c3124f58b1a97634e27e84677c5d368eba57fe  0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++7d707414993255a541b9f9bbf9ddd2eb6b89de79b33757d9a90949334be53bd9759b1e4137a4105aed2c0aeb584d4464da8ff064ca575e697d19c0bcb1004cd3  0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+ 881f1a7156a361ca874a997bf008e235230d8c2f7e2c1ad46beeefbfb22228473d9b5befb749095cec885a4848774d222b2f82d574cbddb738e011b75ecad718  0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
+ 755cf27066228b52fd557c8bbba8beab520c51f9a19fd6396bda726728e82e0646d3690e79d9bf4fd8b2e5872c814bdf11a3f3b8891cbd16f2a31e238e1a12df  0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
+-9a73f49605a302663c04623860b6aacc5c9c1cfd11863f4e5971f8b17628ae11eebde133a93efc562cb166f410d5f222b21c7184548cc7401b03a06510f8f704  0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
++ad6d459193cdedcd4acca020584583df3d8cebe78a10d3e9c7dd79ce79c4c09ff155aa28a2568dcbf140b779045aad42828f0369151146f69d10442ec4c52c70  0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
+ "
+-- 
+2.43.0
+

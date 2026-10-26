@@ -1,0 +1,465 @@
+From ada498d6d1559764f1d1182b34cd0b4edcbb2d8f Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 19:02:44 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: add OnePlus 8 Pro telephoto
+ camera
+
+- add the telephoto camera (Samsung S5K3M5 on CSIPHY2) to the
+  instantnoodlep device tree and enable CONFIG_VIDEO_S5K3M5=m
+- fix the selection rectangles of the s5k3m5 driver, which reported a
+  4208x4208 pixel array and no default crop to libcamera
+
+Tested with libcamera (simple pipeline, software ISP): the camera is
+listed as back camera with rotation 270 and streams at 60 fps; with the
+S5K3M5 support in temp/libcamera the AGC reaches a normal exposure.
+Autofocus (the actuator has no driver yet) and the other four cameras
+are not supported.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ...display-panel-Add-Samsung-AMS678UW01.patch |   2 +-
+ ...-Add-Samsung-AMS678UW01-panel-driver.patch |   2 +-
+ ...m8250-oneplus-instantnoodlep-Enable-.patch |   2 +-
+ ...m8250-oneplus-instantnoodlep-Enable-.patch |   2 +-
+ ...m8250-oneplus-instantnoodlep-Enable-.patch |   2 +-
+ ...-qcom-Add-OnePlus-sensor-device-info.patch |   2 +-
+ ...dd-OnePlus-sensor-device-info-driver.patch |   2 +-
+ ...m8250-oneplus-instantnoodlep-Add-sen.patch |   2 +-
+ ...m8250-oneplus-instantnoodlep-Add-tel.patch | 159 ++++++++++++++++++
+ ...-Report-correct-selection-rectangles.patch |  92 ++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  24 +--
+ .../config-postmarketos-qcom-sm8250.aarch64   |   2 +-
+ 12 files changed, 274 insertions(+), 19 deletions(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0009-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch b/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+index ddec3178c0..cc1e45af66 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 17:43:49 +0100
+-Subject: [PATCH 1/8] dt-bindings: display: panel: Add Samsung AMS678UW01
++Subject: [PATCH 01/10] dt-bindings: display: panel: Add Samsung AMS678UW01
+ 
+ Add bindings for the Samsung AMS678UW01 6.78" 1440x3168 DSC command
+ mode AMOLED panel found in the OnePlus 8 Pro.
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch b/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+index bfd106ebdf..6fbb6347fd 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 17:43:49 +0100
+-Subject: [PATCH 2/8] drm/panel: Add Samsung AMS678UW01 panel driver
++Subject: [PATCH 02/10] drm/panel: Add Samsung AMS678UW01 panel driver
+ 
+ Add a driver for the Samsung AMS678UW01 DSC command mode panel used in
+ the OnePlus 8 Pro (instantnoodlep). It was generated with
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+index de89ae8c3a..733925b114 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 17:43:50 +0100
+-Subject: [PATCH 3/8] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
++Subject: [PATCH 03/10] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
+  display
+ 
+ Enable the display clock controller, DSI0 and its PHY, and describe the
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+index ab8a2c782a..0fec96666b 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 17:43:50 +0100
+-Subject: [PATCH 4/8] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
++Subject: [PATCH 04/10] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
+  GPU
+ 
+ Enable the Adreno 650 GPU and point the zap shader to the OnePlus
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+index 3d72cb2895..91b5ece073 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 18:46:35 +0100
+-Subject: [PATCH 5/8] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
++Subject: [PATCH 05/10] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
+  audio
+ 
+ The OnePlus 8 Pro uses the same audio hardware as the OnePlus 8T
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch b/device/testing/linux-postmarketos-qcom-sm8250/0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
+index 5e49df4f38..8b67611137 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 23:40:26 +0100
+-Subject: [PATCH 6/8] dt-bindings: soc: qcom: Add OnePlus sensor device info
++Subject: [PATCH 06/10] dt-bindings: soc: qcom: Add OnePlus sensor device info
+ 
+ The sensor DSP firmware of OnePlus devices reads the fitted sensor chips,
+ their orientation and tuning parameters from SMEM item 130. Describe them
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch b/device/testing/linux-postmarketos-qcom-sm8250/0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
+index b4046945ae..3c5fe832c2 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 23:40:26 +0100
+-Subject: [PATCH 7/8] soc: qcom: Add OnePlus sensor device info driver
++Subject: [PATCH 07/10] soc: qcom: Add OnePlus sensor device info driver
+ 
+ The sensor DSP (SLPI) firmware of OnePlus devices reads which sensor
+ chips are fitted, how they are oriented and some tuning parameters from
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch b/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
+index 9eefb8a9fa..0a6471575b 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
+@@ -1,7 +1,7 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Sun, 25 Oct 2026 23:40:27 +0100
+-Subject: [PATCH 8/8] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
++Subject: [PATCH 08/10] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
+  sensor device info
+ 
+ Describe the sensor chips for the sensor DSP with the values of the vendor
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0009-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch b/device/testing/linux-postmarketos-qcom-sm8250/0009-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
+new file mode 100644
+index 0000000000..c74dc04740
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0009-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
+@@ -0,0 +1,159 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 26 Oct 2026 18:26:23 +0100
++Subject: [PATCH 09/10] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
++ telephoto camera
++
++Enable CAMSS and CCI1 and add the Samsung S5K3M5 telephoto camera
++(slot 3 of the vendor device tree): CCI1 master 0, address 0x2d,
++CSIPHY2 with four lanes, MCLK2, reset on GPIO 90. The analog supply
++comes from an external LDO enabled by GPIO 139, the digital supply
++from PM8009 L4 (1.056 V), the I/O supply from PM8009 L7.
++
++The vendor runs MCLK at 19.2 MHz; the mainline driver expects 24 MHz,
++which the camera clock controller can provide.
++
++The vendor reports a sensor orientation of 90 degrees clockwise, which
++is a rotation of 270 degrees in the counter-clockwise convention of the
++rotation property (checked with an arrow on the screen).
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 100 ++++++++++++++++++
++ 1 file changed, 100 insertions(+)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 06a1155bb..8911098d9 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -242,6 +242,20 @@ ramoops@b0000000 {
++ 	};
++ 
++ 	/* Values from the vendor device tree overlay of project 19811 */
+++	vreg_cam_tele_avdd: regulator-cam-tele-avdd {
+++		compatible = "regulator-fixed";
+++		regulator-name = "cam_tele_avdd";
+++		regulator-min-microvolt = <2800000>;
+++		regulator-max-microvolt = <2800000>;
+++
+++		gpio = <&tlmm 139 GPIO_ACTIVE_HIGH>;
+++		enable-active-high;
+++		vin-supply = <&vreg_bob>;
+++
+++		pinctrl-0 = <&cam_tele_avdd_en>;
+++		pinctrl-names = "default";
+++	};
+++
++ 	sensor-devinfo {
++ 		compatible = "oneplus,sensor-devinfo";
++ 
++@@ -469,6 +483,13 @@ vreg_l2f_1p2: ldo2 {
++ 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++ 		};
++ 
+++		vreg_l4f_1p05: ldo4 {
+++			regulator-name = "vreg_l4f_1p05";
+++			regulator-min-microvolt = <1056000>;
+++			regulator-max-microvolt = <1056000>;
+++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+++		};
+++
++ 		vreg_l6f_2p8: ldo6 {
++ 			regulator-name = "vreg_l6f_2p8";
++ 			regulator-min-microvolt = <2800000>;
++@@ -736,6 +757,62 @@ &adsp {
++ 	status = "okay";
++ };
++ 
+++&camss {
+++	vdda-phy-supply = <&vreg_l5a_0p88>;
+++	vdda-pll-supply = <&vreg_l9a_1p2>;
+++	status = "okay";
+++
+++	ports {
+++		/* The port index is the CSIPHY id */
+++		port@2 {
+++			csiphy2_ep: endpoint {
+++				clock-lanes = <7>;
+++				data-lanes = <0 1 2 3>;
+++				remote-endpoint = <&cam_tele_ep>;
+++			};
+++		};
+++	};
+++};
+++
+++&cci1 {
+++	status = "okay";
+++};
+++
+++&cci1_i2c0 {
+++	#address-cells = <1>;
+++	#size-cells = <0>;
+++
+++	/* Telephoto camera */
+++	camera@2d {
+++		compatible = "samsung,s5k3m5";
+++		reg = <0x2d>;
+++
+++		clocks = <&camcc CAM_CC_MCLK2_CLK>;
+++		assigned-clocks = <&camcc CAM_CC_MCLK2_CLK>;
+++		assigned-clock-rates = <24000000>;
+++
+++		reset-gpios = <&tlmm 90 GPIO_ACTIVE_LOW>;
+++
+++		vdda-supply = <&vreg_cam_tele_avdd>;
+++		vddd-supply = <&vreg_l4f_1p05>;
+++		vddio-supply = <&vreg_l7f_1p8>;
+++
+++		pinctrl-0 = <&cam_tele_default>;
+++		pinctrl-names = "default";
+++
+++		orientation = <1>;
+++		rotation = <270>;
+++
+++		port {
+++			cam_tele_ep: endpoint {
+++				data-lanes = <1 2 3 4>;
+++				link-frequencies = /bits/ 64 <602500000>;
+++				remote-endpoint = <&csiphy2_ep>;
+++			};
+++		};
+++	};
+++};
+++
++ &cdsp {
++ 	firmware-name = "postmarketos/cdsp.mbn";
++ 	status = "okay";
++@@ -1154,6 +1231,29 @@ wcd_default: wcd-default-state {
++ 		drive-strength = <16>;
++ 		output-low;
++ 	};
+++
+++	cam_tele_avdd_en: cam-tele-avdd-en-state {
+++		pins = "gpio139";
+++		function = "gpio";
+++		drive-strength = <2>;
+++		bias-disable;
+++	};
+++
+++	cam_tele_default: cam-tele-default-state {
+++		mclk-pins {
+++			pins = "gpio96";
+++			function = "cam_mclk";
+++			drive-strength = <16>;
+++			bias-disable;
+++		};
+++
+++		rst-pins {
+++			pins = "gpio90";
+++			function = "gpio";
+++			drive-strength = <2>;
+++			bias-disable;
+++		};
+++	};
++ };
++ 
++ &ufs_mem_hc {
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch b/device/testing/linux-postmarketos-qcom-sm8250/0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch
+new file mode 100644
+index 0000000000..26e798590a
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch
+@@ -0,0 +1,92 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 26 Oct 2026 18:56:44 +0100
++Subject: [PATCH 10/10] media: i2c: s5k3m5: Report correct selection rectangles
++
++The crop rectangle used the mode width as height, and the driver did not
++implement V4L2_SEL_TGT_NATIVE_SIZE and V4L2_SEL_TGT_CROP_DEFAULT, which
++libcamera needs to report the pixel array:
++
++  ERROR V4L2 's5k3m5 20-002d': Unable to get rectangle 1 on pad 0/0
++  WARN CameraSensor 's5k3m5 20-002d': The PixelArrayActiveAreas property
++       has been defaulted to (0, 0)/4208x4208
++
++Report the 4208x3120 pixel array for the native size, the crop bounds
++and the default crop, and the analogue crop of the current mode for the
++crop target: the 2104x1184 mode reads rows 384 to 2751 and bins them,
++which is a 4208x2368 window starting at row 376 of the full mode.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ drivers/media/i2c/s5k3m5.c | 24 ++++++++++++++++++++++--
++ 1 file changed, 22 insertions(+), 2 deletions(-)
++
++diff --git a/drivers/media/i2c/s5k3m5.c b/drivers/media/i2c/s5k3m5.c
++index c591b580d..ebe200e4b 100644
++--- a/drivers/media/i2c/s5k3m5.c
+++++ b/drivers/media/i2c/s5k3m5.c
++@@ -44,6 +44,9 @@
++ #define S5K3M5_VTS_MAX			0xffff
++ 
++ #define S5K3M5_REG_HTS			CCI_REG16(0x0342)
+++#define S5K3M5_NATIVE_WIDTH		4208
+++#define S5K3M5_NATIVE_HEIGHT		3120
+++
++ #define S5K3M5_REG_X_ADDR_START		CCI_REG16(0x0344)
++ #define S5K3M5_REG_Y_ADDR_START		CCI_REG16(0x0346)
++ #define S5K3M5_REG_X_ADDR_END		CCI_REG16(0x0348)
++@@ -76,6 +79,7 @@ struct s5k3m5_mode {
++ 	u32 hts;			/* Horizontal timing size */
++ 	u32 vts;			/* Default vertical timing size */
++ 	u32 exposure;			/* Default exposure value */
+++	struct v4l2_rect crop;		/* Analogue crop rectangle */
++ 
++ 	const struct s5k3m5_reg_list reg_list;	/* Sensor register setting */
++ };
++@@ -697,6 +701,12 @@ static const struct s5k3m5_mode s5k3m5_supported_modes[] = {
++ 		.hts = 4848,
++ 		.vts = 3314,
++ 		.exposure = 256,
+++		.crop = {
+++			.left = 0,
+++			.top = 0,
+++			.width = 4208,
+++			.height = 3120,
+++		},
++ 		.reg_list = {
++ 			.regs = s5k3m5_4208x3120_30fps_mode,
++ 			.num_regs = ARRAY_SIZE(s5k3m5_4208x3120_30fps_mode),
++@@ -708,6 +718,12 @@ static const struct s5k3m5_mode s5k3m5_supported_modes[] = {
++ 		.hts = 4928,
++ 		.vts = 1624,
++ 		.exposure = 256,
+++		.crop = {
+++			.left = 0,
+++			.top = 376,
+++			.width = 4208,
+++			.height = 2368,
+++		},
++ 		.reg_list = {
++ 			.regs = s5k3m5_2104x1184_60fps_mode,
++ 			.num_regs = ARRAY_SIZE(s5k3m5_2104x1184_60fps_mode),
++@@ -1048,11 +1064,15 @@ static int s5k3m5_get_selection(struct v4l2_subdev *sd,
++ 
++ 	switch (sel->target) {
++ 	case V4L2_SEL_TGT_CROP:
+++		sel->r = s5k3m5->mode->crop;
+++		return 0;
+++	case V4L2_SEL_TGT_NATIVE_SIZE:
++ 	case V4L2_SEL_TGT_CROP_BOUNDS:
+++	case V4L2_SEL_TGT_CROP_DEFAULT:
++ 		sel->r.left = 0;
++ 		sel->r.top = 0;
++-		sel->r.width = s5k3m5->mode->width;
++-		sel->r.height = s5k3m5->mode->width;
+++		sel->r.width = S5K3M5_NATIVE_WIDTH;
+++		sel->r.height = S5K3M5_NATIVE_HEIGHT;
++ 		return 0;
++ 	default:
++ 		return -EINVAL;
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index beb5ca76ce..82ab560109 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=4
++pkgrel=8
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -48,6 +48,8 @@ source="
+ 	0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
+ 	0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
+ 	0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
++	0009-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
++	0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -94,13 +96,15 @@ package() {
+ 
+ sha512sums="
+ 05df1589411d2817fecc403402f1dea2c405c5de102bf92e23089e430fc2c623702bd778fbea5b87f70ea02e9eff7f02a7de292f895d47ff40ae88dafdfbab58  linux-postmarketos-qcom-sm8250-sm8250-7.2.0_git20261010.tar.gz
+-556000a855860d389604875565d079f3f38bcd6ea9bf6d0cd544e142844d600c761f5a388d932b0c2d64633a24d8912e8f3cbfc7f2e5b82b7f46bd83405afc5c  config-postmarketos-qcom-sm8250.aarch64
+-04f3aa15d65b9bd45b8f497191ab1609e881d51696961284b0f46dd2dbd57e0f9d23a7e7d0309b0a886ac57b3c445df21f34078fb99a421590e1562b440bd7ad  0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+-da674d3897be3a0b42cd02e7c603c172773ed17549ce7cd154b5284b7d13cb8d10417ad2c0ebbb0bf32945b85685591250c49356b7c79c07d5d3ffe6fe8a21a3  0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+-912cb3e01ad376df0293f97c2e20e5e5f89b42d56cec7ab9dd25ea9af50c3bbde214537ca16ba41f1f67a6d3fd7dca48179a35bc28ba2fdf4ae050ef351c2e3b  0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+-36e247370556335ea429fecef4c4c425a080614a923189ba2b26964dd6ee376fa4850db316b984f30dd183bb45c3124f58b1a97634e27e84677c5d368eba57fe  0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+-7d707414993255a541b9f9bbf9ddd2eb6b89de79b33757d9a90949334be53bd9759b1e4137a4105aed2c0aeb584d4464da8ff064ca575e697d19c0bcb1004cd3  0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+-881f1a7156a361ca874a997bf008e235230d8c2f7e2c1ad46beeefbfb22228473d9b5befb749095cec885a4848774d222b2f82d574cbddb738e011b75ecad718  0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
+-755cf27066228b52fd557c8bbba8beab520c51f9a19fd6396bda726728e82e0646d3690e79d9bf4fd8b2e5872c814bdf11a3f3b8891cbd16f2a31e238e1a12df  0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
+-ad6d459193cdedcd4acca020584583df3d8cebe78a10d3e9c7dd79ce79c4c09ff155aa28a2568dcbf140b779045aad42828f0369151146f69d10442ec4c52c70  0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
++fdd58f97d19ae0f13b80b477dfc0db43f7bcdb3a1d677a11e864ac0d2e0c41f4d11c3df1c5dff33ba978037e36c1578c5662ca101f47b33a6499dfa9c378a471  config-postmarketos-qcom-sm8250.aarch64
++1d6b4a37d231cccbeda804b9d88244fda2136a6ff12fad1f40852cba5708cf7d93f46920f5bd1a0b21b0396878ca25f3a962aebe19bcf41dd42c6434922c7ec0  0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
++de470289c4ed00b78b9b13f661ad88f8f401726a934037a41efb251fbf2e06f9d21ed9620f120903e0ac45a820c8d842908f281dc3d9627715d3b6e442188ee8  0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
++ef08fca004c36976b22cd22b0b3fd435a8c590ea08ec0b6d428f3b8dc4f64aa5f51ad5abc5780c9d9f44d5bcc0189fdd68d9fc9bd740238214f65855735a0664  0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++85ad7662cbd2783949452c710cf5e26a1f2e2f5fe18e043c034014a8b977b8caa634863ef3db76e7fe35f36c872b4dfda4572382211e1138016f1615699d3e19  0004-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++9cc37c18817e15348fd75f3602a278dd3f1e15997da7b6fa6b3769e0f013f269cd79a13aa0da40d4414d61c19a217d9de4041d52a0a58b7e5006832c77abac07  0005-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
++65dc304dec2efa1ef989f802284175cb719b512c5c9d7d74e5750335745435f93e858d9b44440242d727856ebfb2fa9eddf0739f0b1e0e5f7442d19e2888697a  0006-dt-bindings-soc-qcom-Add-OnePlus-sensor-device-info.patch
++78f6341265ad64034ea4c7b642cfc53c113f66dd478db8574033ee6c56a1883b86c431052cdf0793fb177a0284af1ef56176f957c00f0d7a277268bbb30eeff6  0007-soc-qcom-Add-OnePlus-sensor-device-info-driver.patch
++acf5b004cdd2d65ea864d58d9c921946e365628772cdca129437ec913a5f4cd16a21805ab1fccce0df539c427d026aa15daeee61827ffbd6ed96d83ebee70e3c  0008-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-sen.patch
++c5e04b8ba57e311da6f8440c7247362202620893b5b1bfff0c0c5481f6d1632cc64d249478f7892eaab180c3c79b044d221d1eeef2b48c11c799d34f6658c43b  0009-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
++dde35851e42455701c0d172585d3ed12fc60dd9746fe396005977f8a918e9048af23c3f46252ff7f088f486a5e8cc3407e6e3ce31cbdf43eba2fd41e21a327f5  0010-media-i2c-s5k3m5-Report-correct-selection-rectangles.patch
+ "
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64 b/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
+index 5293339df5..663cd9d30c 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
++++ b/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
+@@ -4625,7 +4625,7 @@ CONFIG_VIDEO_OV8856=m
+ # CONFIG_VIDEO_RDACM21 is not set
+ # CONFIG_VIDEO_RJ54N1 is not set
+ # CONFIG_VIDEO_S5C73M3 is not set
+-# CONFIG_VIDEO_S5K3M5 is not set
++CONFIG_VIDEO_S5K3M5=m
+ # CONFIG_VIDEO_S5K5BAF is not set
+ # CONFIG_VIDEO_S5K6A3 is not set
+ # CONFIG_VIDEO_S5KJN1 is not set
+-- 
+2.43.0
+

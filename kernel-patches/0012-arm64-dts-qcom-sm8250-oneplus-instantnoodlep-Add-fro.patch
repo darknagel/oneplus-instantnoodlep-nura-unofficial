@@ -1,0 +1,142 @@
+From 05bdc4b733771ce93b5d3680e24a125ef3798e2b Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 19:21:55 +0100
+Subject: [PATCH 12/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
+ front camera
+
+Add the Sony IMX471 front camera (slot 2 of the vendor device tree):
+CCI1 master 1, address 0x10, CSIPHY3 with four lanes, MCLK3 at
+19.2 MHz, reset on GPIO 78. The analog supply comes from an external
+LDO enabled by GPIO 24, the digital supply from PM8009 L3 (1.056 V),
+the I/O supply from PM8009 L7.
+
+The vendor reports a sensor orientation of 270 degrees clockwise, which
+is a rotation of 90 degrees in the counter-clockwise convention of the
+rotation property.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 79 +++++++++++++++++++
+ 1 file changed, 79 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index d41714d91..8b0abfa28 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -242,6 +242,21 @@ ramoops@b0000000 {
+ 	};
+ 
+ 	/* Values from the vendor device tree overlay of project 19811 */
++	vreg_cam_front_avdd: regulator-cam-front-avdd {
++		compatible = "regulator-fixed";
++		regulator-name = "cam_front_avdd";
++		regulator-min-microvolt = <2800000>;
++		regulator-max-microvolt = <2800000>;
++		startup-delay-us = <2000>;
++
++		gpio = <&tlmm 24 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		vin-supply = <&vreg_bob>;
++
++		pinctrl-0 = <&cam_front_avdd_en>;
++		pinctrl-names = "default";
++	};
++
+ 	vreg_cam_tele_avdd: regulator-cam-tele-avdd {
+ 		compatible = "regulator-fixed";
+ 		regulator-name = "cam_tele_avdd";
+@@ -484,6 +499,13 @@ vreg_l2f_1p2: ldo2 {
+ 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+ 		};
+ 
++		vreg_l3f_1p05: ldo3 {
++			regulator-name = "vreg_l3f_1p05";
++			regulator-min-microvolt = <1056000>;
++			regulator-max-microvolt = <1056000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
+ 		vreg_l4f_1p05: ldo4 {
+ 			regulator-name = "vreg_l4f_1p05";
+ 			regulator-min-microvolt = <1056000>;
+@@ -772,6 +794,14 @@ csiphy2_ep: endpoint {
+ 				remote-endpoint = <&cam_tele_ep>;
+ 			};
+ 		};
++
++		port@3 {
++			csiphy3_ep: endpoint {
++				clock-lanes = <7>;
++				data-lanes = <0 1 2 3>;
++				remote-endpoint = <&cam_front_ep>;
++			};
++		};
+ 	};
+ };
+ 
+@@ -814,6 +844,41 @@ cam_tele_ep: endpoint {
+ 	};
+ };
+ 
++&cci1_i2c1 {
++	#address-cells = <1>;
++	#size-cells = <0>;
++
++	/* Front camera */
++	camera@10 {
++		compatible = "sony,imx471";
++		reg = <0x10>;
++
++		clocks = <&camcc CAM_CC_MCLK3_CLK>;
++		assigned-clocks = <&camcc CAM_CC_MCLK3_CLK>;
++		assigned-clock-rates = <19200000>;
++
++		reset-gpios = <&tlmm 78 GPIO_ACTIVE_LOW>;
++
++		avdd-supply = <&vreg_cam_front_avdd>;
++		dvdd-supply = <&vreg_l3f_1p05>;
++		dovdd-supply = <&vreg_l7f_1p8>;
++
++		pinctrl-0 = <&cam_mclk3_default>, <&cam_front_default>;
++		pinctrl-names = "default";
++
++		orientation = <0>;
++		rotation = <90>;
++
++		port {
++			cam_front_ep: endpoint {
++				data-lanes = <1 2 3 4>;
++				link-frequencies = /bits/ 64 <748800000 400000000>;
++				remote-endpoint = <&csiphy3_ep>;
++			};
++		};
++	};
++};
++
+ &cdsp {
+ 	firmware-name = "postmarketos/cdsp.mbn";
+ 	status = "okay";
+@@ -1233,6 +1298,20 @@ wcd_default: wcd-default-state {
+ 		output-low;
+ 	};
+ 
++	cam_front_avdd_en: cam-front-avdd-en-state {
++		pins = "gpio24";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
++	cam_front_default: cam-front-default-state {
++		pins = "gpio78";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
+ 	cam_tele_avdd_en: cam-tele-avdd-en-state {
+ 		pins = "gpio139";
+ 		function = "gpio";
+-- 
+2.43.0
+

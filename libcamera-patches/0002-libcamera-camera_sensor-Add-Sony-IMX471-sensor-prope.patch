@@ -1,0 +1,71 @@
+From 0e7b7a15b55abc1c1ffad810706c063d2a39595b Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 19:22:19 +0100
+Subject: [PATCH 2/2] libcamera: camera_sensor: Add Sony IMX471 sensor
+ properties and helper
+
+Add the camera sensor properties and the camera sensor helper for the
+Sony IMX471, used as front camera in the OnePlus 8 Pro. The analogue
+gain follows the usual Sony formula (1024 / (1024 - code)), the black
+level of 64 at 10 bits comes from the camera module data, and the test
+pattern modes follow the menu of the kernel driver.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ src/ipa/libipa/camera_sensor_helper.cpp          | 12 ++++++++++++
+ .../sensor/camera_sensor_properties.cpp          | 16 ++++++++++++++++
+ 2 files changed, 28 insertions(+)
+
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+index 2085730..ff022dc 100644
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -639,6 +639,18 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("imx415", CameraSensorHelperImx415)
+ 
++class CameraSensorHelperImx471 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperImx471()
++	{
++		/* From the camera module data: 64 at 10bits. */
++		blackLevel_ = 4096;
++		gain_ = AnalogueGainLinear{ 0, 1024, -1, 1024 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("imx471", CameraSensorHelperImx471)
++
+ class CameraSensorHelperImx462 : public CameraSensorHelperImx290
+ {
+ };
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+index 592002c..eb5c24b 100644
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -287,6 +287,22 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 				.hblankDelay = 2
+ 			},
+ 		} },
++		{ "imx471", {
++			.unitCellSize = { 1000, 1000 },
++			.testPatternModes = {
++				{ controls::draft::TestPatternModeOff, 0 },
++				{ controls::draft::TestPatternModeSolidColor, 1 },
++				{ controls::draft::TestPatternModeColorBars, 2 },
++				{ controls::draft::TestPatternModeColorBarsFadeToGray, 3 },
++				{ controls::draft::TestPatternModePn9, 4 },
++			},
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
+ 		{ "imx462", {
+ 			.unitCellSize = { 2900, 2900 },
+ 			.testPatternModes = {},
+-- 
+2.43.0
+

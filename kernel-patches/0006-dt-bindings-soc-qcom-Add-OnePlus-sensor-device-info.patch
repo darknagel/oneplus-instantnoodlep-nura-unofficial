@@ -1,0 +1,126 @@
+From 8d422027a60d485974cec022c5d8b3b6ae5ed4b1 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 23:40:26 +0100
+Subject: [PATCH 06/12] dt-bindings: soc: qcom: Add OnePlus sensor device info
+
+The sensor DSP firmware of OnePlus devices reads the fitted sensor chips,
+their orientation and tuning parameters from SMEM item 130. Describe them
+with the properties of the vendor device tree, so that the values can be
+taken over from it.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../soc/qcom/oneplus,sensor-devinfo.yaml      | 101 ++++++++++++++++++
+ 1 file changed, 101 insertions(+)
+ create mode 100755 Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
+
+diff --git a/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml b/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
+new file mode 100755
+index 000000000..403ab2f6a
+--- /dev/null
++++ b/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
+@@ -0,0 +1,101 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/soc/qcom/oneplus,sensor-devinfo.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: OnePlus sensor device info
++
++maintainers:
++  - Timo <1788603+darknagel@users.noreply.github.com>
++
++description:
++  The sensor DSP (SLPI) firmware of OnePlus devices reads which sensor chips
++  are fitted, how they are oriented and some tuning parameters from SMEM item
++  130, which the operating system fills. The child nodes describe the physical
++  and virtual sensors with the properties of the vendor device tree.
++
++properties:
++  compatible:
++    const: oneplus,sensor-devinfo
++
++patternProperties:
++  "^(gsensor|msensor|lsensor|lrsensor|psensor|ssensor|sdsensor|cctsensor|cctrsensor)-[0-9]$":
++    type: object
++    description:
++      A physical sensor. Properties other than the ones listed are vendor
++      tuning parameters that are passed to the firmware unchanged.
++
++    properties:
++      sensor-type:
++        $ref: /schemas/types.yaml#/definitions/uint32
++        maximum: 10
++        description:
++          0 accelerometer, 1 gyroscope, 2 magnetometer, 3 light, 4 proximity,
++          5 SAR, 6 CCT, 7 rear CCT, 8 barometer, 9 second SAR, 10 rear light
++
++      sensor-index:
++        $ref: /schemas/types.yaml#/definitions/uint32
++        maximum: 2
++        description: Index of the alternative chip for this sensor type
++
++      sensor-name:
++        $ref: /schemas/types.yaml#/definitions/uint32
++        description: Vendor ID of the chip, specific to the sensor type
++
++      sensor-direction:
++        $ref: /schemas/types.yaml#/definitions/uint32
++        description: Mounting orientation of the chip
++
++      bus-number:
++        $ref: /schemas/types.yaml#/definitions/uint32
++
++      irq-number:
++        $ref: /schemas/types.yaml#/definitions/uint32
++
++    required:
++      - sensor-type
++      - sensor-index
++
++    additionalProperties: true
++
++  "^(pickup_detect|lux_aod|fp_display|free_fall|mag_fusion|oplus_measurement)$":
++    type: object
++    description: A virtual sensor implemented in the firmware
++
++    properties:
++      sensor-type:
++        $ref: /schemas/types.yaml#/definitions/uint32
++        maximum: 7
++
++      is-virtual-sensor:
++        type: boolean
++
++    required:
++      - sensor-type
++      - is-virtual-sensor
++
++    additionalProperties: true
++
++required:
++  - compatible
++
++additionalProperties: false
++
++examples:
++  - |
++    sensor-devinfo {
++        compatible = "oneplus,sensor-devinfo";
++
++        gsensor-0 {
++            sensor-type = <0>;
++            sensor-index = <0>;
++            sensor-name = <0x01>;
++            sensor-direction = <5>;
++        };
++
++        free_fall {
++            sensor-type = <4>;
++            is-virtual-sensor;
++        };
++    };
+-- 
+2.43.0
+

@@ -1,0 +1,146 @@
+From dee5bd8ad3ef90a5a422c98098141dc5e2a34fc4 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 23:40:27 +0100
+Subject: [PATCH 08/12] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
+ sensor device info
+
+Describe the sensor chips for the sensor DSP with the values of the vendor
+device tree overlay (project 19811), so that the firmware brings up the
+accelerometer.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 117 ++++++++++++++++++
+ 1 file changed, 117 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index a073f85b2..06a1155bb 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -241,6 +241,123 @@ ramoops@b0000000 {
+ 		};
+ 	};
+ 
++	/* Values from the vendor device tree overlay of project 19811 */
++	sensor-devinfo {
++		compatible = "oneplus,sensor-devinfo";
++
++		/* LSM6DSM */
++		gsensor-0 {
++			sensor-type = <0>;
++			sensor-index = <0>;
++			sensor-name = <0x01>;
++			sensor-direction = <5>;
++		};
++
++		/* AK09918 */
++		msensor-0 {
++			sensor-type = <2>;
++			sensor-index = <0>;
++			sensor-name = <0x01>;
++			sensor-direction = <4>;
++			parameter-number = <18>;
++			soft-mag-parameter = <10000 0 0 0 0 0 0 0 10000
++					      0 0 0 0 0 0 0 10000 0>;
++		};
++
++		/* MMC5603 */
++		msensor-1 {
++			sensor-type = <2>;
++			sensor-index = <1>;
++			sensor-name = <0x02>;
++			sensor-direction = <0>;
++			parameter-number = <18>;
++			soft-mag-parameter = <0x2703 0 0x188 1 0x144 0 0x123 1 0x26db
++					      0 0x1df 0 0x6f 0 0x217 1 0x2b3e 0>;
++		};
++
++		/* TCS3701 */
++		lsensor-0 {
++			sensor-type = <3>;
++			sensor-index = <0>;
++			sensor-name = <0x02>;
++			bus-number = <5>;
++			irq-number = <122>;
++			als-type = <1>;
++			is-unit-device = <0>;
++			is-als-dri = <0>;
++			als-factor = <116>;
++			is_als_initialed = <0>;
++			als_buffer_length = <10>;
++		};
++
++		/* STK3A5X */
++		psensor-0 {
++			sensor-type = <4>;
++			sensor-index = <0>;
++			sensor-name = <0x01>;
++			bus-number = <5>;
++			irq-number = <122>;
++			ps-type = <1>;
++			ps_saturation = <2600>;
++			is_need_close_pd = <0>;
++			parameter-number = <4>;
++			sensor-reg = <0x01 0x32 0x03 0x80 0xdb 0x00>;
++		};
++
++		/* SX9324 */
++		ssensor-0 {
++			sensor-type = <5>;
++			sensor-index = <0>;
++			sensor-name = <0x01>;
++			parameter-number = <18>;
++			sensor-reg = <0x10 0x16 0x24 0x5f 0x26 0x00 0x27 0x5f 0x28
++				      0x37 0x29 0x1f 0x2a 0x3d 0x36 0x24 0x37 0x24>;
++		};
++
++		sdsensor-0 {
++			sensor-type = <9>;
++			sensor-index = <0>;
++			sensor-name = <0x01>;
++			parameter-number = <18>;
++			sensor-reg = <0x23 0x00 0x24 0x5f 0x26 0x00 0x27 0x5f 0x28
++				      0x3d 0x29 0x1f 0x2a 0x37 0x36 0x32 0x37 0x24>;
++		};
++
++		cctrsensor-0 {
++			sensor-type = <7>;
++			sensor-index = <0>;
++			sensor-name = <0x01>;
++			decoupled-driver = <0>;
++			para-matrix = <4>;
++		};
++
++		pickup_detect {
++			sensor-type = <0>;
++			is-virtual-sensor;
++			is-need-prox = <1>;
++			prox-type = <0>;
++		};
++
++		lux_aod {
++			sensor-type = <1>;
++			is-virtual-sensor;
++			thrd-low = <12>;
++			thrd-high = <50>;
++			als-type = <0>;
++		};
++
++		fp_display {
++			sensor-type = <3>;
++			is-virtual-sensor;
++			prox-type = <0>;
++		};
++
++		free_fall {
++			sensor-type = <4>;
++			is-virtual-sensor;
++		};
++	};
++
+ 	vph_pwr: vph-pwr-regulator {
+ 		compatible = "regulator-fixed";
+ 		regulator-name = "vph_pwr";
+-- 
+2.43.0
+
