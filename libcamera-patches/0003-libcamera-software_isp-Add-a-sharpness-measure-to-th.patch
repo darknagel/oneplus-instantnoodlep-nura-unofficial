@@ -1,0 +1,168 @@
+From 7f2ac03aef1fddfe74faa398fc75d7293274f49b Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 18:04:59 +0100
+Subject: [PATCH 3/5] libcamera: software_isp: Add a sharpness measure to the
+ statistics
+
+Sum the absolute green differences between neighbouring sampled pixels in
+the centre half of the image for 10-bit packed Bayer formats, together
+with the green values they were taken from. This gives the soft IPA a
+brightness independent measure for contrast detection autofocus.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../internal/software_isp/swisp_stats.h       | 15 ++++++++
+ .../internal/software_isp/swstats_cpu.h       |  3 ++
+ src/libcamera/software_isp/swstats_cpu.cpp    | 37 +++++++++++++++++++
+ 3 files changed, 55 insertions(+)
+
+diff --git a/include/libcamera/internal/software_isp/swisp_stats.h b/include/libcamera/internal/software_isp/swisp_stats.h
+index d9d0d9b..fa010d1 100644
+--- a/include/libcamera/internal/software_isp/swisp_stats.h
++++ b/include/libcamera/internal/software_isp/swisp_stats.h
+@@ -43,6 +43,21 @@ struct SwIspStats {
+ 	 * \brief A histogram of luminance values of all the sampled pixels
+ 	 */
+ 	Histogram yHistogram;
++	/**
++	 * \brief Sum of the absolute green differences between horizontally
++	 * neighbouring sampled pixels in the centre of the image
++	 *
++	 * A measure of the image sharpness, for contrast detection autofocus.
++	 * Only calculated for 10-bit packed Bayer formats, zero otherwise.
++	 */
++	uint64_t sharpness;
++	/**
++	 * \brief Sum of the green values the sharpness was calculated from
++	 *
++	 * Divide sharpness by this to get a measure that does not depend on
++	 * the image brightness.
++	 */
++	uint64_t sharpnessBase;
+ };
+ 
+ } /* namespace libcamera */
+diff --git a/include/libcamera/internal/software_isp/swstats_cpu.h b/include/libcamera/internal/software_isp/swstats_cpu.h
+index 6fe60e6..82cc7e0 100644
+--- a/include/libcamera/internal/software_isp/swstats_cpu.h
++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
+@@ -116,6 +116,9 @@ private:
+ 	unsigned int ySkipMask_;
+ 
+ 	Rectangle window_;
++	/* Byte range of the sharpness measurement, relative to window_.x */
++	unsigned int afStart_;
++	unsigned int afEnd_;
+ 
+ 	Size patternSize_;
+ 
+diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+index 0d33594..8634573 100644
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -11,6 +11,8 @@
+ 
+ #include "libcamera/internal/software_isp/swstats_cpu.h"
+ 
++#include <stdlib.h>
++
+ #include <libcamera/base/log.h>
+ 
+ #include <libcamera/stream.h>
+@@ -282,6 +284,9 @@ void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats)
+ 		std::swap(src0, src1);
+ 
+ 	SWSTATS_START_LINE_STATS(uint8_t)
++	uint64_t sharp = 0;
++	uint64_t sharpBase = 0;
++	unsigned int prevG = 0;
+ 
+ 	/* x += 5 sample every other 2x2 block */
+ 	for (unsigned int x = 0; x < widthInBytes; x += 5) {
+@@ -291,10 +296,18 @@ void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats)
+ 		g2 = src1[x];
+ 		r = src1[x + 1];
+ 		g = (g + g2) / 2;
++		if (x >= afStart_ && x < afEnd_) {
++			if (x != afStart_)
++				sharp += abs(static_cast<int>(g) - static_cast<int>(prevG));
++			sharpBase += g;
++			prevG = g;
++		}
+ 		/* Data is already 8 bits, divide by 1 */
+ 		SWSTATS_ACCUMULATE_LINE_STATS(1)
+ 	}
+ 
++	stats.sharpness += sharp;
++	stats.sharpnessBase += sharpBase;
+ 	SWSTATS_FINISH_LINE_STATS()
+ }
+ 
+@@ -308,6 +321,9 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
+ 		std::swap(src0, src1);
+ 
+ 	SWSTATS_START_LINE_STATS(uint8_t)
++	uint64_t sharp = 0;
++	uint64_t sharpBase = 0;
++	unsigned int prevG = 0;
+ 
+ 	/* x += 5 sample every other 2x2 block */
+ 	for (unsigned int x = 0; x < widthInBytes; x += 5) {
+@@ -317,10 +333,18 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
+ 		r = src1[x];
+ 		g2 = src1[x + 1];
+ 		g = (g + g2) / 2;
++		if (x >= afStart_ && x < afEnd_) {
++			if (x != afStart_)
++				sharp += abs(static_cast<int>(g) - static_cast<int>(prevG));
++			sharpBase += g;
++			prevG = g;
++		}
+ 		/* Data is already 8 bits, divide by 1 */
+ 		SWSTATS_ACCUMULATE_LINE_STATS(1)
+ 	}
+ 
++	stats.sharpness += sharp;
++	stats.sharpnessBase += sharpBase;
+ 	SWSTATS_FINISH_LINE_STATS()
+ }
+ 
+@@ -421,6 +445,8 @@ void SwStatsCpu::startFrame(uint32_t frame)
+ 	for (auto &s : stats_) {
+ 		s.sum_ = RGB<uint64_t>({ 0, 0, 0 });
+ 		s.yHistogram.fill(0);
++		s.sharpness = 0;
++		s.sharpnessBase = 0;
+ 	}
+ }
+ 
+@@ -438,8 +464,12 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
+ 	if (valid) {
+ 		sharedStats_->sum_ = RGB<uint64_t>({ 0, 0, 0 });
+ 		sharedStats_->yHistogram.fill(0);
++		sharedStats_->sharpness = 0;
++		sharedStats_->sharpnessBase = 0;
+ 		for (const auto &s : stats_) {
+ 			sharedStats_->sum_ += s.sum_;
++			sharedStats_->sharpness += s.sharpness;
++			sharedStats_->sharpnessBase += s.sharpnessBase;
+ 			for (unsigned int j = 0; j < SwIspStats::kYHistogramSize; j++)
+ 				sharedStats_->yHistogram[j] += s.yHistogram[j];
+ 		}
+@@ -611,6 +641,13 @@ void SwStatsCpu::setWindow(const Rectangle &window)
+ 	window_.width = (window_.width > xShift_ ? window_.width - xShift_ : 0);
+ 	window_.width &= ~(patternSize_.width - 1);
+ 	window_.height &= ~(patternSize_.height - 1);
++
++	/*
++	 * Measure the sharpness in the centre half of the window. The line
++	 * functions step over 4 pixels = 5 bytes of 10-bit packed data.
++	 */
++	afStart_ = window_.width / 4 / 4 * 5;
++	afEnd_ = window_.width * 3 / 4 / 4 * 5;
+ }
+ 
+ void SwStatsCpu::processBayerFrame2(MappedFrameBuffer &in)
+-- 
+2.43.0
+

@@ -1,7 +1,7 @@
 From 9ed2046be20039597997e415b597a4d8959c4f35 Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Sun, 25 Oct 2026 17:43:50 +0100
-Subject: [PATCH 04/13] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
+Subject: [PATCH 04/15] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
  GPU
 
 Enable the Adreno 650 GPU and point the zap shader to the OnePlus

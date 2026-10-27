@@ -1,7 +1,7 @@
 From 129179a8c805833053a3d7fbab84c718fef3293a Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Sun, 25 Oct 2026 23:40:26 +0100
-Subject: [PATCH 07/13] soc: qcom: Add OnePlus sensor device info driver
+Subject: [PATCH 07/15] soc: qcom: Add OnePlus sensor device info driver
 
 The sensor DSP (SLPI) firmware of OnePlus devices reads which sensor
 chips are fitted, how they are oriented and some tuning parameters from

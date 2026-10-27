@@ -1,7 +1,7 @@
 From 8d422027a60d485974cec022c5d8b3b6ae5ed4b1 Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Sun, 25 Oct 2026 23:40:26 +0100
-Subject: [PATCH 06/13] dt-bindings: soc: qcom: Add OnePlus sensor device info
+Subject: [PATCH 06/15] dt-bindings: soc: qcom: Add OnePlus sensor device info
 
 The sensor DSP firmware of OnePlus devices reads the fitted sensor chips,
 their orientation and tuning parameters from SMEM item 130. Describe them

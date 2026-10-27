@@ -1,7 +1,7 @@
 From 1975afee4af99085932dbb5c75ee6c798d8218e9 Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Sun, 25 Oct 2026 17:43:49 +0100
-Subject: [PATCH 02/13] drm/panel: Add Samsung AMS678UW01 panel driver
+Subject: [PATCH 02/15] drm/panel: Add Samsung AMS678UW01 panel driver
 
 Add a driver for the Samsung AMS678UW01 DSC command mode panel used in
 the OnePlus 8 Pro (instantnoodlep). It was generated with

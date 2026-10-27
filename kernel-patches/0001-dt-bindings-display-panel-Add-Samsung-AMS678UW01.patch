@@ -1,7 +1,7 @@
 From 655a4b8b2894b8f945e3ad5e3ef839cf738cfda2 Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Sun, 25 Oct 2026 17:43:49 +0100
-Subject: [PATCH 01/13] dt-bindings: display: panel: Add Samsung AMS678UW01
+Subject: [PATCH 01/15] dt-bindings: display: panel: Add Samsung AMS678UW01
 
 Add bindings for the Samsung AMS678UW01 6.78" 1440x3168 DSC command
 mode AMOLED panel found in the OnePlus 8 Pro.

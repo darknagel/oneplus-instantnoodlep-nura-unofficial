@@ -1,7 +1,7 @@
 From a75d6049c023358e26d071313726a7b239bdacbf Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Sun, 25 Oct 2026 17:43:50 +0100
-Subject: [PATCH 03/13] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
+Subject: [PATCH 03/15] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Enable
  display
 
 Enable the display clock controller, DSI0 and its PHY, and describe the

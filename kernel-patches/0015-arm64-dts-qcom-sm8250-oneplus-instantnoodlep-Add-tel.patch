@@ -1,0 +1,93 @@
+From 91d9eed926c49aa76a14394f10a46c06c37cc4cb Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 17:31:07 +0100
+Subject: [PATCH 15/15] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
+ telephoto autofocus
+
+The telephoto camera module has an onsemi LC898217XC voice coil driver at
+address 0x74 on the same CCI bus as the sensor. The vendor device tree
+lists two actuator variants for this module; the LC898128 next to it at
+0x24 only drives the optical image stabilisation.
+
+The actuator is powered from a supply that GPIO 140 switches on (called
+CAM_vaf in the vendor device tree). Describe it as a fixed regulator fed
+from BOB. PM8009 L6 is on in all working tests and is used as the analog
+supply.
+
+Link the actuator to the sensor with lens-focus.
+
+The first DAC write right after the actuator is powered on times out on
+the CCI bus, even with a 200 ms start-up delay; later writes work.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 32 +++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 8b0abfa28..42b9d2313 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -257,6 +257,21 @@ vreg_cam_front_avdd: regulator-cam-front-avdd {
+ 		pinctrl-names = "default";
+ 	};
+ 
++	vreg_cam_tele_vaf: regulator-cam-tele-vaf {
++		compatible = "regulator-fixed";
++		regulator-name = "cam_tele_vaf";
++		regulator-min-microvolt = <2800000>;
++		regulator-max-microvolt = <2800000>;
++		startup-delay-us = <2000>;
++
++		gpio = <&tlmm 140 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		vin-supply = <&vreg_bob>;
++
++		pinctrl-0 = <&cam_tele_vaf_en>;
++		pinctrl-names = "default";
++	};
++
+ 	vreg_cam_tele_avdd: regulator-cam-tele-avdd {
+ 		compatible = "regulator-fixed";
+ 		regulator-name = "cam_tele_avdd";
+@@ -834,6 +849,8 @@ camera@2d {
+ 		orientation = <1>;
+ 		rotation = <270>;
+ 
++		lens-focus = <&cam_tele_af>;
++
+ 		port {
+ 			cam_tele_ep: endpoint {
+ 				data-lanes = <1 2 3 4>;
+@@ -842,6 +859,14 @@ cam_tele_ep: endpoint {
+ 			};
+ 		};
+ 	};
++
++	cam_tele_af: lens@74 {
++		compatible = "onnn,lc898217xc";
++		reg = <0x74>;
++
++		vdd-supply = <&vreg_cam_tele_vaf>;
++		vana-supply = <&vreg_l6f_2p8>;
++	};
+ };
+ 
+ &cci1_i2c1 {
+@@ -1312,6 +1337,13 @@ cam_front_default: cam-front-default-state {
+ 		bias-disable;
+ 	};
+ 
++	cam_tele_vaf_en: cam-tele-vaf-en-state {
++		pins = "gpio140";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
+ 	cam_tele_avdd_en: cam-tele-avdd-en-state {
+ 		pins = "gpio139";
+ 		function = "gpio";
+-- 
+2.43.0
+

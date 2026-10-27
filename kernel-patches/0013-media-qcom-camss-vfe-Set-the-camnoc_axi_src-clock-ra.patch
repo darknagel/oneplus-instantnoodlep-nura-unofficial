@@ -1,7 +1,7 @@
 From 990f70da1a5f347db0e12795dc2bddb4b766cfcd Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Mon, 26 Oct 2026 23:15:47 +0100
-Subject: [PATCH 13/13] media: qcom: camss: vfe: Set the camnoc_axi_src clock
+Subject: [PATCH 13/15] media: qcom: camss: vfe: Set the camnoc_axi_src clock
  rate
 
 On SM8250 the rate table for the camera NoC AXI clock is attached to

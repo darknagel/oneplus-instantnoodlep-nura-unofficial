@@ -1,7 +1,7 @@
 From 0e7b7a15b55abc1c1ffad810706c063d2a39595b Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Mon, 26 Oct 2026 19:22:19 +0100
-Subject: [PATCH 2/2] libcamera: camera_sensor: Add Sony IMX471 sensor
+Subject: [PATCH 2/5] libcamera: camera_sensor: Add Sony IMX471 sensor
  properties and helper
 
 Add the camera sensor properties and the camera sensor helper for the

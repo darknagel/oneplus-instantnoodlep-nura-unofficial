@@ -1,0 +1,527 @@
+From 64ca9f5306e8f32968eff5e7bba3610927e8966a Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 18:36:33 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: add OnePlus 8 Pro telephoto
+ autofocus
+
+Add the LC898217XC voice coil driver as posted to linux-media (v4) and the
+telephoto autofocus actuator in the OnePlus 8 Pro device tree. Enable
+CONFIG_VIDEO_LC898217XC.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ...ia-i2c-Add-driver-for-LC898217XC-VCM.patch | 349 ++++++++++++++++++
+ ...m8250-oneplus-instantnoodlep-Add-tel.patch |  93 +++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |   8 +-
+ .../config-postmarketos-qcom-sm8250.aarch64   |   1 +
+ 4 files changed, 449 insertions(+), 2 deletions(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0014-media-i2c-Add-driver-for-LC898217XC-VCM.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0015-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0014-media-i2c-Add-driver-for-LC898217XC-VCM.patch b/device/testing/linux-postmarketos-qcom-sm8250/0014-media-i2c-Add-driver-for-LC898217XC-VCM.patch
+new file mode 100644
+index 0000000000..65a3ad2617
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0014-media-i2c-Add-driver-for-LC898217XC-VCM.patch
+@@ -0,0 +1,349 @@
++From 88c94afe5c277d04547d73de3e79d7ef685a2bf1 Mon Sep 17 00:00:00 2001
++From: Vasiliy Doylov <nekocwd@xxxxxxxxxxxxxx>
++Date: Tue, 27 Oct 2026 17:31:07 +0100
++Subject: [PATCH 14/15] media: i2c: Add driver for LC898217XC VCM
++
++LC898217XC is a 11 bit DAC, designed for linear control
++of voice coil motor. This driver creates a V4L2 subdevice
++and provides control to set the desired focus.
++
++Tested on Oneplus 6 (oneplus-enchilada)
++
++Signed-off-by: Vasiliy Doylov <nekocwd@xxxxxxxxxxxxxx>
++---
++ drivers/media/i2c/Kconfig      |   9 +
++ drivers/media/i2c/Makefile     |   1 +
++ drivers/media/i2c/lc898217xc.c | 289 +++++++++++++++++++++++++++++++++
++ 3 files changed, 299 insertions(+)
++ create mode 100644 drivers/media/i2c/lc898217xc.c
++
++diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
++index b7199f9f5..079478217 100644
++--- a/drivers/media/i2c/Kconfig
+++++ b/drivers/media/i2c/Kconfig
++@@ -936,6 +936,15 @@ config VIDEO_DW9807_VCM
++ 	  capability. This is designed for linear control of
++ 	  voice coil motors, controlled via I2C serial interface.
++ 
+++config VIDEO_LC898217XC
+++	tristate "LC898217XC lens voice coil support"
+++	select V4L2_CCI_I2C
+++	help
+++	  This is a driver for the LC898217XC camera lens voice coil.
+++	  LC898217XC is a 11 bit DAC with 110mA output current sink
+++	  capability. This is designed for linear control of
+++	  voice coil motors, controlled via I2C serial interface.
+++
++ endif
++ 
++ menu "Flash devices"
++diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
++index acbd321fc..d2e98542c 100644
++--- a/drivers/media/i2c/Makefile
+++++ b/drivers/media/i2c/Makefile
++@@ -65,6 +65,7 @@ obj-$(CONFIG_VIDEO_IMX471) += imx471.o
++ obj-$(CONFIG_VIDEO_IR_I2C) += ir-kbd-i2c.o
++ obj-$(CONFIG_VIDEO_ISL7998X) += isl7998x.o
++ obj-$(CONFIG_VIDEO_KS0127) += ks0127.o
+++obj-$(CONFIG_VIDEO_LC898217XC) += lc898217xc.o
++ obj-$(CONFIG_VIDEO_LM3560) += lm3560.o
++ obj-$(CONFIG_VIDEO_LM3646) += lm3646.o
++ obj-$(CONFIG_VIDEO_LT6911UXE) += lt6911uxe.o
++diff --git a/drivers/media/i2c/lc898217xc.c b/drivers/media/i2c/lc898217xc.c
++new file mode 100644
++index 000000000..03e07a173
++--- /dev/null
+++++ b/drivers/media/i2c/lc898217xc.c
++@@ -0,0 +1,289 @@
+++// SPDX-License-Identifier: GPL-2.0-or-later
+++// Copyright (c) 2025 Vasiliy Doylov <nekocwd@xxxxxxxxxxxxxx>
+++
+++#include <linux/delay.h>
+++#include <linux/i2c.h>
+++#include <linux/module.h>
+++#include <linux/pm_runtime.h>
+++#include <linux/regmap.h>
+++#include <linux/regulator/consumer.h>
+++#include <media/v4l2-async.h>
+++#include <media/v4l2-cci.h>
+++#include <media/v4l2-ctrls.h>
+++#include <media/v4l2-device.h>
+++#include <media/v4l2-fwnode.h>
+++#include <media/v4l2-subdev.h>
+++#include <media/v4l2-event.h>
+++
+++#define LC898217XC_NAME "lc898217xc"
+++/* Actuator has 11 bit resolution */
+++#define LC898217XC_MAX_FOCUS_POS (2048 - 1)
+++#define LC898217XC_MIN_FOCUS_POS 0
+++#define LC898217XC_FOCUS_STEPS 1
+++#define LC898217XC_DAC_ADDR CCI_REG16(0x84)
+++
+++static const char *const lc898217xc_supply_names[] = {
+++	"vdd",
+++	"vana",
+++};
+++
+++struct lc898217xc {
+++	struct regulator_bulk_data supplies[ARRAY_SIZE(lc898217xc_supply_names)];
+++	struct v4l2_ctrl_handler ctrls;
+++	struct v4l2_subdev sd;
+++	struct regmap *regmap;
+++};
+++
+++static inline struct lc898217xc *sd_to_lc898217xc(struct v4l2_subdev *subdev)
+++{
+++	return container_of(subdev, struct lc898217xc, sd);
+++}
+++
+++static int lc898217xc_set_dac(struct lc898217xc *lc898217xc, u16 val)
+++{
+++	struct i2c_client *client = v4l2_get_subdevdata(&lc898217xc->sd);
+++	int ret;
+++
+++	ret = cci_write(lc898217xc->regmap, LC898217XC_DAC_ADDR, val, NULL);
+++	if (ret)
+++		dev_err(&client->dev, "failed to set DAC: %d\n", ret);
+++
+++	return ret;
+++}
+++
+++static int lc898217xc_power_on(struct lc898217xc *lc898217xc)
+++{
+++	int ret;
+++
+++	ret = regulator_bulk_enable(ARRAY_SIZE(lc898217xc_supply_names),
+++				    lc898217xc->supplies);
+++	if (ret < 0)
+++		return ret;
+++
+++	usleep_range(8000, 10000);
+++	return 0;
+++}
+++
+++static int lc898217xc_power_off(struct lc898217xc *lc898217xc)
+++{
+++	regulator_bulk_disable(ARRAY_SIZE(lc898217xc_supply_names),
+++			       lc898217xc->supplies);
+++	return 0;
+++}
+++
+++static int __maybe_unused lc898217xc_runtime_suspend(struct device *dev)
+++{
+++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+++	struct lc898217xc *lc898217xc = sd_to_lc898217xc(sd);
+++
+++	lc898217xc_power_off(lc898217xc);
+++	return 0;
+++}
+++
+++static int __maybe_unused lc898217xc_runtime_resume(struct device *dev)
+++{
+++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+++	struct lc898217xc *lc898217xc = sd_to_lc898217xc(sd);
+++	int ret;
+++
+++	ret = lc898217xc_power_on(lc898217xc);
+++	if (ret < 0) {
+++		dev_err(dev, "failed to enable regulators\n");
+++		return ret;
+++	}
+++
+++	__v4l2_ctrl_handler_setup(&lc898217xc->ctrls);
+++
+++	return ret;
+++}
+++
+++static int lc898217xc_set_ctrl(struct v4l2_ctrl *ctrl)
+++{
+++	struct lc898217xc *lc898217xc = container_of(ctrl->handler,
+++						     struct lc898217xc, ctrls);
+++
+++	if (ctrl->id == V4L2_CID_FOCUS_ABSOLUTE)
+++		return lc898217xc_set_dac(lc898217xc, ctrl->val);
+++
+++	return 0;
+++}
+++
+++static const struct v4l2_ctrl_ops lc898217xc_ctrl_ops = {
+++	.s_ctrl = lc898217xc_set_ctrl,
+++};
+++
+++static int lc898217xc_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
+++{
+++	return pm_runtime_resume_and_get(sd->dev);
+++}
+++
+++static int lc898217xc_close(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
+++{
+++	pm_runtime_put_autosuspend(sd->dev);
+++
+++	return 0;
+++}
+++
+++static const struct v4l2_subdev_internal_ops lc898217xc_int_ops = {
+++	.open = lc898217xc_open,
+++	.close = lc898217xc_close,
+++};
+++
+++static const struct v4l2_subdev_core_ops lc898217xc_core_ops = {
+++	.log_status = v4l2_ctrl_subdev_log_status,
+++};
+++
+++static const struct v4l2_subdev_ops lc898217xc_ops = {
+++	.core = &lc898217xc_core_ops,
+++};
+++
+++static int lc898217xc_init_controls(struct lc898217xc *lc898217xc)
+++{
+++	struct v4l2_ctrl_handler *hdl = &lc898217xc->ctrls;
+++	const struct v4l2_ctrl_ops *ops = &lc898217xc_ctrl_ops;
+++
+++	v4l2_ctrl_handler_init(hdl, 1);
+++
+++	v4l2_ctrl_new_std(hdl, ops, V4L2_CID_FOCUS_ABSOLUTE,
+++			  LC898217XC_MIN_FOCUS_POS,
+++			  LC898217XC_MAX_FOCUS_POS,
+++			  LC898217XC_FOCUS_STEPS, 0);
+++
+++	if (hdl->error)
+++		return hdl->error;
+++
+++	lc898217xc->sd.ctrl_handler = hdl;
+++
+++	return 0;
+++}
+++
+++static int lc898217xc_probe(struct i2c_client *client)
+++{
+++	struct device *dev = &client->dev;
+++	struct lc898217xc *lc898217xc;
+++	unsigned int i;
+++	int ret;
+++
+++	lc898217xc = devm_kzalloc(dev, sizeof(*lc898217xc), GFP_KERNEL);
+++	if (!lc898217xc)
+++		return -ENOMEM;
+++
+++	lc898217xc->regmap = devm_cci_regmap_init_i2c(client, 8);
+++	if (IS_ERR(lc898217xc->regmap))
+++		return dev_err_probe(dev, PTR_ERR(lc898217xc->regmap),
+++				     "failed to initialize CCI\n");
+++
+++	/* Initialize subdev */
+++	v4l2_i2c_subdev_init(&lc898217xc->sd, client, &lc898217xc_ops);
+++
+++	for (i = 0; i < ARRAY_SIZE(lc898217xc_supply_names); i++)
+++		lc898217xc->supplies[i].supply = lc898217xc_supply_names[i];
+++
+++	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(lc898217xc_supply_names),
+++				      lc898217xc->supplies);
+++	if (ret)
+++		return dev_err_probe(dev, ret, "failed to get regulators\n");
+++
+++	ret = lc898217xc_power_on(lc898217xc);
+++	if (ret)
+++		return dev_err_probe(dev, ret, "failed to enable regulators\n");
+++
+++	ret = lc898217xc_init_controls(lc898217xc);
+++	if (ret) {
+++		dev_err_probe(dev, ret, "failed to init v4l2 controls\n");
+++		goto err_power_off;
+++	}
+++
+++	/* Initialize subdev */
+++	lc898217xc->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+++	lc898217xc->sd.internal_ops = &lc898217xc_int_ops;
+++
+++	ret = media_entity_pads_init(&lc898217xc->sd.entity, 0, NULL);
+++	if (ret < 0) {
+++		dev_err_probe(dev, ret, "failed to init media entity pads");
+++		goto err_free_handler;
+++	}
+++
+++	lc898217xc->sd.entity.function = MEDIA_ENT_F_LENS;
+++
+++	/*
+++	 * Enable runtime PM. As the device has been powered manually, mark it
+++	 * as active, and increase the usage count without resuming the device.
+++	 */
+++	pm_runtime_set_active(dev);
+++	pm_runtime_get_noresume(dev);
+++	pm_runtime_enable(dev);
+++
+++	ret = v4l2_async_register_subdev(&lc898217xc->sd);
+++	if (ret < 0) {
+++		dev_err_probe(dev, ret, "failed to register V4L2 subdev\n");
+++		goto err_pm;
+++	}
+++
+++	/*
+++	 * Finally, enable autosuspend and decrease the usage count. The device
+++	 * will get suspended after the autosuspend delay, turning the power
+++	 * off.
+++	 */
+++	pm_runtime_set_autosuspend_delay(dev, 1000);
+++	pm_runtime_use_autosuspend(dev);
+++	pm_runtime_put_autosuspend(dev);
+++
+++	return 0;
+++
+++err_pm:
+++	pm_runtime_disable(dev);
+++	pm_runtime_put_noidle(dev);
+++	media_entity_cleanup(&lc898217xc->sd.entity);
+++err_free_handler:
+++	v4l2_ctrl_handler_free(&lc898217xc->ctrls);
+++err_power_off:
+++	lc898217xc_power_off(lc898217xc);
+++	return ret;
+++}
+++
+++static void lc898217xc_remove(struct i2c_client *client)
+++{
+++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+++	struct lc898217xc *lc898217xc = sd_to_lc898217xc(sd);
+++	struct device *dev = &client->dev;
+++
+++	v4l2_async_unregister_subdev(&lc898217xc->sd);
+++	v4l2_ctrl_handler_free(&lc898217xc->ctrls);
+++	media_entity_cleanup(&lc898217xc->sd.entity);
+++
+++	/*
+++	 * Disable runtime PM. In case runtime PM is disabled in the kernel,
+++	 * make sure to turn power off manually.
+++	 */
+++	pm_runtime_disable(dev);
+++	if (!pm_runtime_status_suspended(dev))
+++		lc898217xc_power_off(lc898217xc);
+++	pm_runtime_set_suspended(dev);
+++}
+++
+++static const struct of_device_id lc898217xc_of_table[] = {
+++	{ .compatible = "onnn,lc898217xc" },
+++	{ /* sentinel */ }
+++};
+++MODULE_DEVICE_TABLE(of, lc898217xc_of_table);
+++
+++static const struct dev_pm_ops lc898217xc_pm_ops = {
+++	SET_RUNTIME_PM_OPS(lc898217xc_runtime_suspend,
+++			   lc898217xc_runtime_resume, NULL)
+++};
+++
+++static struct i2c_driver lc898217xc_i2c_driver = {
+++	.driver = {
+++		.name = LC898217XC_NAME,
+++		.pm = &lc898217xc_pm_ops,
+++		.of_match_table = lc898217xc_of_table,
+++	},
+++	.probe = lc898217xc_probe,
+++	.remove = lc898217xc_remove,
+++};
+++module_i2c_driver(lc898217xc_i2c_driver);
+++
+++MODULE_AUTHOR("Vasiliy Doylov <nekocwd@xxxxxxxxxxxxxx>");
+++MODULE_DESCRIPTION("Onsemi LC898217XC VCM driver");
+++MODULE_LICENSE("GPL");
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0015-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch b/device/testing/linux-postmarketos-qcom-sm8250/0015-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
+new file mode 100644
+index 0000000000..3d51f89a9e
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0015-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
+@@ -0,0 +1,93 @@
++From 91d9eed926c49aa76a14394f10a46c06c37cc4cb Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 27 Oct 2026 17:31:07 +0100
++Subject: [PATCH] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
++ telephoto autofocus
++
++The telephoto camera module has an onsemi LC898217XC voice coil driver at
++address 0x74 on the same CCI bus as the sensor. The vendor device tree
++lists two actuator variants for this module; the LC898128 next to it at
++0x24 only drives the optical image stabilisation.
++
++The actuator is powered from a supply that GPIO 140 switches on (called
++CAM_vaf in the vendor device tree). Describe it as a fixed regulator fed
++from BOB. PM8009 L6 is on in all working tests and is used as the analog
++supply.
++
++Link the actuator to the sensor with lens-focus.
++
++The first DAC write right after the actuator is powered on times out on
++the CCI bus, even with a 200 ms start-up delay; later writes work.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 32 +++++++++++++++++++
++ 1 file changed, 32 insertions(+)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 8b0abfa28..42b9d2313 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -257,6 +257,21 @@ vreg_cam_front_avdd: regulator-cam-front-avdd {
++ 		pinctrl-names = "default";
++ 	};
++ 
+++	vreg_cam_tele_vaf: regulator-cam-tele-vaf {
+++		compatible = "regulator-fixed";
+++		regulator-name = "cam_tele_vaf";
+++		regulator-min-microvolt = <2800000>;
+++		regulator-max-microvolt = <2800000>;
+++		startup-delay-us = <2000>;
+++
+++		gpio = <&tlmm 140 GPIO_ACTIVE_HIGH>;
+++		enable-active-high;
+++		vin-supply = <&vreg_bob>;
+++
+++		pinctrl-0 = <&cam_tele_vaf_en>;
+++		pinctrl-names = "default";
+++	};
+++
++ 	vreg_cam_tele_avdd: regulator-cam-tele-avdd {
++ 		compatible = "regulator-fixed";
++ 		regulator-name = "cam_tele_avdd";
++@@ -834,6 +849,8 @@ camera@2d {
++ 		orientation = <1>;
++ 		rotation = <270>;
++ 
+++		lens-focus = <&cam_tele_af>;
+++
++ 		port {
++ 			cam_tele_ep: endpoint {
++ 				data-lanes = <1 2 3 4>;
++@@ -842,6 +859,14 @@ cam_tele_ep: endpoint {
++ 			};
++ 		};
++ 	};
+++
+++	cam_tele_af: lens@74 {
+++		compatible = "onnn,lc898217xc";
+++		reg = <0x74>;
+++
+++		vdd-supply = <&vreg_cam_tele_vaf>;
+++		vana-supply = <&vreg_l6f_2p8>;
+++	};
++ };
++ 
++ &cci1_i2c1 {
++@@ -1312,6 +1337,13 @@ cam_front_default: cam-front-default-state {
++ 		bias-disable;
++ 	};
++ 
+++	cam_tele_vaf_en: cam-tele-vaf-en-state {
+++		pins = "gpio140";
+++		function = "gpio";
+++		drive-strength = <2>;
+++		bias-disable;
+++	};
+++
++ 	cam_tele_avdd_en: cam-tele-avdd-en-state {
++ 		pins = "gpio139";
++ 		function = "gpio";
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index dbba60bd50..22cbc8359b 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=13
++pkgrel=20
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -53,6 +53,8 @@ source="
+ 	0011-media-i2c-Add-Sony-IMX471-image-sensor-driver.patch
+ 	0012-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-fro.patch
+ 	0013-media-qcom-camss-vfe-Set-the-camnoc_axi_src-clock-ra.patch
++	0014-media-i2c-Add-driver-for-LC898217XC-VCM.patch
++	0015-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -99,7 +101,7 @@ package() {
+ 
+ sha512sums="
+ 05df1589411d2817fecc403402f1dea2c405c5de102bf92e23089e430fc2c623702bd778fbea5b87f70ea02e9eff7f02a7de292f895d47ff40ae88dafdfbab58  linux-postmarketos-qcom-sm8250-sm8250-7.2.0_git20261010.tar.gz
+-cc6030ab2fb1e273767a0ba2997f58149055f142814630df0d056c701aae57d424b31d9d66af26a737a7247afa2c8dc436ab40fbf053b7f09aaff3296841058c  config-postmarketos-qcom-sm8250.aarch64
++b96c44d75764533fea503589faea990d6db5f7e41bc843e4822c5463f81c18a47a0f5f65a730245ca5ec69b2dd53d6a5624073e3eca4554f3058ce50e29f9ecb  config-postmarketos-qcom-sm8250.aarch64
+ 83cb859ba62434fbdac0b8c1f8bda2b9766ea58a121b3e224fc46a94ad1610a86a3d529ad12343a31aba7058c710bdc89b08db5d4a26d484e5757ab5d8d73260  0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+ 1c955330b50679ab8f62664f7c8353b5d3967b8a9b6dd70cab4c35d9a940fe07ebb61da01360cb9877cccd27ff291d2a6069387e110538aa14aef88b31449042  0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+ 91f00b0b7c45df737f6f106b96a394d9f8bc884c0b4a379fa2cf429d99c3c9946d8f6832d6be16be61a3ff2274fe9cf60473ceb16ac02451d827693114acdf48  0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+@@ -113,4 +115,6 @@ dba18610e90c2054aa2fbbe6dd4d311a09a4d6f00181bf390cf19a9c0c981d73f6e1ee0a0ad32623
+ 24347da30a97f4cb783a99354db358caace8281d5d842f97bbd11b68aadc2a0e3fb31d82a844c0a1edf28dc61c54bb75661bb65aaaee6ede1d3ea462053f935f  0011-media-i2c-Add-Sony-IMX471-image-sensor-driver.patch
+ 6f2448da87a80d1668db7341f3ac51db00fdf2a333107a51e0d38e4b211400554abbedc53263dc654ae5f3631932ba694efbd48f53fd0d7fc021eda13f8b297b  0012-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-fro.patch
+ dd23767156bf823f298bd44423c9d947049ddadb5d2a1a56d67be27111ed02b3419dcf733c169ac11fa872cb03fdc81c68b313a04cf4faaba4d075a3db325e06  0013-media-qcom-camss-vfe-Set-the-camnoc_axi_src-clock-ra.patch
++10e23c44edf412f363daf1872b375ecb6628bc4815f6c5aa1717339708fac32131f5deafcf64fc341b8721ff0082b08fe12ee6113e68c84c1462638423575fd4  0014-media-i2c-Add-driver-for-LC898217XC-VCM.patch
++7718d928bbbdf2f1a0cb8ffcf55710d09369ae0f399fcbff5fa28c7e83c703b3e1d432fc33e7ab7083852db0ebf96711bf78cfe440531143072c88edf01ad300  0015-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-tel.patch
+ "
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64 b/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
+index c317b9dde3..96bc6d0abd 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
++++ b/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
+@@ -4627,6 +4627,7 @@ CONFIG_VIDEO_OV8856=m
+ # CONFIG_VIDEO_S5C73M3 is not set
+ CONFIG_VIDEO_S5K3M5=m
+ CONFIG_VIDEO_IMX471=m
++CONFIG_VIDEO_LC898217XC=m
+ # CONFIG_VIDEO_S5K5BAF is not set
+ # CONFIG_VIDEO_S5K6A3 is not set
+ # CONFIG_VIDEO_S5KJN1 is not set
+-- 
+2.43.0
+

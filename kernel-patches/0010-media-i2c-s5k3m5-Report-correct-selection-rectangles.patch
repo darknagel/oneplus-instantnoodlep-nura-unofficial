@@ -1,7 +1,7 @@
 From 0d01d08e988f40bb76e47effba6e7913d11090b3 Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Mon, 26 Oct 2026 18:56:44 +0100
-Subject: [PATCH 10/13] media: i2c: s5k3m5: Report correct selection rectangles
+Subject: [PATCH 10/15] media: i2c: s5k3m5: Report correct selection rectangles
 
 The crop rectangle used the mode width as height, and the driver did not
 implement V4L2_SEL_TGT_NATIVE_SIZE and V4L2_SEL_TGT_CROP_DEFAULT, which
