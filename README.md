@@ -1,16 +1,19 @@
-# OnePlus 8 Pro (instantnoodlep) – mainline Linux
+# OnePlus 8 Pro (instantnoodlep) – unofficial Nura mainline port
 
 Patches and a ready-to-flash image that turn the OnePlus 8 Pro (IN2023,
 `oneplus-instantnoodlep`, Snapdragon 865 / SM8250) into a Linux phone running
-[postmarketOS](https://postmarketos.org) on a mainline kernel.
+[Nura](https://nura.eco) (formerly postmarketOS) on a mainline kernel.
+This is an unofficial, independent project – it is not affiliated with or supported by
+the Nura project. Package and tool names (`pmbootstrap`, `postmarketos-ui-phosh`,
+`linux-postmarketos-qcom-sm8250`, …) still carry the old name, so the commands below use them.
 
 > **AI disclosure:** These patches and the image were made with substantial help from an AI
 > coding assistant (Claude). Everything marked "works" was tested on a real device.
-> Because of this, nothing here is submitted to postmarketOS, whose policy forbids
+> Because of this, nothing here is submitted to Nura, whose policy forbids
 > AI-assisted contributions. Use it, learn from it, or reimplement it – but if you forward
 > any of this to a project, check that project's rules on AI-generated code first.
 
-For general information about the device under postmarketOS (partition layout, USB quirks,
+For general information about the device under Nura (partition layout, USB quirks,
 how to return to Android) see the wiki page:
 **https://wiki.nura.eco/wiki/OnePlus_8_Pro_(oneplus-instantnoodlep)**
 
@@ -23,11 +26,11 @@ computer you reach over SSH; optionally you install a desktop like Phosh or Plas
 
 **What's in it**
 
-- postmarketOS edge, console only (no desktop), NetworkManager, OpenSSH server
+- Nura edge, console only (no desktop), NetworkManager, OpenSSH server
 - kernel `linux-postmarketos-qcom-sm8250` 7.2 with all patches from this repository
   (display 1440×3168 @ 120 Hz, GPU, audio, Wi-Fi, Bluetooth, USB networking, cameras,
   telephoto autofocus) – the modem work is **not** included
-- firmware: only what postmarketOS distributes anyway (`firmware-oneplus-instantnoodlep`,
+- firmware: only what Nura distributes anyway (`firmware-oneplus-instantnoodlep`,
   `linux-firmware-ath11k`, `linux-firmware-qcom`)
 - **login: user `root`, password `root`, SSH enabled.** Change the password right after the
   first login (`passwd`) – until you do, anyone on your network can log in as root.
@@ -113,7 +116,7 @@ come up, log in on the phone's screen with a USB keyboard (USB-C hub with extern
 ## 2. Optional: install a desktop (Phosh or another interface)
 
 This step is optional – the image works as it is over SSH. If you want a touch interface on
-the screen, pick one of the phone interfaces postmarketOS offers:
+the screen, pick one of the phone interfaces Nura offers:
 
 | Interface | Package | Notes |
 |---|---|---|
@@ -282,7 +285,7 @@ position; in continuous mode it scans again when the sharpness changes.
   Later commands work, so this has no visible effect.
 - After installing a new libcamera, restart PipeWire (`systemctl --user restart pipewire
   wireplumber`) or log out and in again: WirePlumber keeps the old library loaded.
-- `apk upgrade` may replace the patched packages once postmarketOS publishes a higher
+- `apk upgrade` may replace the patched packages once Nura publishes a higher
   version of the same package. Check `apk policy linux-postmarketos-qcom-sm8250` if
   something stops working after an upgrade.
 
@@ -335,14 +338,14 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
 
 ### Contents of this repository
 
-- `kernel-patches/` – against the postmarketOS SM8250 kernel tag `sm8250-7.2.0_git20261010`
+- `kernel-patches/` – against the Nura SM8250 kernel tag `sm8250-7.2.0_git20261010`
   (https://gitlab.postmarketos.org/soc/qualcomm-sm8250/linux). Apply with `git am`.
-- `pmaports-patches/` – against postmarketOS pmaports `main` (Oct 2026). They also carry
+- `pmaports-patches/` – against Nura pmaports `main` (Oct 2026). They also carry
   the kernel and libcamera patches inside the packages.
 - `hexagonrpc-patches/` – against https://github.com/linux-msm/hexagonrpc tag `v0.5.0`.
   Adds a writable sensor registry (`-w DIR`), needed by the OnePlus sensor DSP.
 - `libcamera-patches/` – against libcamera v0.7.2 plus the patches already carried in
-  postmarketOS `temp/libcamera`: sensor helpers for S5K3M5 and IMX471 (0001–0002) and the
+  Nura `temp/libcamera`: sensor helpers for S5K3M5 and IMX471 (0001–0002) and the
   autofocus series (0003–0005).
 
 Kernel patch 0014 (LC898217XC driver) is not my work: it is v4 of the driver Vasiliy
@@ -355,8 +358,8 @@ if you need it.
 
 Each patch keeps the license of the project it applies to (Linux kernel: GPL-2.0, device
 tree / bindings as stated in their SPDX headers, hexagonrpc and libcamera as per their
-repositories). The image contains postmarketOS/Alpine packages under their own licenses
-and the firmware postmarketOS distributes; the kernel source is the tag above plus
+repositories). The image contains Nura/Alpine packages under their own licenses
+and the firmware Nura distributes; the kernel source is the tag above plus
 `kernel-patches/`. README: CC0.
 
 No warranty. Flashing your phone is at your own risk.
