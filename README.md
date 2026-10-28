@@ -5,7 +5,7 @@ Patches and a ready-to-flash image that turn the OnePlus 8 Pro (IN2023,
 [Nura](https://nura.eco) (formerly postmarketOS) on a mainline kernel.
 This is an unofficial, independent project – it is not affiliated with or supported by
 the Nura project. Package and tool names (`pmbootstrap`, `postmarketos-ui-phosh`,
-`linux-postmarketos-qcom-sm8250`, …) still carry the old name, so the commands below use them.
+`linux-postmarketos-qcom-sm8250`, …) still carry the old name (as of October 2026), so the commands below use them.
 
 > **AI disclosure:** These patches and the image were made with substantial help from an AI
 > coding assistant (Claude). Everything marked "works" was tested on a real device.
@@ -120,17 +120,18 @@ the screen, pick one of the phone interfaces Nura offers:
 
 | Interface | Package | Notes |
 |---|---|---|
-| Phosh | `postmarketos-ui-phosh` | GNOME-based, the one tested here (GPU accelerated, camera works in Snapshot) |
-| Plasma Mobile | `postmarketos-ui-plasma-mobile` | KDE-based |
-| Sxmo | `postmarketos-ui-sxmo-de-sway` | minimal, button and menu driven |
+| Phosh | `postmarketos-ui-phosh` | GNOME-based; tested (GPU accelerated, camera works in Snapshot) |
+| Plasma Mobile | `postmarketos-ui-plasma-mobile` | KDE-based; tested |
+| Sxmo | `postmarketos-ui-sxmo-de-sway` | minimal, button and menu driven; not tried |
 
-Only Phosh was tried on this device; the others use the same graphics stack and should
-work too. Desktop interfaces do not run as root, so create a normal user first (example with
-Phosh – replace the package name for another interface):
+Desktop interfaces do not run as root, so create a normal user first. **The user must have
+the user ID 10000** – Nura starts the interface for exactly this ID, with any other ID it
+fails to start. Pick a **numeric password (PIN)**: the lock screens show a number pad first.
+Example with Phosh – replace the package name for another interface:
 
 ```sh
 apk update
-adduser -g "" alice                                  # pick your own name
+adduser -u 10000 -g "" alice                         # pick your own name; password = PIN
 for g in audio input plugdev video netdev feedbackd wheel; do
     addgroup alice $g 2>/dev/null
 done
@@ -139,7 +140,7 @@ apk add doas && echo 'permit persist :wheel' > /etc/doas.d/wheel.conf   # "doas"
 reboot
 ```
 
-After the reboot the login screen appears; log in with the user you created. Useful
+After the reboot the interface starts and asks for the PIN of the user you created. Useful
 additions for Phosh:
 
 ```sh
