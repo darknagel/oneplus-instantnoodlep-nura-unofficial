@@ -41,7 +41,7 @@ computer you reach over SSH; optionally you install a desktop like Phosh or Plas
 - the sensor files (accelerometer, light, proximity): they come from OnePlus' stock firmware
   and may not be redistributed – see "Enable the sensors" below
 - modem, calls, SMS, mobile data, GPS
-- working Bluetooth (see known issues)
+- the packages Bluetooth needs (one `apk add` away, see known issues)
 - main and ultrawide camera (C-PHY), optical image stabilisation
 
 **Tested hardware**
@@ -280,10 +280,12 @@ position; in continuous mode it scans again when the sharpness changes.
 
 ### Known issues
 
-- **Bluetooth does not work in the prebuilt image.** The Bluetooth firmware package and BlueZ
-  are probably missing; you can try
-  `apk add firmware-oneplus-instantnoodlep-bluetooth bluez && systemctl enable --now bluetooth`
-  and reboot. Not confirmed yet.
+- **Bluetooth needs three extra packages in the prebuilt image.** The chip has no Bluetooth
+  address of its own; `bootmac` sets one at boot, without it BlueZ ignores the controller.
+  Install them and reboot:
+  `apk add firmware-oneplus-instantnoodlep-bluetooth bluez bootmac && systemctl enable bluetooth && reboot`
+  Afterwards `bluetoothctl list` shows the controller. (Plasma Mobile and Phosh pull in BlueZ
+  themselves, but not `bootmac`.)
 - The front camera (IMX471) occasionally fails to probe at boot with a CCI timeout. All
   cameras are then missing, because CAMSS waits for it. Workaround as root:
   `echo 21-0010 > /sys/bus/i2c/drivers/imx471/bind`
