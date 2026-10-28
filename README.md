@@ -28,7 +28,7 @@ computer you reach over SSH; optionally you install a desktop like Phosh or Plas
 
 - Nura edge, console only (no desktop), NetworkManager, OpenSSH server
 - kernel `linux-postmarketos-qcom-sm8250` 7.2 with all patches from this repository
-  (display 1440×3168 @ 120 Hz, GPU, audio, Wi-Fi, Bluetooth, USB networking, cameras,
+  (display 1440×3168 @ 120 Hz, GPU, audio, Wi-Fi, USB networking, cameras,
   telephoto autofocus) – the modem work is **not** included
 - firmware: only what Nura distributes anyway (`firmware-oneplus-instantnoodlep`,
   `linux-firmware-ath11k`, `linux-firmware-qcom`)
@@ -41,6 +41,7 @@ computer you reach over SSH; optionally you install a desktop like Phosh or Plas
 - the sensor files (accelerometer, light, proximity): they come from OnePlus' stock firmware
   and may not be redistributed – see "Enable the sensors" below
 - modem, calls, SMS, mobile data, GPS
+- working Bluetooth (see known issues)
 - main and ultrawide camera (C-PHY), optical image stabilisation
 
 **Tested hardware**
@@ -279,6 +280,10 @@ position; in continuous mode it scans again when the sharpness changes.
 
 ### Known issues
 
+- **Bluetooth does not work in the prebuilt image.** The Bluetooth firmware package and BlueZ
+  are probably missing; you can try
+  `apk add firmware-oneplus-instantnoodlep-bluetooth bluez && systemctl enable --now bluetooth`
+  and reboot. Not confirmed yet.
 - The front camera (IMX471) occasionally fails to probe at boot with a CCI timeout. All
   cameras are then missing, because CAMSS waits for it. Workaround as root:
   `echo 21-0010 > /sys/bus/i2c/drivers/imx471/bind`
