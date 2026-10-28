@@ -19,7 +19,7 @@ how to return to Android) see the wiki page:
 ## 1. Easy flash: the prebuilt image
 
 The [Releases](../../releases) page has a minimal image. It makes the phone a small Linux
-computer you reach over SSH; you then install whatever you want on top (see section 2).
+computer you reach over SSH; optionally you install a desktop on top (see section 2).
 
 **What's in it**
 
@@ -108,10 +108,11 @@ come up, log in on the phone's screen with a USB keyboard (USB-C hub with extern
 
 ---
 
-## 2. Install a desktop (Phosh)
+## 2. Optional: install a desktop (Phosh)
 
-Phosh is the GNOME-based phone interface. Phosh does not run as root, so create a normal
-user first:
+This step is optional – the image works as it is over SSH. If you want a touch interface on
+the screen, Phosh (the GNOME-based phone interface) is a good start. Phosh does not run as
+root, so create a normal user first:
 
 ```sh
 apk update
