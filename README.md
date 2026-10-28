@@ -46,22 +46,15 @@ Tested on a single device with the **Samsung AMS678UW01** display panel (the pan
 written for exactly this panel; Android reports it as `oppo19811_samsung_1440_3168_dsc_cmd`).
 If your phone has a different panel, the screen may stay black – the phone is then still
 reachable over USB/SSH. Please open an issue with your panel name and a log if that happens.
-To create the log, log in over USB (see "First login") and run on the phone:
+To create the log, connect the phone over USB (see "First login") and run these two commands
+on your PC (they work the same in PowerShell and in a Linux terminal):
 
 ```sh
-{
-  echo "== panel"; tr ' ' '\n' < /proc/cmdline | grep dsi_display
-  echo "== kernel log"; dmesg
-  echo "== warnings this boot"; journalctl -b -p warning --no-pager
-} | sed 's/serialno=[^ ]*/serialno=REMOVED/g' > /root/panel-log.txt
-```
-
-Then copy it to your PC (run this on the PC, also works in PowerShell) and attach
-`panel-log.txt` to the issue:
-
-```sh
+ssh root@172.16.42.1 "{ echo '== panel'; tr ' ' '\n' < /proc/cmdline | grep dsi_display; echo '== kernel log'; dmesg; echo '== warnings this boot'; journalctl -b -p warning --no-pager; } | sed 's/serialno=[^ ]*/serialno=REMOVED/g' > /root/panel-log.txt"
 scp root@172.16.42.1:/root/panel-log.txt .
 ```
+
+Then attach `panel-log.txt` to the issue.
 
 The `sed` removes the device serial number that the bootloader passes on the kernel command
 line. Look through the file before you upload it.
