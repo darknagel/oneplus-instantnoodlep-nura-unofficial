@@ -54,6 +54,8 @@ ssh root@172.16.42.1 "{ echo '== panel'; tr ' ' '\n' < /proc/cmdline | grep dsi_
 scp root@172.16.42.1:/root/panel-log.txt .
 ```
 
+`172.16.42.1` is the phone's address over USB. If the phone is on your Wi-Fi, you can use its
+Wi-Fi address instead (shown by `ip -4 addr show wlan0` on the phone, or in your router).
 Then attach `panel-log.txt` to the issue.
 
 The `sed` removes the device serial number that the bootloader passes on the kernel command
