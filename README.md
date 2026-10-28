@@ -86,8 +86,13 @@ nmtui                       # connect to Wi-Fi
 apk update && apk upgrade   # bring the system up to date
 ```
 
-On Windows, `ssh` works the same in PowerShell. If the USB network does not come up, log in
-on the phone's screen with a USB keyboard (USB-C hub with external power).
+On Windows, `ssh` works the same in PowerShell. If Windows does not set up the USB network by
+itself (the phone shows up under "Other devices" or with a yellow warning sign in Device
+Manager), assign the driver by hand: right-click the device → **Update driver** → **Browse my
+computer for drivers** → **Let me pick from a list of available drivers on my computer** →
+**Network adapters** → manufacturer **Microsoft** → **UsbNcm Host Device** (on older Windows
+10 versions without it: **Remote NDIS Compatible Device**). If the USB network still does not
+come up, log in on the phone's screen with a USB keyboard (USB-C hub with external power).
 
 ---
 
