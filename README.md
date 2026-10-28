@@ -161,22 +161,8 @@ echo 1 > /sys/class/graphics/fb0/blank     # off
 echo 0 > /sys/class/graphics/fb0/blank     # on again
 ```
 
-To keep it off after every boot, create a small service:
-
-```sh
-cat > /etc/systemd/system/screen-off.service <<'EOF'
-[Unit]
-Description=Turn the screen off
-
-[Service]
-Type=oneshot
-ExecStart=/bin/sh -c 'echo 1 > /sys/class/graphics/fb0/blank'
-
-[Install]
-WantedBy=multi-user.target
-EOF
-systemctl enable --now screen-off
-```
+This does not survive a reboot: the screen comes back on at every start, so run the command
+again after each reboot (for example over SSH).
 
 **Can charging stop at 80 % when the phone is always plugged in?**
 
