@@ -310,11 +310,21 @@ You need a Linux PC (WSL2 works) with
 [pmbootstrap](https://docs.postmarketos.org/pmbootstrap/) installed.
 
 ```sh
-pmbootstrap init                      # vendor: oneplus, device: instantnoodlep, kernel: mainline
+# 1. get this repository
+git clone https://github.com/darknagel/oneplus-instantnoodlep-nura-unofficial.git ~/instantnoodlep-patches
+
+# 2. set up pmbootstrap: vendor "oneplus", device "instantnoodlep", kernel "mainline"
+pmbootstrap init
+
+# 3. apply all patches to pmbootstrap's pmaports checkout
 cd "$(pmbootstrap config aports)"
 git checkout -b instantnoodlep
-git am /path/to/this/repo/pmaports-patches/*.patch
+git am --whitespace=nowarn ~/instantnoodlep-patches/pmaports-patches/*.patch
 ```
+
+If `git am` stops with "Please tell me who you are", set your name once with
+`git config --global user.name "Your Name"` and `git config --global user.email you@example.com`
+and run the `git am` line again.
 
 The pmaports patches already contain the kernel and libcamera patches inside the packages,
 so no separate kernel tree is needed. For the sensors, put
