@@ -19,7 +19,7 @@ how to return to Android) see the wiki page:
 ## 1. Easy flash: the prebuilt image
 
 The [Releases](../../releases) page has a minimal image. It makes the phone a small Linux
-computer you reach over SSH; optionally you install a desktop on top (see section 2).
+computer you reach over SSH; optionally you install a desktop like Phosh or Plasma Mobile on top (see section 2).
 
 **What's in it**
 
@@ -108,11 +108,20 @@ come up, log in on the phone's screen with a USB keyboard (USB-C hub with extern
 
 ---
 
-## 2. Optional: install a desktop (Phosh)
+## 2. Optional: install a desktop (Phosh or another interface)
 
 This step is optional – the image works as it is over SSH. If you want a touch interface on
-the screen, Phosh (the GNOME-based phone interface) is a good start. Phosh does not run as
-root, so create a normal user first:
+the screen, pick one of the phone interfaces postmarketOS offers:
+
+| Interface | Package | Notes |
+|---|---|---|
+| Phosh | `postmarketos-ui-phosh` | GNOME-based, the one tested here (GPU accelerated, camera works in Snapshot) |
+| Plasma Mobile | `postmarketos-ui-plasma-mobile` | KDE-based |
+| Sxmo | `postmarketos-ui-sxmo-de-sway` | minimal, button and menu driven |
+
+Only Phosh was tried on this device; the others use the same graphics stack and should
+work too. Desktop interfaces do not run as root, so create a normal user first (example with
+Phosh – replace the package name for another interface):
 
 ```sh
 apk update
@@ -120,21 +129,21 @@ adduser -g "" alice                                  # pick your own name
 for g in audio input plugdev video netdev feedbackd wheel; do
     addgroup alice $g 2>/dev/null
 done
-apk add postmarketos-ui-phosh stevia-schemas        # stevia-schemas fixes the on-screen keyboard
+apk add postmarketos-ui-phosh stevia-schemas        # stevia-schemas fixes Phosh's on-screen keyboard
 apk add doas && echo 'permit persist :wheel' > /etc/doas.d/wheel.conf   # "doas" instead of sudo
 reboot
 ```
 
-After the reboot the Phosh lock screen appears; log in with the user you created. Useful
-additions:
+After the reboot the login screen appears; log in with the user you created. Useful
+additions for Phosh:
 
 ```sh
 apk add snapshot          # camera app (telephoto and front camera, with autofocus)
 apk add gnome-software    # app store
 ```
 
-Other interfaces work the same way, e.g. `apk add postmarketos-ui-plasma-mobile` or
-`postmarketos-ui-sxmo-de-sway` instead of `postmarketos-ui-phosh`.
+Install only one interface at a time; to switch, `apk del` the old `postmarketos-ui-…`
+package before adding the new one.
 
 Once you have your own user, you can switch off the root login over SSH:
 `rm /etc/ssh/sshd_config.d/10-oneplus-instantnoodlep-release.conf` and log in as your user.
