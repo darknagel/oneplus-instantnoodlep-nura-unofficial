@@ -1,0 +1,36 @@
+From 5876e07858969146274fd81300b3a2f201b30962 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 20:14:10 +0100
+Subject: [PATCH 15/17] linux-postmarketos-qcom-sm8250: neutral build host for
+ release images
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ device/testing/linux-postmarketos-qcom-sm8250/APKBUILD | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 22cbc8359b..6270ab430a 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=20
++pkgrel=40
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -66,7 +66,7 @@ prepare() {
+ build() {
+ 	unset LDFLAGS
+ 	make ARCH="$_carch" LLVM=1 \
+-		KBUILD_BUILD_VERSION="$((pkgrel + 1 ))-$_flavor"
++		KBUILD_BUILD_VERSION="$((pkgrel + 1 ))-$_flavor" 		KBUILD_BUILD_USER=pmos KBUILD_BUILD_HOST=postmarketos
+ }
+ 
+ package() {
+-- 
+2.43.0
+

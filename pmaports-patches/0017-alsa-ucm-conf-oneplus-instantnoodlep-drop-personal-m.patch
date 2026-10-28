@@ -1,0 +1,27 @@
+From bc48b912639d19c6b68d0033dd788b7d310fcf59 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 20:27:58 +0100
+Subject: [PATCH 17/17] alsa-ucm-conf-oneplus-instantnoodlep: drop personal
+ maintainer line
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD
+index 00f27fedcb..475764b9fa 100644
+--- a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD
++++ b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD
+@@ -1,7 +1,6 @@
+-# Maintainer: Timo <1788603+darknagel@users.noreply.github.com>
+ pkgname=alsa-ucm-conf-oneplus-instantnoodlep
+ pkgver=1
+-pkgrel=2
++pkgrel=3
+ pkgdesc="ALSA UCM configuration for OnePlus 8 Pro"
+ url="https://postmarketos.org"
+ arch="aarch64"
+-- 
+2.43.0
+

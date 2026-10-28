@@ -1,0 +1,37 @@
+From 9a51c7db9a1b764ed9c0fdac002f9ce3ac58c5d6 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 20:21:49 +0100
+Subject: [PATCH 16/17] device-oneplus-instantnoodlep: do not pull the
+ proprietary sensor files
+
+firmware-oneplus-instantnoodlep-hexagonfs is built from files of the stock firmware that are not redistributable. Install it by hand to enable the sensors.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ device/testing/device-oneplus-instantnoodlep/APKBUILD | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/device/testing/device-oneplus-instantnoodlep/APKBUILD b/device/testing/device-oneplus-instantnoodlep/APKBUILD
+index 9c356d600e..1b07fea42c 100644
+--- a/device/testing/device-oneplus-instantnoodlep/APKBUILD
++++ b/device/testing/device-oneplus-instantnoodlep/APKBUILD
+@@ -3,7 +3,7 @@ maintainer="kouling <k0ul1ng@proton.me>"
+ pkgname=device-oneplus-instantnoodlep
+ pkgdesc="OnePlus 8 Pro"
+ pkgver=7
+-pkgrel=5
++pkgrel=6
+ url="https://postmarketos.org"
+ license="MIT"
+ arch="aarch64"
+@@ -12,7 +12,6 @@ depends="
+ 	firmware-oneplus-instantnoodlep
+ 	firmware-oneplus-instantnoodlep-gpu
+ 	firmware-oneplus-instantnoodlep-adsp
+-	firmware-oneplus-instantnoodlep-hexagonfs
+ 	firmware-oneplus-instantnoodlep-slpi
+ 	alsa-ucm-conf-oneplus-instantnoodlep
+ 	linux-postmarketos-qcom-sm8250
+-- 
+2.43.0
+
