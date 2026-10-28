@@ -40,6 +40,13 @@ computer you reach over SSH; you then install whatever you want on top (see sect
 - modem, calls, SMS, mobile data, GPS
 - main and ultrawide camera (C-PHY), optical image stabilisation
 
+**Tested hardware**
+
+Tested on a single device with the **Samsung AMS678UW01** display panel (the panel driver is
+written for exactly this panel; Android reports it as `oppo19811_samsung_1440_3168_dsc_cmd`).
+If your phone has a different panel, the screen may stay black – the phone is then still
+reachable over USB/SSH. Please open an issue with your panel name if that happens.
+
 ### Requirements
 
 - unlocked bootloader (`fastboot flashing unlock` – this wipes the phone)
