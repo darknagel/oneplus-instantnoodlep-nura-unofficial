@@ -137,6 +137,7 @@ adduser -u 10000 -g "" alice                         # pick your own name; passw
 for g in audio input plugdev video netdev feedbackd wheel; do
     addgroup alice $g 2>/dev/null
 done
+apk add xdg-user-dirs && su alice -c xdg-user-dirs-update   # ~/Pictures etc., or camera apps cannot save
 apk add postmarketos-ui-phosh stevia-schemas        # stevia-schemas fixes Phosh's on-screen keyboard
 apk add doas && echo 'permit persist :wheel' > /etc/doas.d/wheel.conf   # "doas" instead of sudo
 reboot
