@@ -1,0 +1,94 @@
+From 8730d17bc520bc5f8a00e25fc0f85f90005d4515 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 18:46:31 +0100
+Subject: [PATCH 17/30] WIP: bus: mhi: host: pci_generic: Support flashless
+ SDX55 described in DT
+
+The flashless SDX55 of the OnePlus 8 Pro reports the subsystem ID of a
+Foxconn module that boots from flash. Use a profile that loads the SBL over
+BHI and exposes the Sahara channels when the devicetree marks the device
+qcom,flashless.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/bus/mhi/host/pci_generic.c | 50 ++++++++++++++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+
+diff --git a/drivers/bus/mhi/host/pci_generic.c b/drivers/bus/mhi/host/pci_generic.c
+index 0d0d9c7ff..4e26fef11 100644
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -12,6 +12,7 @@
+ #include <linux/device.h>
+ #include <linux/mhi.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/pci.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/timer.h>
+@@ -415,6 +416,46 @@ static const struct mhi_pci_dev_info mhi_qcom_sdx55_info = {
+ 	.sideband_wake = false,
+ };
+ 
++static const struct mhi_channel_config modem_qcom_sdx55_flashless_channels[] = {
++	MHI_CHANNEL_CONFIG_UL_SBL(2, "SAHARA", 32, 0),
++	MHI_CHANNEL_CONFIG_DL_SBL(3, "SAHARA", 32, 0),
++	MHI_CHANNEL_CONFIG_UL(4, "DIAG", 16, 1),
++	MHI_CHANNEL_CONFIG_DL(5, "DIAG", 16, 1),
++	MHI_CHANNEL_CONFIG_UL(12, "MBIM", 4, 0),
++	MHI_CHANNEL_CONFIG_DL(13, "MBIM", 4, 0),
++	MHI_CHANNEL_CONFIG_UL(14, "QMI", 4, 0),
++	MHI_CHANNEL_CONFIG_DL(15, "QMI", 4, 0),
++	MHI_CHANNEL_CONFIG_UL(20, "IPCR", 8, 0),
++	MHI_CHANNEL_CONFIG_DL(21, "IPCR", 8, 0),
++	MHI_CHANNEL_CONFIG_UL(46, "IP_SW0", 64, 2),
++	MHI_CHANNEL_CONFIG_DL(47, "IP_SW0", 64, 3),
++	MHI_CHANNEL_CONFIG_HW_UL(100, "IP_HW0", 128, 4),
++	MHI_CHANNEL_CONFIG_HW_DL(101, "IP_HW0", 128, 5),
++};
++
++static const struct mhi_controller_config modem_qcom_sdx55_flashless_config = {
++	.max_channels = 128,
++	.timeout_ms = 20000,
++	.num_channels = ARRAY_SIZE(modem_qcom_sdx55_flashless_channels),
++	.ch_cfg = modem_qcom_sdx55_flashless_channels,
++	.num_events = ARRAY_SIZE(modem_qcom_v1_mhi_events),
++	.event_cfg = modem_qcom_v1_mhi_events,
++};
++
++/*
++ * SDX55 without flash, as soldered on some phones: the SBL is loaded over BHI,
++ * the remaining images are requested over Sahara (see MHI_BUS_SAHARA).
++ */
++static const struct mhi_pci_dev_info mhi_qcom_sdx55_flashless_info = {
++	.name = "qcom-sdx55m-flashless",
++	.fw = "qcom/sdx55m/sbl1.mbn",
++	.config = &modem_qcom_sdx55_flashless_config,
++	.bar_num = MHI_PCI_DEFAULT_BAR_NUM,
++	.dma_data_width = 32,
++	.mru_default = 32768,
++	.sideband_wake = false,
++};
++
+ static const struct mhi_pci_dev_info mhi_qcom_sdx35_info = {
+ 	.name = "qcom-sdx35m",
+ 	.config = &modem_qcom_v2_mhiv_config,
+@@ -1367,6 +1408,15 @@ static int mhi_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	unsigned int dma_data_width;
+ 	int err;
+ 
++	/*
++	 * The flashless SDX55 of the OnePlus 8 Pro reports the same subsystem
++	 * ID as a Foxconn module that boots from its own flash. The devicetree
++	 * tells them apart.
++	 */
++	if (pdev->device == 0x0306 &&
++	    of_property_read_bool(pdev->dev.of_node, "qcom,flashless"))
++		info = &mhi_qcom_sdx55_flashless_info;
++
+ 	dev_info(&pdev->dev, "MHI PCI device found: %s\n", info->name);
+ 
+ 	/* mhi_pdev.mhi_cntrl must be zero-initialized */
+-- 
+2.43.0
+

@@ -40,7 +40,8 @@ computer you reach over SSH; optionally you install a desktop like Phosh or Plas
 
 - the sensor files (accelerometer, light, proximity): they come from OnePlus' stock firmware
   and may not be redistributed – see "Enable the sensors" below
-- modem, calls, SMS, mobile data, GPS
+- modem and GPS: they need a kernel built from pmaports patch 0018 and a setup
+  script that copies the phone's own modem firmware, see [`modem/`](modem/)
 - the packages Bluetooth needs (one `apk add` away, see known issues)
 - main and ultrawide camera (C-PHY), optical image stabilisation
 
@@ -265,7 +266,9 @@ after connecting to Wi-Fi, wait a minute or run `resolvectl flush-caches`.
 | Full resolution capture on SM8250 CAMSS (camera NoC clock was never set) | fixed | kernel 0013, pmaports 0012 |
 | Telephoto autofocus: LC898217XC voice coil driver at 0x74, powered through GPIO 140 | works | kernel 0014–0015, pmaports 0013 |
 | Contrast detection autofocus in libcamera (software ISP statistics, lens support in the simple pipeline, soft IPA algorithm `Af`) | works, also in GNOME Snapshot | libcamera 0003–0005, pmaports 0014 |
-| Modem (SDX55): boots to mission mode, QMI over QRTR, EFS sync; GPS engine runs but the modem stays offline | work in progress, not in the image | – |
+| Modem (SDX55 over PCIe/MHI): Sahara firmware loading, EFS sync, TFTP file server, online with LTE/5G bands | works, not in the image, see [`modem/`](modem/) | kernel 0016–0030, pmaports 0018 |
+| GPS (modem GNSS engine, NMEA on `/dev/gnss-sdx55`, fix without SIM) | works, see [`modem/`](modem/) | same |
+| SMS, mobile data | untested (needs a SIM) | – |
 | Main/ultrawide camera (C-PHY), OIS, colour tuning of the front camera, magnetometer, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
@@ -359,7 +362,9 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
 - `kernel-patches/` – against the Nura SM8250 kernel tag `sm8250-7.2.0_git20261010`
   (https://gitlab.postmarketos.org/soc/qualcomm-sm8250/linux). Apply with `git am`.
 - `pmaports-patches/` – against Nura pmaports `main` (Oct 2026). They also carry
-  the kernel and libcamera patches inside the packages.
+  the kernel and libcamera patches inside the packages. 0018 adds the modem kernel
+  patches (kernel 0016–0030, partly debug quality, see [`modem/`](modem/)).
+- `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `hexagonrpc-patches/` – against https://github.com/linux-msm/hexagonrpc tag `v0.5.0`.
   Adds a writable sensor registry (`-w DIR`), needed by the OnePlus sensor DSP.
 - `libcamera-patches/` – against libcamera v0.7.2 plus the patches already carried in

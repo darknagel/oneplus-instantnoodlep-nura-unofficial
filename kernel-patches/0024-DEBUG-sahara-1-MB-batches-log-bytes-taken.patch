@@ -1,0 +1,60 @@
+From 07a2b59b4e3239233689ff41b0a9602b287199a8 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 19:40:05 +0100
+Subject: [PATCH 24/30] DEBUG: sahara: 1 MB batches, log bytes taken
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/bus/mhi/host/sahara.c | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/bus/mhi/host/sahara.c b/drivers/bus/mhi/host/sahara.c
+index 76d1cdbcf..58b39b9ea 100644
+--- a/drivers/bus/mhi/host/sahara.c
++++ b/drivers/bus/mhi/host/sahara.c
+@@ -188,6 +188,7 @@ struct sahara_context {
+ 	u32				read_data_offset;
+ 	u32				read_data_length;
+ 	atomic_t			tx_done;
++	atomic_t			tx_bytes;
+ 	unsigned int			tx_batch;
+ 	bool				is_mem_dump_mode;
+ 	bool				non_streaming;
+@@ -366,7 +367,8 @@ static void sahara_send_batch(struct sahara_context *context)
+ {
+ 	unsigned int n;
+ 
+-	n = min_t(unsigned int, SAHARA_NUM_TX_BUF,
++	/* DEBUG: 1 MB batches */
++	n = min_t(unsigned int, 16,
+ 		  DIV_ROUND_UP(context->read_data_length, SAHARA_PACKET_MAX_SIZE));
+ 	/* A batch must fit into the transfer ring */
+ 	n = min_t(unsigned int, n,
+@@ -377,6 +379,7 @@ static void sahara_send_batch(struct sahara_context *context)
+ 	}
+ 
+ 	atomic_set(&context->tx_done, 0);
++	atomic_set(&context->tx_bytes, 0);
+ 	context->tx_batch = n;
+ 	dev_info(&context->mhi_dev->dev, "DEBUG batch of %u buffers at %u, %u left\n",
+ 		 n, context->read_data_offset, context->read_data_length);
+@@ -907,10 +910,14 @@ static void sahara_mhi_ul_xfer_cb(struct mhi_device *mhi_dev, struct mhi_result
+ 		schedule_work(&context->read_data_work);
+ 
+ 	/* Last buffer of a batch consumed, send the next batch */
++	if (!is_streaming(context) && context->tx_batch)
++		atomic_add(mhi_result->bytes_xferd, &context->tx_bytes);
++	if (!is_streaming(context) && context->tx_batch && mhi_result->transaction_status)
++		dev_info(&mhi_dev->dev, "DEBUG status %d\n", mhi_result->transaction_status);
+ 	if (!is_streaming(context) && context->tx_batch &&
+ 	    atomic_inc_return(&context->tx_done) == context->tx_batch) {
+-		dev_info(&mhi_dev->dev, "DEBUG batch done, %u left\n",
+-			 context->read_data_length);
++		dev_info(&mhi_dev->dev, "DEBUG batch done, %d bytes taken, %u left\n",
++			 atomic_read(&context->tx_bytes), context->read_data_length);
+ 		context->tx_batch = 0;
+ 		if (context->read_data_length)
+ 			schedule_work(&context->read_data_work);
+-- 
+2.43.0
+

@@ -1,0 +1,147 @@
+From 496e46040ac8090cb6b105240af85a35a2a2ea32 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 19:22:39 +0100
+Subject: [PATCH 21/30] WIP: bus: mhi: host: sahara: Send large READ_DATA
+ responses in batches
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/bus/mhi/host/sahara.c | 62 +++++++++++++++++++++++++----------
+ 1 file changed, 45 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/bus/mhi/host/sahara.c b/drivers/bus/mhi/host/sahara.c
+index 3ab04b7ef..32b677590 100644
+--- a/drivers/bus/mhi/host/sahara.c
++++ b/drivers/bus/mhi/host/sahara.c
+@@ -43,7 +43,10 @@
+ #define SAHARA_WRITE_DATA_CMD		0x14 /* Min protocol version 3.0 */
+ 
+ #define SAHARA_PACKET_MAX_SIZE		0xffffU /* MHI_MAX_MTU */
+-/* The SDX55 SBL requests up to a whole ELF segment at a time */
++/*
++ * Size of one batch of a READ_DATA response. The SDX55 SBL requests up to a
++ * whole ELF segment at a time; larger requests are sent in several batches.
++ */
+ #define SAHARA_TRANSFER_MAX_SIZE	0x800000
+ #define SAHARA_READ_MAX_SIZE		0xfff0U /* Avoid unaligned requests */
+ #define SAHARA_NUM_TX_BUF		DIV_ROUND_UP(SAHARA_TRANSFER_MAX_SIZE,\
+@@ -184,6 +187,8 @@ struct sahara_context {
+ 	u64				dump_images_left;
+ 	u32				read_data_offset;
+ 	u32				read_data_length;
++	atomic_t			tx_done;
++	unsigned int			tx_batch;
+ 	bool				is_mem_dump_mode;
+ 	bool				non_streaming;
+ };
+@@ -321,7 +326,8 @@ static void sahara_hello(struct sahara_context *context)
+ 		dev_err(&context->mhi_dev->dev, "Unable to send hello response %d\n", ret);
+ }
+ 
+-static int read_data_helper(struct sahara_context *context, int buf_index)
++static int read_data_helper(struct sahara_context *context, int buf_index,
++			    bool last_in_batch)
+ {
+ 	enum mhi_flags mhi_flag;
+ 	u32 pkt_data_len;
+@@ -336,7 +342,7 @@ static int read_data_helper(struct sahara_context *context, int buf_index)
+ 	context->read_data_offset += pkt_data_len;
+ 	context->read_data_length -= pkt_data_len;
+ 
+-	if (is_streaming(context) || !context->read_data_length)
++	if (is_streaming(context) || !context->read_data_length || last_in_batch)
+ 		mhi_flag = MHI_EOT;
+ 	else
+ 		mhi_flag = MHI_CHAIN;
+@@ -351,11 +357,33 @@ static int read_data_helper(struct sahara_context *context, int buf_index)
+ 	return 0;
+ }
+ 
++/*
++ * Queue the next batch of a READ_DATA response: as many chained buffers as
++ * there are, the last one with EOT. The next batch follows once the device
++ * has consumed all of them, see sahara_mhi_ul_xfer_cb().
++ */
++static void sahara_send_batch(struct sahara_context *context)
++{
++	unsigned int n;
++
++	n = min_t(unsigned int, SAHARA_NUM_TX_BUF,
++		  DIV_ROUND_UP(context->read_data_length, SAHARA_PACKET_MAX_SIZE));
++
++	atomic_set(&context->tx_done, 0);
++	context->tx_batch = n;
++
++	for (unsigned int i = 0; i < n; ++i) {
++		if (read_data_helper(context, i, i == n - 1)) {
++			context->tx_batch = 0;
++			break;
++		}
++	}
++}
++
+ static void sahara_read_data(struct sahara_context *context)
+ {
+ 	u32 image_id, data_offset, data_len;
+ 	int ret;
+-	int i;
+ 
+ 	dev_dbg(&context->mhi_dev->dev,
+ 		"READ_DATA cmd received. length:%d image:%d offset:%d data_length:%d\n",
+@@ -389,13 +417,6 @@ static void sahara_read_data(struct sahara_context *context)
+ 	 * and is not needed here on error.
+ 	 */
+ 
+-	if (context->non_streaming && data_len > SAHARA_TRANSFER_MAX_SIZE) {
+-		dev_err(&context->mhi_dev->dev, "Malformed read_data packet - data len %d exceeds max xfer size %d\n",
+-			data_len, SAHARA_TRANSFER_MAX_SIZE);
+-		sahara_send_reset(context);
+-		return;
+-	}
+-
+ 	if (data_offset >= context->firmware->size) {
+ 		dev_err(&context->mhi_dev->dev, "Malformed read_data packet - data offset %d exceeds file size %zu\n",
+ 			data_offset, context->firmware->size);
+@@ -418,11 +439,7 @@ static void sahara_read_data(struct sahara_context *context)
+ 		return;
+ 	}
+ 
+-	for (i = 0; i < SAHARA_NUM_TX_BUF && context->read_data_length; ++i) {
+-		ret = read_data_helper(context, i);
+-		if (ret)
+-			break;
+-	}
++	sahara_send_batch(context);
+ }
+ 
+ static void sahara_end_of_image(struct sahara_context *context)
+@@ -779,7 +796,10 @@ static void sahara_read_data_processing(struct work_struct *work)
+ {
+ 	struct sahara_context *context = container_of(work, struct sahara_context, read_data_work);
+ 
+-	read_data_helper(context, 0);
++	if (is_streaming(context))
++		read_data_helper(context, 0, true);
++	else
++		sahara_send_batch(context);
+ }
+ 
+ static int sahara_mhi_probe(struct mhi_device *mhi_dev, const struct mhi_device_id *id)
+@@ -876,6 +896,14 @@ static void sahara_mhi_ul_xfer_cb(struct mhi_device *mhi_dev, struct mhi_result
+ 
+ 	if (!mhi_result->transaction_status && context->read_data_length && is_streaming(context))
+ 		schedule_work(&context->read_data_work);
++
++	/* Last buffer of a batch consumed, send the next batch */
++	if (!is_streaming(context) && context->tx_batch &&
++	    atomic_inc_return(&context->tx_done) == context->tx_batch) {
++		context->tx_batch = 0;
++		if (context->read_data_length)
++			schedule_work(&context->read_data_work);
++	}
+ }
+ 
+ static void sahara_mhi_dl_xfer_cb(struct mhi_device *mhi_dev, struct mhi_result *mhi_result)
+-- 
+2.43.0
+

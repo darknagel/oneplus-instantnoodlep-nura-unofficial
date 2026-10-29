@@ -1,0 +1,39 @@
+From 4bc3afd8e1b6a9549c3ef117fbdb4bd96d78ac04 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 19:10:37 +0100
+Subject: [PATCH 19/30] WIP: arm64: dts: qcom: sm8250-oneplus-instantnoodlep:
+ Use GIC MBI for PCIe2 MSIs
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index f5bcbdc35..98449711f 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -1080,7 +1080,20 @@ &pcie1_phy {
+ 	status = "okay";
+ };
+ 
++&intc {
++	/*
++	 * Message based interrupts for the SDX55 modem on PCIe2: its MSI writes
++	 * are not terminated by the iMSI-RX of the controller. The vendor
++	 * kernel sends them to this SPI range through an alias of the
++	 * distributor that only contains the SPI set/clear registers.
++	 */
++	msi-controller;
++	mbi-ranges = <832 32>;
++	mbi-alias = <0x0 0x17a10000>;
++};
++
+ &pcie2 {
++	msi-parent = <&intc>;
+ 	status = "okay";
+ 
+ 	pcie@0 {
+-- 
+2.43.0
+

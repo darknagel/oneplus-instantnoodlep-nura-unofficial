@@ -1,0 +1,5 @@
+# SDX55 over PCIe/MHI: the QMI services are reached over QRTR (qcom-soc
+# plugin); bind the mhi_net data ports to the same modem object.
+ACTION!="add|change|move|bind", GOTO="mm_sdx55_end"
+SUBSYSTEM=="net", DRIVERS=="mhi_net", ENV{ID_MM_QCOM_SOC}="1", ENV{ID_MM_PHYSDEV_UID}="qcom-soc", ENV{ID_MM_CANDIDATE}="1"
+LABEL="mm_sdx55_end"

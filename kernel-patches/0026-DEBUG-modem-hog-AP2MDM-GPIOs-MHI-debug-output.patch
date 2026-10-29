@@ -1,0 +1,50 @@
+From 20a24972a70be31313a23eeae8c39ae3bf3a5729 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 22:20:06 +0100
+Subject: [PATCH 26/30] DEBUG: modem: hog AP2MDM GPIOs, MHI debug output
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../dts/qcom/sm8250-oneplus-instantnoodlep.dts     | 14 ++++++++++++++
+ drivers/bus/mhi/host/Makefile                      |  3 +++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 98449711f..f9897270b 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -1213,6 +1213,20 @@ &qupv3_id_2 {
+ &tlmm {
+ 	gpio-reserved-ranges = <28 4>, <40 4>;
+ 
++	ap2mdm-status-hog {
++		gpio-hog;
++		gpios = <56 GPIO_ACTIVE_HIGH>;
++		output-high;
++		line-name = "ap2mdm-status";
++	};
++
++	ap2mdm-errfatal-hog {
++		gpio-hog;
++		gpios = <57 GPIO_ACTIVE_HIGH>;
++		output-low;
++		line-name = "ap2mdm-errfatal";
++	};
++
+ 	bt_en_state: bt-default-state {
+ 		bt-en {
+ 			pins = "gpio21";
+diff --git a/drivers/bus/mhi/host/Makefile b/drivers/bus/mhi/host/Makefile
+index d28740984..af532ab6d 100644
+--- a/drivers/bus/mhi/host/Makefile
++++ b/drivers/bus/mhi/host/Makefile
+@@ -7,3 +7,6 @@ mhi_pci_generic-y += pci_generic.o
+ 
+ obj-$(CONFIG_MHI_BUS_SAHARA) += mhi_sahara.o
+ mhi_sahara-y := sahara.o
++
++# DEBUG
++ccflags-y += -DDEBUG
+-- 
+2.43.0
+

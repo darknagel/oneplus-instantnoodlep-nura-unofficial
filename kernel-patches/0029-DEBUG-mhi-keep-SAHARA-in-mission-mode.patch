@@ -1,0 +1,93 @@
+From afe6a4b98de9b27b56515fd6dfa8557ce62a2f7f Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 23:48:28 +0100
+Subject: [PATCH 29/30] DEBUG: mhi: keep SAHARA in mission mode
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/bus/mhi/host/pci_generic.c | 34 ++++++++++++++++++++++++++++--
+ drivers/bus/mhi/host/sahara.c      |  7 ++++++
+ 2 files changed, 39 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/bus/mhi/host/pci_generic.c b/drivers/bus/mhi/host/pci_generic.c
+index bc6932b82..52683a355 100644
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -156,6 +156,21 @@ struct mhi_pci_dev_info {
+ 		.doorbell_mode_switch = false,		\
+ 	}						\
+ 
++#define MHI_CHANNEL_CONFIG_UL_SBL_AMSS(ch_num, ch_name, el_count, ev_ring) \
++	{						\
++		.num = ch_num,				\
++		.name = ch_name,			\
++		.num_elements = el_count,		\
++		.event_ring = ev_ring,			\
++		.dir = DMA_TO_DEVICE,			\
++		.ee_mask = BIT(MHI_EE_SBL) | BIT(MHI_EE_AMSS),		\
++		.pollcfg = 0,				\
++		.doorbell = MHI_DB_BRST_DISABLE,	\
++		.lpm_notify = false,			\
++		.offload_channel = false,		\
++		.doorbell_mode_switch = false,		\
++	}						\
++
+ #define MHI_CHANNEL_CONFIG_DL_SBL(ch_num, ch_name, el_count, ev_ring) \
+ 	{						\
+ 		.num = ch_num,				\
+@@ -171,6 +186,21 @@ struct mhi_pci_dev_info {
+ 		.doorbell_mode_switch = false,		\
+ 	}
+ 
++#define MHI_CHANNEL_CONFIG_DL_SBL_AMSS(ch_num, ch_name, el_count, ev_ring) \
++	{						\
++		.num = ch_num,				\
++		.name = ch_name,			\
++		.num_elements = el_count,		\
++		.event_ring = ev_ring,			\
++		.dir = DMA_FROM_DEVICE,			\
++		.ee_mask = BIT(MHI_EE_SBL) | BIT(MHI_EE_AMSS),		\
++		.pollcfg = 0,				\
++		.doorbell = MHI_DB_BRST_DISABLE,	\
++		.lpm_notify = false,			\
++		.offload_channel = false,		\
++		.doorbell_mode_switch = false,		\
++	}
++
+ #define MHI_CHANNEL_CONFIG_UL_FP(ch_num, ch_name, el_count, ev_ring) \
+ 	{						\
+ 		.num = ch_num,				\
+@@ -421,8 +451,8 @@ static const struct mhi_pci_dev_info mhi_qcom_sdx55_info = {
+ 
+ static const struct mhi_channel_config modem_qcom_sdx55_flashless_channels[] = {
+ 	/* A whole Sahara READ_DATA response is queued as one chained transfer */
+-	MHI_CHANNEL_CONFIG_UL_SBL(2, "SAHARA", 128, 0),
+-	MHI_CHANNEL_CONFIG_DL_SBL(3, "SAHARA", 32, 0),
++	MHI_CHANNEL_CONFIG_UL_SBL_AMSS(2, "SAHARA", 128, 0),
++	MHI_CHANNEL_CONFIG_DL_SBL_AMSS(3, "SAHARA", 32, 0),
+ 	MHI_CHANNEL_CONFIG_UL(4, "DIAG", 16, 1),
+ 	MHI_CHANNEL_CONFIG_DL(5, "DIAG", 16, 1),
+ 	MHI_CHANNEL_CONFIG_UL(12, "MBIM", 4, 0),
+diff --git a/drivers/bus/mhi/host/sahara.c b/drivers/bus/mhi/host/sahara.c
+index bca2b62b7..961278e5f 100644
+--- a/drivers/bus/mhi/host/sahara.c
++++ b/drivers/bus/mhi/host/sahara.c
+@@ -582,8 +582,15 @@ static void sahara_processing(struct work_struct *work)
+ 		/* Intentional do nothing as we don't need to exit an app */
+ 		break;
+ 	case SAHARA_MEM_DEBUG64_CMD:
++		dev_info(&context->mhi_dev->dev, "DEBUG MEM_DEBUG64 table %#llx len %#llx\n",
++			 le64_to_cpu(context->rx->memory_debug64.table_address),
++			 le64_to_cpu(context->rx->memory_debug64.table_length));
+ 		sahara_memory_debug64(context);
+ 		break;
++	case SAHARA_MEM_DEBUG_CMD:
++		dev_info(&context->mhi_dev->dev, "DEBUG MEM_DEBUG (32 bit) %*ph\n",
++			 16, &context->rx->hello);
++		break;
+ 	default:
+ 		dev_err(&context->mhi_dev->dev, "DEBUG unknown command %d\n",
+ 			le32_to_cpu(context->rx->cmd));
+-- 
+2.43.0
+

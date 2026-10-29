@@ -1,0 +1,35 @@
+From 8e900ba94cd18cf6da036a0ea5a6264d54924736 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 19:33:35 +0100
+Subject: [PATCH 23/30] DEBUG: sahara: log batches
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/bus/mhi/host/sahara.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/bus/mhi/host/sahara.c b/drivers/bus/mhi/host/sahara.c
+index 62de619d6..76d1cdbcf 100644
+--- a/drivers/bus/mhi/host/sahara.c
++++ b/drivers/bus/mhi/host/sahara.c
+@@ -378,6 +378,8 @@ static void sahara_send_batch(struct sahara_context *context)
+ 
+ 	atomic_set(&context->tx_done, 0);
+ 	context->tx_batch = n;
++	dev_info(&context->mhi_dev->dev, "DEBUG batch of %u buffers at %u, %u left\n",
++		 n, context->read_data_offset, context->read_data_length);
+ 
+ 	for (unsigned int i = 0; i < n; ++i) {
+ 		if (read_data_helper(context, i, i == n - 1)) {
+@@ -907,6 +909,8 @@ static void sahara_mhi_ul_xfer_cb(struct mhi_device *mhi_dev, struct mhi_result
+ 	/* Last buffer of a batch consumed, send the next batch */
+ 	if (!is_streaming(context) && context->tx_batch &&
+ 	    atomic_inc_return(&context->tx_done) == context->tx_batch) {
++		dev_info(&mhi_dev->dev, "DEBUG batch done, %u left\n",
++			 context->read_data_length);
+ 		context->tx_batch = 0;
+ 		if (context->read_data_length)
+ 			schedule_work(&context->read_data_work);
+-- 
+2.43.0
+

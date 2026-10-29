@@ -1,0 +1,242 @@
+From c679a207a04f55cbc0457ffc24e792b491922a6b Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 18:40:46 +0100
+Subject: [PATCH 30/30] DEBUG: mhi: sahara: receive the SDX55 EFS sync
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/bus/mhi/host/pci_generic.c |   2 +
+ drivers/bus/mhi/host/sahara.c      | 121 +++++++++++++++++++++++------
+ 2 files changed, 98 insertions(+), 25 deletions(-)
+
+diff --git a/drivers/bus/mhi/host/pci_generic.c b/drivers/bus/mhi/host/pci_generic.c
+index 52683a355..fa9e3e380 100644
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -453,6 +453,8 @@ static const struct mhi_channel_config modem_qcom_sdx55_flashless_channels[] = {
+ 	/* A whole Sahara READ_DATA response is queued as one chained transfer */
+ 	MHI_CHANNEL_CONFIG_UL_SBL_AMSS(2, "SAHARA", 128, 0),
+ 	MHI_CHANNEL_CONFIG_DL_SBL_AMSS(3, "SAHARA", 32, 0),
++	MHI_CHANNEL_CONFIG_UL(10, "EFS", 32, 0),
++	MHI_CHANNEL_CONFIG_DL(11, "EFS", 32, 0),
+ 	MHI_CHANNEL_CONFIG_UL(4, "DIAG", 16, 1),
+ 	MHI_CHANNEL_CONFIG_DL(5, "DIAG", 16, 1),
+ 	MHI_CHANNEL_CONFIG_UL(12, "MBIM", 4, 0),
+diff --git a/drivers/bus/mhi/host/sahara.c b/drivers/bus/mhi/host/sahara.c
+index 961278e5f..dfedfd4ca 100644
+--- a/drivers/bus/mhi/host/sahara.c
++++ b/drivers/bus/mhi/host/sahara.c
+@@ -96,6 +96,14 @@ struct sahara_packet {
+ 			__le32 image;
+ 			__le32 status;
+ 		} end_of_image;
++		struct {
++			__le32 table_address;
++			__le32 table_length;
++		} memory_debug;
++		struct {
++			__le32 memory_address;
++			__le32 memory_length;
++		} memory_read;
+ 		struct {
+ 			__le64 table_address;
+ 			__le64 table_length;
+@@ -115,6 +123,14 @@ struct sahara_debug_table_entry64 {
+ 	char	filename[SAHARA_TABLE_ENTRY_STR_LEN];
+ };
+ 
++struct sahara_debug_table_entry32 {
++	__le32	type;
++	__le32	address;
++	__le32	length;
++	char	description[SAHARA_TABLE_ENTRY_STR_LEN];
++	char	filename[SAHARA_TABLE_ENTRY_STR_LEN];
++};
++
+ struct sahara_dump_table_entry {
+ 	u64	type;
+ 	u64	address;
+@@ -191,6 +207,7 @@ struct sahara_context {
+ 	atomic_t			tx_bytes;
+ 	unsigned int			tx_batch;
+ 	bool				is_mem_dump_mode;
++	bool				mem32;
+ 	bool				non_streaming;
+ };
+ 
+@@ -271,6 +288,7 @@ static void sahara_send_reset(struct sahara_context *context)
+ 	int ret;
+ 
+ 	context->is_mem_dump_mode = false;
++	context->mem32 = false;
+ 	context->read_data_offset = 0;
+ 	context->read_data_length = 0;
+ 
+@@ -491,6 +509,52 @@ static void sahara_end_of_image(struct sahara_context *context)
+ 		dev_dbg(&context->mhi_dev->dev, "Unable to send done response %d\n", ret);
+ }
+ 
++static int sahara_send_mem_read(struct sahara_context *context, u64 addr, u64 len)
++{
++	if (context->mem32) {
++		context->tx[0]->cmd = cpu_to_le32(SAHARA_MEM_READ_CMD);
++		context->tx[0]->length = cpu_to_le32(16);
++		context->tx[0]->memory_read.memory_address = cpu_to_le32(addr);
++		context->tx[0]->memory_read.memory_length = cpu_to_le32(len);
++		return mhi_queue_buf(context->mhi_dev, DMA_TO_DEVICE, context->tx[0], 16, MHI_EOT);
++	}
++
++	context->tx[0]->cmd = cpu_to_le32(SAHARA_MEM_READ64_CMD);
++	context->tx[0]->length = cpu_to_le32(SAHARA_MEM_READ64_LENGTH);
++	context->tx[0]->memory_read64.memory_address = cpu_to_le64(addr);
++	context->tx[0]->memory_read64.memory_length = cpu_to_le64(len);
++	return mhi_queue_buf(context->mhi_dev, DMA_TO_DEVICE, context->tx[0],
++			     SAHARA_MEM_READ64_LENGTH, MHI_EOT);
++}
++
++static void sahara_memory_debug32(struct sahara_context *context)
++{
++	int ret;
++
++	context->dump_table_address = le32_to_cpu(context->rx->memory_debug.table_address);
++	context->dump_table_length = le32_to_cpu(context->rx->memory_debug.table_length);
++	dev_info(&context->mhi_dev->dev, "MEM_DEBUG table %#llx length %#llx\n",
++		 context->dump_table_address, context->dump_table_length);
++
++	if (!context->dump_table_length ||
++	    context->dump_table_length % sizeof(struct sahara_debug_table_entry32) ||
++	    context->dump_table_length / sizeof(struct sahara_debug_table_entry32) *
++	    sizeof(struct sahara_debug_table_entry64) > SAHARA_PACKET_MAX_SIZE) {
++		dev_err(&context->mhi_dev->dev, "Bad memory debug table length %lld\n",
++			context->dump_table_length);
++		sahara_send_reset(context);
++		return;
++	}
++
++	context->is_mem_dump_mode = true;
++	context->mem32 = true;
++	context->rx_size_requested = context->dump_table_length;
++	ret = sahara_send_mem_read(context, context->dump_table_address,
++				   context->dump_table_length);
++	if (ret)
++		dev_err(&context->mhi_dev->dev, "Unable to send read for dump table %d\n", ret);
++}
++
+ static void sahara_memory_debug64(struct sahara_context *context)
+ {
+ 	int ret;
+@@ -539,15 +603,10 @@ static void sahara_memory_debug64(struct sahara_context *context)
+ 		return;
+ 	}
+ 
+-	context->tx[0]->cmd = cpu_to_le32(SAHARA_MEM_READ64_CMD);
+-	context->tx[0]->length = cpu_to_le32(SAHARA_MEM_READ64_LENGTH);
+-	context->tx[0]->memory_read64.memory_address = cpu_to_le64(context->dump_table_address);
+-	context->tx[0]->memory_read64.memory_length = cpu_to_le64(context->dump_table_length);
+-
+ 	context->rx_size_requested = context->dump_table_length;
+ 
+-	ret = mhi_queue_buf(context->mhi_dev, DMA_TO_DEVICE, context->tx[0],
+-			    SAHARA_MEM_READ64_LENGTH, MHI_EOT);
++	ret = sahara_send_mem_read(context, context->dump_table_address,
++				   context->dump_table_length);
+ 	if (ret)
+ 		dev_err(&context->mhi_dev->dev, "Unable to send read for dump table %d\n", ret);
+ }
+@@ -588,8 +647,7 @@ static void sahara_processing(struct work_struct *work)
+ 		sahara_memory_debug64(context);
+ 		break;
+ 	case SAHARA_MEM_DEBUG_CMD:
+-		dev_info(&context->mhi_dev->dev, "DEBUG MEM_DEBUG (32 bit) %*ph\n",
+-			 16, &context->rx->hello);
++		sahara_memory_debug32(context);
+ 		break;
+ 	default:
+ 		dev_err(&context->mhi_dev->dev, "DEBUG unknown command %d\n",
+@@ -699,15 +757,9 @@ static void sahara_parse_dump_table(struct sahara_context *context)
+ 
+ 	context->dump_image_offset = dump_length;
+ 
+-	context->tx[0]->cmd = cpu_to_le32(SAHARA_MEM_READ64_CMD);
+-	context->tx[0]->length = cpu_to_le32(SAHARA_MEM_READ64_LENGTH);
+-	context->tx[0]->memory_read64.memory_address = cpu_to_le64(context->dump_image->address);
+-	context->tx[0]->memory_read64.memory_length = cpu_to_le64(dump_length);
+-
+ 	context->rx_size_requested = dump_length;
+ 
+-	ret = mhi_queue_buf(context->mhi_dev, DMA_TO_DEVICE, context->tx[0],
+-			    SAHARA_MEM_READ64_LENGTH, MHI_EOT);
++	ret = sahara_send_mem_read(context, context->dump_image->address, dump_length);
+ 	if (ret)
+ 		dev_err(&context->mhi_dev->dev, "Unable to send read for dump content %d\n", ret);
+ }
+@@ -728,6 +780,8 @@ static void sahara_parse_dump_image(struct sahara_context *context)
+ 
+ 		if (!context->dump_images_left) {
+ 			/* Dump done */
++			dev_info(&context->mhi_dev->dev, "memory dump of %zu bytes done\n",
++				 context->mem_dump_sz);
+ 			dev_coredumpv(context->mhi_dev->mhi_cntrl->cntrl_dev,
+ 				      context->mem_dump,
+ 				      context->mem_dump_sz,
+@@ -745,17 +799,11 @@ static void sahara_parse_dump_image(struct sahara_context *context)
+ 	if (dump_length == SAHARA_END_OF_IMAGE_LENGTH)
+ 		dump_length = SAHARA_END_OF_IMAGE_LENGTH / 2;
+ 
+-	context->tx[0]->cmd = cpu_to_le32(SAHARA_MEM_READ64_CMD);
+-	context->tx[0]->length = cpu_to_le32(SAHARA_MEM_READ64_LENGTH);
+-	context->tx[0]->memory_read64.memory_address =
+-		cpu_to_le64(context->dump_image->address + context->dump_image_offset);
+-	context->tx[0]->memory_read64.memory_length = cpu_to_le64(dump_length);
+-
++	ret = sahara_send_mem_read(context,
++				   context->dump_image->address + context->dump_image_offset,
++				   dump_length);
+ 	context->dump_image_offset += dump_length;
+ 	context->rx_size_requested = dump_length;
+-
+-	ret = mhi_queue_buf(context->mhi_dev, DMA_TO_DEVICE, context->tx[0],
+-			    SAHARA_MEM_READ64_LENGTH, MHI_EOT);
+ 	if (ret)
+ 		dev_err(&context->mhi_dev->dev,
+ 			"Unable to send read for dump content %d\n", ret);
+@@ -801,6 +849,28 @@ static void sahara_dump_processing(struct work_struct *work)
+ 	 * we use the stored dump_table_length, which we zero after we read and
+ 	 * process the entire table.
+ 	 */
++	if (context->dump_table_length && context->mem32) {
++		struct sahara_debug_table_entry32 *t32;
++		struct sahara_debug_table_entry64 *t64;
++		u64 n = context->dump_table_length / sizeof(*t32), i;
++
++		t32 = kmemdup(context->rx, context->dump_table_length, GFP_KERNEL);
++		if (!t32)
++			goto error;
++		t64 = (struct sahara_debug_table_entry64 *)context->rx;
++		for (i = 0; i < n; i++) {
++			t64[i].type = cpu_to_le64(le32_to_cpu(t32[i].type));
++			t64[i].address = cpu_to_le64(le32_to_cpu(t32[i].address));
++			t64[i].length = cpu_to_le64(le32_to_cpu(t32[i].length));
++			memcpy(t64[i].description, t32[i].description, SAHARA_TABLE_ENTRY_STR_LEN);
++			memcpy(t64[i].filename, t32[i].filename, SAHARA_TABLE_ENTRY_STR_LEN);
++			dev_info(&context->mhi_dev->dev, "EFS table %llu: %.20s (%.20s) %#x bytes\n",
++				 i, t32[i].filename, t32[i].description, le32_to_cpu(t32[i].length));
++		}
++		kfree(t32);
++		context->dump_table_length = n * sizeof(*t64);
++	}
++
+ 	if (context->dump_table_length)
+ 		sahara_parse_dump_table(context);
+ 	else
+@@ -955,6 +1025,7 @@ static void sahara_mhi_dl_xfer_cb(struct mhi_device *mhi_dev, struct mhi_result
+ 
+ static const struct mhi_device_id sahara_mhi_match_table[] = {
+ 	{ .chan = "SAHARA", },
++	{ .chan = "EFS", },
+ 	{},
+ };
+ MODULE_DEVICE_TABLE(mhi, sahara_mhi_match_table);
+-- 
+2.43.0
+

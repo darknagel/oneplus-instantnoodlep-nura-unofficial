@@ -1,0 +1,32 @@
+From 1cfd030964077a5fc14b0ff9361135416fbae299 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 19:27:06 +0100
+Subject: [PATCH 22/30] WIP: bus: mhi: host: sahara: Fit batches into the
+ transfer ring
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/bus/mhi/host/sahara.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/bus/mhi/host/sahara.c b/drivers/bus/mhi/host/sahara.c
+index 32b677590..62de619d6 100644
+--- a/drivers/bus/mhi/host/sahara.c
++++ b/drivers/bus/mhi/host/sahara.c
+@@ -368,6 +368,13 @@ static void sahara_send_batch(struct sahara_context *context)
+ 
+ 	n = min_t(unsigned int, SAHARA_NUM_TX_BUF,
+ 		  DIV_ROUND_UP(context->read_data_length, SAHARA_PACKET_MAX_SIZE));
++	/* A batch must fit into the transfer ring */
++	n = min_t(unsigned int, n,
++		  mhi_get_free_desc_count(context->mhi_dev, DMA_TO_DEVICE));
++	if (!n) {
++		dev_err(&context->mhi_dev->dev, "No room in the transfer ring\n");
++		return;
++	}
+ 
+ 	atomic_set(&context->tx_done, 0);
+ 	context->tx_batch = n;
+-- 
+2.43.0
+

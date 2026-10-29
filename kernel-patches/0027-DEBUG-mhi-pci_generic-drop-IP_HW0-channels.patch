@@ -1,0 +1,26 @@
+From 226ca0510d7dfaa10fcd9bb51057bc39fc4c920d Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 22:47:03 +0100
+Subject: [PATCH 27/30] DEBUG: mhi: pci_generic: drop IP_HW0 channels
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/bus/mhi/host/pci_generic.c | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/drivers/bus/mhi/host/pci_generic.c b/drivers/bus/mhi/host/pci_generic.c
+index ab441782b..4ded7d965 100644
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -430,8 +430,6 @@ static const struct mhi_channel_config modem_qcom_sdx55_flashless_channels[] = {
+ 	MHI_CHANNEL_CONFIG_DL(21, "IPCR", 8, 0),
+ 	MHI_CHANNEL_CONFIG_UL(46, "IP_SW0", 64, 2),
+ 	MHI_CHANNEL_CONFIG_DL(47, "IP_SW0", 64, 3),
+-	MHI_CHANNEL_CONFIG_HW_UL(100, "IP_HW0", 128, 4),
+-	MHI_CHANNEL_CONFIG_HW_DL(101, "IP_HW0", 128, 5),
+ };
+ 
+ static const struct mhi_controller_config modem_qcom_sdx55_flashless_config = {
+-- 
+2.43.0
+

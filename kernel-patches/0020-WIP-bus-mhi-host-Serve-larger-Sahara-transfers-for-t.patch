@@ -1,0 +1,52 @@
+From e752648a9a90061b66721ab32e328e2ff8836bad Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 19:14:58 +0100
+Subject: [PATCH 20/30] WIP: bus: mhi: host: Serve larger Sahara transfers for
+ the SDX55
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/bus/mhi/host/pci_generic.c | 3 ++-
+ drivers/bus/mhi/host/sahara.c      | 5 ++++-
+ 2 files changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/bus/mhi/host/pci_generic.c b/drivers/bus/mhi/host/pci_generic.c
+index 4e26fef11..ab441782b 100644
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -417,7 +417,8 @@ static const struct mhi_pci_dev_info mhi_qcom_sdx55_info = {
+ };
+ 
+ static const struct mhi_channel_config modem_qcom_sdx55_flashless_channels[] = {
+-	MHI_CHANNEL_CONFIG_UL_SBL(2, "SAHARA", 32, 0),
++	/* A whole Sahara READ_DATA response is queued as one chained transfer */
++	MHI_CHANNEL_CONFIG_UL_SBL(2, "SAHARA", 128, 0),
+ 	MHI_CHANNEL_CONFIG_DL_SBL(3, "SAHARA", 32, 0),
+ 	MHI_CHANNEL_CONFIG_UL(4, "DIAG", 16, 1),
+ 	MHI_CHANNEL_CONFIG_DL(5, "DIAG", 16, 1),
+diff --git a/drivers/bus/mhi/host/sahara.c b/drivers/bus/mhi/host/sahara.c
+index 0f48d3342..3ab04b7ef 100644
+--- a/drivers/bus/mhi/host/sahara.c
++++ b/drivers/bus/mhi/host/sahara.c
+@@ -43,7 +43,8 @@
+ #define SAHARA_WRITE_DATA_CMD		0x14 /* Min protocol version 3.0 */
+ 
+ #define SAHARA_PACKET_MAX_SIZE		0xffffU /* MHI_MAX_MTU */
+-#define SAHARA_TRANSFER_MAX_SIZE	0x80000
++/* The SDX55 SBL requests up to a whole ELF segment at a time */
++#define SAHARA_TRANSFER_MAX_SIZE	0x800000
+ #define SAHARA_READ_MAX_SIZE		0xfff0U /* Avoid unaligned requests */
+ #define SAHARA_NUM_TX_BUF		DIV_ROUND_UP(SAHARA_TRANSFER_MAX_SIZE,\
+ 							SAHARA_PACKET_MAX_SIZE)
+@@ -246,6 +247,8 @@ static int sahara_find_image(struct sahara_context *context, u32 image_id)
+ 	}
+ 
+ 	context->active_image_id = image_id;
++	dev_info(&context->mhi_dev->dev, "image %u: %s (%zu bytes)\n", image_id,
++		 context->image_table[image_id], context->firmware->size);
+ 
+ 	return 0;
+ }
+-- 
+2.43.0
+
