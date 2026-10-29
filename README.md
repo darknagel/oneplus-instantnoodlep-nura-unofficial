@@ -123,7 +123,7 @@ the screen, pick one of the phone interfaces Nura offers:
 | Interface | Package | Notes |
 |---|---|---|
 | Phosh | `postmarketos-ui-phosh` | GNOME-based; tested (GPU accelerated, camera works in Snapshot) |
-| Plasma Mobile | `postmarketos-ui-plasma-mobile` | KDE-based; tested |
+| Plasma Mobile | `postmarketos-ui-plasma-mobile` | KDE-based; tested (GPU accelerated, camera works in Snapshot) |
 | Sxmo | `postmarketos-ui-sxmo-de-sway` | minimal, button and menu driven; not tried |
 
 Desktop interfaces do not run as root, so create a normal user first. **The user must have
@@ -295,6 +295,8 @@ position; in continuous mode it scans again when the sharpness changes.
   `echo 21-0010 > /sys/bus/i2c/drivers/imx471/bind`
 - The first focus command right after the actuator is powered on times out on the CCI bus.
   Later commands work, so this has no visible effect.
+- Under Plasma Mobile, Snapshot crashes with the front camera (GTK's GL renderer). Start it
+  with the software renderer: `GSK_RENDERER=cairo snapshot`
 - After installing a new libcamera, restart PipeWire (`systemctl --user restart pipewire
   wireplumber`) or log out and in again: WirePlumber keeps the old library loaded.
 - `apk upgrade` may replace the patched packages once Nura publishes a higher
