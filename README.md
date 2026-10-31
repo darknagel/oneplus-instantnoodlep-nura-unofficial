@@ -267,6 +267,7 @@ after connecting to Wi-Fi, wait a minute or run `resolvectl flush-caches`.
 | Full resolution capture on SM8250 CAMSS (camera NoC clock was never set) | fixed | kernel 0013, pmaports 0012 |
 | Telephoto autofocus: LC898217XC voice coil driver at 0x74, powered through GPIO 140 | works | kernel 0014–0015, pmaports 0013 |
 | Contrast detection autofocus in libcamera (software ISP statistics, lens support in the simple pipeline, soft IPA algorithm `Af`) | works, also in GNOME Snapshot | libcamera 0003–0005, pmaports 0014 |
+| Bluetooth (no patches needed, `bootmac` sets the address) | works, needs three extra packages in the prebuilt image, see known issues | – |
 | Modem (SDX55 over PCIe/MHI): Sahara firmware loading, EFS sync, TFTP file server, online with LTE/5G bands | works, not in the image, see [`modem/`](modem/) | kernel 0016–0030, pmaports 0018 |
 | GPS (modem GNSS engine, NMEA on `/dev/gnss-sdx55`, fix without SIM) | works, see [`modem/`](modem/) | same |
 | SMS, mobile data | untested (needs a SIM) | – |
