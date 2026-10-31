@@ -33,7 +33,7 @@ GPS for apps: `apk add gpsd && gpsd -n /dev/gnss-sdx55`.
   different version; with it the modem stays offline.
 - Modem data (EFS, NV, DDR) is copied from your own partitions too. It
   contains calibration and IDs: **never share it**.
-- Without a SIM, ModemManager ignores the modem; GPS still works through
-  `sdx55-gnss`.
+- Without a SIM, ModemManager lists the modem as failed (`sim-missing`); GPS
+  still works through `sdx55-gnss`.
 - If the modem crashes: reboot.
 - Kernel patches 0023–0030 are still debug quality.

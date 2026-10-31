@@ -2,4 +2,7 @@
 # plugin); bind the mhi_net data ports to the same modem object.
 ACTION!="add|change|move|bind", GOTO="mm_sdx55_end"
 SUBSYSTEM=="net", DRIVERS=="mhi_net", ENV{ID_MM_QCOM_SOC}="1", ENV{ID_MM_PHYSDEV_UID}="qcom-soc", ENV{ID_MM_CANDIDATE}="1"
+# The MHI QMI and MBIM ports do not answer; probing them stalls QMI over QRTR
+# and ModemManager gives up on the modem.
+SUBSYSTEM=="wwan", ENV{ID_MM_PORT_IGNORE}="1"
 LABEL="mm_sdx55_end"
