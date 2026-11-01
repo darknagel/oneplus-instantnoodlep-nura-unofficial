@@ -41,7 +41,7 @@ numbers: [`docs/patches.md`](docs/patches.md).
 
 **Flash:**
 
-1. Download the files from [Releases](../../releases) and check them: `sha256sum -c SHA256SUMS`
+1. Download or build the files from [Releases](../../releases) and check them: `sha256sum -c SHA256SUMS`
 2. Power off, then hold **Volume up + Volume down + Power** for about ten seconds.
 3. In the folder with the files:
 
