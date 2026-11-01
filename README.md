@@ -273,6 +273,7 @@ after connecting to Wi-Fi, wait a minute or run `resolvectl flush-caches`.
 | SIM with PIN, network registration (LTE/5G) | works, not in the image, see [`modem/`](modem/) | pmaports 0019 |
 | Mobile data (IPv6 only, tested on congstar) | works, not in the image, see [`modem/`](modem/) | pmaports 0019, 0020 |
 | SMS, send and receive (`mmcli`, Spacebar under Plasma Mobile) | works, not in the image, see [`modem/`](modem/) | – |
+| NFC (NXP chip, reading tags with `neard`; PCIe 1 is disabled because it took the enable pin) | works, not in the image | kernel 0032, pmaports 0021 |
 | Main/ultrawide camera (C-PHY), OIS, colour tuning of the front camera, magnetometer, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the

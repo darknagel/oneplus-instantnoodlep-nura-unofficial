@@ -1,0 +1,38 @@
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Subject: [PATCH] WIP: arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Fix NFC
+
+GPIO 83 is the enable pin of the NFC chip, not the PCIe 1 clock request:
+nothing is connected to PCIe 1 on this phone, so disable it. GPIO 110 is the
+firmware pin, not a second enable pin.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -947,8 +947,8 @@
+         interrupt-parent = <&tlmm>;
+         interrupts = <0x6f IRQ_TYPE_LEVEL_HIGH>;
+ 
+-        enable-gpios = <&tlmm 83 GPIO_ACTIVE_HIGH>,
+-                        <&tlmm 110 GPIO_ACTIVE_HIGH>;
++        enable-gpios = <&tlmm 83 GPIO_ACTIVE_HIGH>;
++        firmware-gpios = <&tlmm 110 GPIO_ACTIVE_HIGH>;
+     };
+ };
+ 
+@@ -1071,13 +1071,13 @@
+ };
+ 
+ &pcie1 {
+-	status = "okay";
++	status = "disabled";
+ };
+ 
+ &pcie1_phy {
+ 	vdda-phy-supply = <&vreg_l5a_0p88>;
+ 	vdda-pll-supply = <&vreg_l9a_1p2>;
+-	status = "okay";
++	status = "disabled";
+ };
+ 
+ &pcie2 {

@@ -1,0 +1,87 @@
+From 08e81ab6bc5236413bd4a5fbca0f8af055b151c6 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 18:55:19 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: fix NFC on
+ oneplus-instantnoodlep
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ...m8250-oneplus-instantnoodlep-Fix-NFC.patch | 38 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  4 +-
+ 2 files changed, 41 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0032-WIP-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-NFC.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0032-WIP-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-NFC.patch b/device/testing/linux-postmarketos-qcom-sm8250/0032-WIP-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-NFC.patch
+new file mode 100644
+index 0000000000..35325404bc
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0032-WIP-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-NFC.patch
+@@ -0,0 +1,38 @@
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Subject: [PATCH] WIP: arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Fix NFC
++
++GPIO 83 is the enable pin of the NFC chip, not the PCIe 1 clock request:
++nothing is connected to PCIe 1 on this phone, so disable it. GPIO 110 is the
++firmware pin, not a second enable pin.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -947,8 +947,8 @@
++         interrupt-parent = <&tlmm>;
++         interrupts = <0x6f IRQ_TYPE_LEVEL_HIGH>;
++ 
++-        enable-gpios = <&tlmm 83 GPIO_ACTIVE_HIGH>,
++-                        <&tlmm 110 GPIO_ACTIVE_HIGH>;
+++        enable-gpios = <&tlmm 83 GPIO_ACTIVE_HIGH>;
+++        firmware-gpios = <&tlmm 110 GPIO_ACTIVE_HIGH>;
++     };
++ };
++ 
++@@ -1071,13 +1071,13 @@
++ };
++ 
++ &pcie1 {
++-	status = "okay";
+++	status = "disabled";
++ };
++ 
++ &pcie1_phy {
++ 	vdda-phy-supply = <&vreg_l5a_0p88>;
++ 	vdda-pll-supply = <&vreg_l9a_1p2>;
++-	status = "okay";
+++	status = "disabled";
++ };
++ 
++ &pcie2 {
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 567bb9c550..ec0a4fd8db 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=43
++pkgrel=44
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -70,6 +70,7 @@ source="
+ 	0029-DEBUG-mhi-keep-SAHARA-in-mission-mode.patch
+ 	0030-DEBUG-mhi-sahara-receive-the-SDX55-EFS-sync.patch
+ 	0031-WIP-bus-mhi-host-pci_generic-No-doorbell-burst-on-SD.patch
++	0032-WIP-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-NFC.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -147,4 +148,5 @@ c95fb2ed7de162b62a180139eca2ae902c63001b3b079f8110459c89f225d6794c2dcae0a5329889
+ 39781b113e2a2b65301c5ea123db2946c31243975a29c0fa9e2a11a0c8894a668334e6c6a25c6910fa4bcc4b28bc4ad8f7498d09ade372aa2847b36a36a36b56  0029-DEBUG-mhi-keep-SAHARA-in-mission-mode.patch
+ f217db62469d4cbe514a02d5074bf6b847305f85f79ce943bf37fc5b20f4357bf0a0c6e2442a028f8b21f959fa22a55f5b29894132decceb7eb7a00a05e9ba5f  0030-DEBUG-mhi-sahara-receive-the-SDX55-EFS-sync.patch
+ 0c04fe9621875de9b29d726da62ff76d3d1b6c23e57ddcdbb431a297a346aa9b19024feac267678238250129c51ce56f9401dca378581086a5f4eb90803043cb  0031-WIP-bus-mhi-host-pci_generic-No-doorbell-burst-on-SD.patch
++ef0c193c7ad75865aae23f30841a5bae66ca221252e73060e013ee3a82daf617aa00efad30c1c777f7957833b49485d1b91b0536bdd24108140e0fd1b67ee455  0032-WIP-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-NFC.patch
+ "
+-- 
+2.43.0
+
