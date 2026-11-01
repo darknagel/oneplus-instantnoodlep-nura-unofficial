@@ -272,7 +272,7 @@ after connecting to Wi-Fi, wait a minute or run `resolvectl flush-caches`.
 | GPS (modem GNSS engine, NMEA on `/dev/gnss-sdx55`, fix without SIM) | works, see [`modem/`](modem/) | same |
 | SIM with PIN, network registration (LTE/5G) | works, not in the image, see [`modem/`](modem/) | pmaports 0019 |
 | Mobile data (IPv6 only, tested on congstar) | works, not in the image, see [`modem/`](modem/) | pmaports 0019, 0020 |
-| SMS | untested | – |
+| SMS, send and receive (`mmcli`, Spacebar under Plasma Mobile) | works, not in the image, see [`modem/`](modem/) | – |
 | Main/ultrawide camera (C-PHY), OIS, colour tuning of the front camera, magnetometer, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the

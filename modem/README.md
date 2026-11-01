@@ -1,8 +1,9 @@
 # Modem & GPS (SDX55)
 
 **Works:** modem online, LTE + 5G bands, GPS fix without SIM, SIM with PIN,
-network registration, mobile data (IPv6 only, up to 90 Mbit/s, tested on congstar).
-**Untested:** SMS. **Not done:** calls.
+network registration, mobile data (IPv6 only, up to 90 Mbit/s, tested on congstar),
+SMS send and receive.
+**Not done:** calls.
 Tested on one IN2023 (EU). Not in the prebuilt image.
 
 ## Setup
@@ -33,6 +34,9 @@ Mobile data on congstar, as root (the password is the public one of the APN):
 ```sh
 nmcli con add type gsm ifname '*' con-name congstar apn internet.v6.telekom gsm.username congstar gsm.password cs
 ```
+
+SMS app for Plasma Mobile: `apk add spacebar`, then log in again. Enter numbers
+with the country code (`+49...`).
 
 ## Facts
 
