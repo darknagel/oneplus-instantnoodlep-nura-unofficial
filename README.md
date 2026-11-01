@@ -268,9 +268,11 @@ after connecting to Wi-Fi, wait a minute or run `resolvectl flush-caches`.
 | Telephoto autofocus: LC898217XC voice coil driver at 0x74, powered through GPIO 140 | works | kernel 0014–0015, pmaports 0013 |
 | Contrast detection autofocus in libcamera (software ISP statistics, lens support in the simple pipeline, soft IPA algorithm `Af`) | works, also in GNOME Snapshot | libcamera 0003–0005, pmaports 0014 |
 | Bluetooth (no patches needed, `bootmac` sets the address) | works, needs three extra packages in the prebuilt image, see known issues | – |
-| Modem (SDX55 over PCIe/MHI): Sahara firmware loading, EFS sync, TFTP file server, online with LTE/5G bands | works, not in the image, see [`modem/`](modem/) | kernel 0016–0030, pmaports 0018 |
+| Modem (SDX55 over PCIe/MHI): Sahara firmware loading, EFS sync, TFTP file server, online with LTE/5G bands | works, not in the image, see [`modem/`](modem/) | kernel 0016–0031 without 0027, pmaports 0018, 0020 |
 | GPS (modem GNSS engine, NMEA on `/dev/gnss-sdx55`, fix without SIM) | works, see [`modem/`](modem/) | same |
-| SMS, mobile data | untested (needs a SIM) | – |
+| SIM with PIN, network registration (LTE/5G) | works, not in the image, see [`modem/`](modem/) | pmaports 0019 |
+| Mobile data (IPv6 only, tested on congstar) | works, not in the image, see [`modem/`](modem/) | pmaports 0019, 0020 |
+| SMS | untested | – |
 | Main/ultrawide camera (C-PHY), OIS, colour tuning of the front camera, magnetometer, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
@@ -296,6 +298,9 @@ position; in continuous mode it scans again when the sharpness changes.
   `echo 21-0010 > /sys/bus/i2c/drivers/imx471/bind`
 - The first focus command right after the actuator is powered on times out on the CCI bus.
   Later commands work, so this has no visible effect.
+- Under Plasma Mobile the on-screen keyboard did not always open in the SIM PIN popup in
+  our tests. The PIN can be entered in the settings or over SSH without problems:
+  `mmcli -i any --pin=YOURPIN`
 - Under Plasma Mobile, Snapshot crashes with the front camera (GTK's GL renderer). Start it
   with the software renderer: `GSK_RENDERER=cairo snapshot`
 - After installing a new libcamera, restart PipeWire (`systemctl --user restart pipewire
@@ -367,7 +372,9 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   (https://gitlab.postmarketos.org/soc/qualcomm-sm8250/linux). Apply with `git am`.
 - `pmaports-patches/` – against Nura pmaports `main` (Oct 2026). They also carry
   the kernel and libcamera patches inside the packages. 0018 adds the modem kernel
-  patches (kernel 0016–0030, partly debug quality, see [`modem/`](modem/)).
+  patches (kernel 0016–0031 without 0027, partly debug quality, see
+  [`modem/`](modem/)), 0019 fixes ModemManager for this modem, 0020 keeps the
+  modem's data channels.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `hexagonrpc-patches/` – against https://github.com/linux-msm/hexagonrpc tag `v0.5.0`.
   Adds a writable sensor registry (`-w DIR`), needed by the OnePlus sensor DSP.

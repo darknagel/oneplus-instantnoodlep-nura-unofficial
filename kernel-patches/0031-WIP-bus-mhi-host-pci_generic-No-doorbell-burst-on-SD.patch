@@ -1,0 +1,44 @@
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Subject: [PATCH] WIP: bus: mhi: host: pci_generic: No doorbell burst on SDX55 IP_HW0
+
+With burst mode the downlink stalls under load on this modem.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -430,8 +430,32 @@
+ 	MHI_CHANNEL_CONFIG_DL(21, "IPCR", 8, 0),
+ 	MHI_CHANNEL_CONFIG_UL(46, "IP_SW0", 64, 2),
+ 	MHI_CHANNEL_CONFIG_DL(47, "IP_SW0", 64, 3),
+-	MHI_CHANNEL_CONFIG_HW_UL(100, "IP_HW0", 128, 4),
+-	MHI_CHANNEL_CONFIG_HW_DL(101, "IP_HW0", 128, 5),
++	{
++		.num = 100,
++		.name = "IP_HW0",
++		.num_elements = 128,
++		.event_ring = 4,
++		.dir = DMA_TO_DEVICE,
++		.ee_mask = BIT(MHI_EE_AMSS),
++		.pollcfg = 0,
++		.doorbell = MHI_DB_BRST_DISABLE,
++		.lpm_notify = false,
++		.offload_channel = false,
++		.doorbell_mode_switch = false,
++	},
++	{
++		.num = 101,
++		.name = "IP_HW0",
++		.num_elements = 128,
++		.event_ring = 5,
++		.dir = DMA_FROM_DEVICE,
++		.ee_mask = BIT(MHI_EE_AMSS),
++		.pollcfg = 0,
++		.doorbell = MHI_DB_BRST_DISABLE,
++		.lpm_notify = false,
++		.offload_channel = false,
++		.doorbell_mode_switch = false,
++	},
+ };
+
+ static const struct mhi_controller_config modem_qcom_sdx55_flashless_config = {

@@ -1,0 +1,372 @@
+From f3b36c7ee8a454be2e16ead407523c9f00696a79 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 31 Oct 2026 23:01:28 +0100
+Subject: [PATCH 19/20] temp/modemmanager: fork for the SDX55 on MHI and QRTR
+
+Fix the abort after a SIM PIN unlock and support mhi_net data ports in the qcom-soc plugin.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ...x-big-endian-handling-of-ASN-integer.patch |  42 +++++++
+ ...abort-on-location-setup-after-unlock.patch |  44 +++++++
+ ...-qcom-soc-support-mhi_net-data-ports.patch |  85 ++++++++++++++
+ temp/modemmanager/APKBUILD                    | 108 ++++++++++++++++++
+ temp/modemmanager/modemmanager.initd          |  12 ++
+ temp/modemmanager/modemmanager.rules          |  19 +++
+ 6 files changed, 310 insertions(+)
+ create mode 100644 temp/modemmanager/0001-intel-XMM7360-fix-big-endian-handling-of-ASN-integer.patch
+ create mode 100644 temp/modemmanager/0002-shared-qmi-do-not-abort-on-location-setup-after-unlock.patch
+ create mode 100644 temp/modemmanager/0003-qcom-soc-support-mhi_net-data-ports.patch
+ create mode 100644 temp/modemmanager/APKBUILD
+ create mode 100644 temp/modemmanager/modemmanager.initd
+ create mode 100644 temp/modemmanager/modemmanager.rules
+
+diff --git a/temp/modemmanager/0001-intel-XMM7360-fix-big-endian-handling-of-ASN-integer.patch b/temp/modemmanager/0001-intel-XMM7360-fix-big-endian-handling-of-ASN-integer.patch
+new file mode 100644
+index 0000000000..894fc55b54
+--- /dev/null
++++ b/temp/modemmanager/0001-intel-XMM7360-fix-big-endian-handling-of-ASN-integer.patch
+@@ -0,0 +1,42 @@
++From 4b936ada44a0f6ccb02745e9452c2b4b2412341c Mon Sep 17 00:00:00 2001
++From: Aelin <aelin@postmarketos.org>
++Date: Thu, 11 Jun 2026 22:01:36 +0200
++Subject: [PATCH] intel: XMM7360: fix big-endian handling of ASN integer output
++
++xmm7360_byte_array_read_asn_int() previously always returned
++*out_val from the union member `value.l`, regardless of the actual
++integer size. On big-endian systems, this caused 1-byte or 2-byte
++values to be shifted incorrectly (e.g., 1-byte value 0x01 became
++0x01000000).
++
++Fix this by selecting the union member that matches the ASN int type.
++---
++ src/plugins/intel/mm-xmmrpc-xmm7360-protocol.c | 12 ++++--------
++ 1 file changed, 4 insertions(+), 8 deletions(-)
++
++diff --git a/src/plugins/intel/mm-xmmrpc-xmm7360-protocol.c b/src/plugins/intel/mm-xmmrpc-xmm7360-protocol.c
++index dcf16280..82db189c 100644
++--- a/src/plugins/intel/mm-xmmrpc-xmm7360-protocol.c
+++++ b/src/plugins/intel/mm-xmmrpc-xmm7360-protocol.c
++@@ -115,14 +115,10 @@ xmm7360_byte_array_read_asn_int (GByteArray        *buf,
++         *out_arg = arg;
++ 
++     if (out_val) {
++-        /* If the ASN int is negative, we must convert a int8/int16
++-         * value to the appropriate u32 value to avoid returning a
++-         * positive 32-bit gint.
++-         */
++-        if ((arg.type == XMM7360_RPC_MSG_ARG_TYPE_BYTE) && (arg.value.b < 0))
++-            *out_val = (arg.value.b << 24) >> 24;
++-        else if ((arg.type == XMM7360_RPC_MSG_ARG_TYPE_SHORT) && (arg.value.s < 0))
++-            *out_val = (arg.value.s << 16) >> 16;
+++        if (arg.type == XMM7360_RPC_MSG_ARG_TYPE_BYTE)
+++            *out_val = arg.value.b;
+++        else if (arg.type == XMM7360_RPC_MSG_ARG_TYPE_SHORT)
+++            *out_val = arg.value.s;
++         else
++             *out_val = arg.value.l;
++     }
++-- 
++2.54.0
++
+diff --git a/temp/modemmanager/0002-shared-qmi-do-not-abort-on-location-setup-after-unlock.patch b/temp/modemmanager/0002-shared-qmi-do-not-abort-on-location-setup-after-unlock.patch
+new file mode 100644
+index 0000000000..d0575d9092
+--- /dev/null
++++ b/temp/modemmanager/0002-shared-qmi-do-not-abort-on-location-setup-after-unlock.patch
+@@ -0,0 +1,44 @@
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Subject: [PATCH] shared-qmi: do not abort on location setup after SIM unlock
++
++The location interface is initialized a second time after a SIM PIN unlock.
++The inject request signals are then already connected and the assertion
++aborts ModemManager.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++--- a/src/mm-shared-qmi.c
+++++ b/src/mm-shared-qmi.c
++@@ -7065,19 +7065,20 @@
++         goto out;
++     }
++ 
++-    g_assert (!priv->loc_assistance_inject_time_req_indication_id);
++-    priv->loc_assistance_inject_time_req_indication_id =
++-        g_signal_connect (client,
++-                          "inject-time-request",
++-                          G_CALLBACK (loc_location_inject_time_req_indication_cb),
++-                          self);
+++    /* The location interface is initialized again after a SIM PIN unlock */
+++    if (!priv->loc_assistance_inject_time_req_indication_id)
+++        priv->loc_assistance_inject_time_req_indication_id =
+++            g_signal_connect (client,
+++                              "inject-time-request",
+++                              G_CALLBACK (loc_location_inject_time_req_indication_cb),
+++                              self);
++ 
++-    g_assert (!priv->loc_assistance_inject_position_req_indication_id);
++-    priv->loc_assistance_inject_position_req_indication_id =
++-        g_signal_connect (client,
++-                          "inject-position-request",
++-                          G_CALLBACK (loc_location_inject_position_req_indication_cb),
++-                          self);
+++    if (!priv->loc_assistance_inject_position_req_indication_id)
+++        priv->loc_assistance_inject_position_req_indication_id =
+++            g_signal_connect (client,
+++                              "inject-position-request",
+++                              G_CALLBACK (loc_location_inject_position_req_indication_cb),
+++                              self);
++ 
++ out:
++     g_task_return_int (task, MM_MODEM_LOCATION_ASSISTANCE_DATA_TYPE_XTRA);
+diff --git a/temp/modemmanager/0003-qcom-soc-support-mhi_net-data-ports.patch b/temp/modemmanager/0003-qcom-soc-support-mhi_net-data-ports.patch
+new file mode 100644
+index 0000000000..e8633a311b
+--- /dev/null
++++ b/temp/modemmanager/0003-qcom-soc-support-mhi_net-data-ports.patch
+@@ -0,0 +1,85 @@
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Subject: [PATCH] qcom-soc: support mhi_net data ports
++
++An SDX55 on MHI exposes its QMI services over QRTR, which puts it in this
++plugin, while the data port uses mhi_net. Use the PCIe endpoint for it and
++bind the WDS clients to the data port, Start Network otherwise fails with
++InvalidOperation.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++--- a/src/plugins/qcom-soc/mm-broadband-modem-qmi-qcom-soc.c
+++++ b/src/plugins/qcom-soc/mm-broadband-modem-qmi-qcom-soc.c
++@@ -111,6 +111,34 @@
++ }
++ 
++ static MMPortQmi *
+++peek_port_qmi_for_data_mhi (MMBroadbandModemQmi  *self,
+++                            MMPort               *data,
+++                            MMQmiDataEndpoint    *out_endpoint,
+++                            GError              **error)
+++{
+++    MMPortQmi *found = NULL;
+++
+++    /* A modem on MHI with QMI over QRTR: any QMI port manages the network
+++     * interface, and the data port is not implied by the control channel */
+++
+++    found = mm_broadband_modem_qmi_peek_port_qmi (self);
+++
+++    if (!found)
+++        g_set_error (error,
+++                     MM_CORE_ERROR,
+++                     MM_CORE_ERROR_NOT_FOUND,
+++                     "Couldn't find any QMI port for 'net/%s'",
+++                     mm_port_get_device (data));
+++    else if (out_endpoint) {
+++        out_endpoint->type = QMI_DATA_ENDPOINT_TYPE_PCIE;
+++        out_endpoint->interface_number = 4;
+++        out_endpoint->sio_port = QMI_SIO_PORT_NONE;
+++    }
+++
+++    return found;
+++}
+++
+++static MMPortQmi *
++ peek_port_qmi_for_data (MMBroadbandModemQmi  *self,
++                         MMPort               *data,
++                         MMQmiDataEndpoint    *out_endpoint,
++@@ -131,6 +159,9 @@
++     if (g_strcmp0 (net_port_driver, "bam-dmux") == 0)
++         return peek_port_qmi_for_data_bam_dmux (self, data, out_endpoint, error);
++ 
+++    if (g_strcmp0 (net_port_driver, "mhi_net") == 0)
+++        return peek_port_qmi_for_data_mhi (self, data, out_endpoint, error);
+++
++     g_set_error (error,
++                  MM_CORE_ERROR,
++                  MM_CORE_ERROR_FAILED,
++--- a/src/mm-bearer-qmi.c
+++++ b/src/mm-bearer-qmi.c
++@@ -2082,8 +2082,10 @@
++             return;
++         }
++ 
++-        /* If mux id given, bind mux data port */
++-        if (ctx->sio_port_failed || ctx->mux_id != QMI_DEVICE_MUX_ID_UNBOUND) {
+++        /* If mux id given, bind mux data port. Over QRTR the client has no
+++         * data port of its own, so it needs this even without multiplexing. */
+++        if (ctx->sio_port_failed || ctx->mux_id != QMI_DEVICE_MUX_ID_UNBOUND ||
+++            mm_port_get_subsys (MM_PORT (ctx->qmi)) == MM_PORT_SUBSYS_QRTR) {
++             g_autoptr(QmiMessageWdsBindMuxDataPortInput) input = NULL;
++ 
++             mm_obj_dbg (self, "binding to mux id %d", ctx->mux_id);
++@@ -2227,8 +2229,10 @@
++             return;
++         }
++ 
++-        /* If mux id given, bind mux data port */
++-        if (ctx->sio_port_failed || ctx->mux_id != QMI_DEVICE_MUX_ID_UNBOUND) {
+++        /* If mux id given, bind mux data port. Over QRTR the client has no
+++         * data port of its own, so it needs this even without multiplexing. */
+++        if (ctx->sio_port_failed || ctx->mux_id != QMI_DEVICE_MUX_ID_UNBOUND ||
+++            mm_port_get_subsys (MM_PORT (ctx->qmi)) == MM_PORT_SUBSYS_QRTR) {
++             g_autoptr(QmiMessageWdsBindMuxDataPortInput) input = NULL;
++ 
++             mm_obj_dbg (self, "binding to mux id %d", ctx->mux_id);
+diff --git a/temp/modemmanager/APKBUILD b/temp/modemmanager/APKBUILD
+new file mode 100644
+index 0000000000..1383f9c401
+--- /dev/null
++++ b/temp/modemmanager/APKBUILD
+@@ -0,0 +1,108 @@
++# Forked from Alpine: fix the abort after a SIM PIN unlock
++# Contributor: Stuart Cardall <developer@it-offshore.co.uk>
++maintainer="Achill Gilgenast <achill@achill.org>"
++pkgname=modemmanager
++pkgver=1.25.95_git20261005
++pkgrel=3
++_commit=7f0bf17ab518cd78925cf7e53cc0d5c42f88b41a
++pkgdesc="ModemManager library"
++url="https://www.freedesktop.org/wiki/Software/ModemManager"
++arch="all"
++license="GPL-2.0-or-later AND LGPL-2.1-or-later"
++depends="
++	dbus
++	libmm-glib=$pkgver-r$pkgrel
++	mobile-broadband-provider-info
++	polkit
++	"
++depends_dev="libmm-glib=$pkgver-r$pkgrel"
++makedepends="
++	bash-completion-dev
++	dbus-dev
++	elogind-dev
++	gobject-introspection-dev
++	gtk-doc
++	libgudev-dev
++	libmbim-dev
++	libqmi-dev
++	linux-headers
++	meson
++	polkit-dev
++	vala
++	"
++checkdepends="glib-dev py3-gobject3 py3-dbus"
++subpackages="
++	$pkgname-lang
++	$pkgname-doc
++	libmm-glib:libmm
++	$pkgname-dbg
++	$pkgname-dev
++	$pkgname-openrc
++	$pkgname-bash-completion
++	$pkgname-systemd
++	$pkgname-udev
++	"
++#source="https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/archive/$pkgver/ModemManager-$pkgver.tar.gz
++source="https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/archive/$_commit/ModemManager-$_commit.tar.gz
++	$pkgname.rules
++	$pkgname.initd
++
++	0001-intel-XMM7360-fix-big-endian-handling-of-ASN-integer.patch
++	0002-shared-qmi-do-not-abort-on-location-setup-after-unlock.patch
++	0003-qcom-soc-support-mhi_net-data-ports.patch
++	"
++#builddir="$srcdir"/ModemManager-$pkgver
++builddir="$srcdir"/ModemManager-$_commit
++options="!check"
++
++build() {
++	# Temporarily disable gtkdoc generation due to error in helper script
++	# https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/issues/902
++	abuild-meson \
++		-Db_lto=true \
++		-Dsystemdsystemunitdir=/usr/lib/systemd/system \
++		-Ddbus_policy_dir=/usr/share/dbus-1/system.d \
++		-Dgtk_doc=false \
++		-Dpolkit=permissive \
++		-Dsystemd_journal=false \
++		-Dsystemd_suspend_resume=true \
++		-Dvapi=true \
++		. output
++	meson compile -C output
++}
++
++check() {
++	meson test -C output
++}
++
++package() {
++	DESTDIR="$pkgdir" meson install --no-rebuild -C output
++	install -m644 -D "$srcdir/$pkgname.rules" \
++		"$pkgdir/usr/share/polkit-1/rules.d/01-org.freedesktop.ModemManager.rules"
++	install -m755 -D "$srcdir/$pkgname.initd" \
++		"$pkgdir/etc/init.d/$pkgname"
++
++	# post-install message
++	mkdir -p "$pkgdir/usr/share/doc/$pkgname"
++	cat > "$pkgdir"/usr/share/doc/$pkgname/README.alpine <<- EOF
++	If your USB modem shows up as a Flash drive when you plug it in:
++
++	install 'usb-modeswitch' to automatically switch to USB modem mode whenever you plug it in.
++	To control your modem without the root password: add your user account to the 'plugdev' group.
++	EOF
++}
++
++libmm() {
++	depends=""
++	amove usr/lib/girepository-1.0
++	amove usr/lib/libmm-glib.so*
++}
++
++sha512sums="
++e049eecc104c989f516402ca7c21e3374c152e3840cf05c34ac91bc8e3305c83b53693bc0964f657664d4156baaac1a4e0fa35dd577733623dd669b67f1675f6  ModemManager-7f0bf17ab518cd78925cf7e53cc0d5c42f88b41a.tar.gz
++6fab86c27502b29be0c6610d835a3249a4a81993eb986cff2c3ea9393fadd3f693ba4bb0532ae0e50a83d359559511859dd05f7ea2f0cb52839f535a7e49f8a0  modemmanager.rules
++6e234cebcdec6d1afbca164ee5c13c96f7132ef31231d5c043cc5750ebe99e362a384d0463874b3c1c30799b433e0d3286add03af13c97fa406b4b5d2b78880c  modemmanager.initd
++f06e9b89acab5b61c5965658d62551b0f168066384674f7c4dd56feb6f811c82c640470e634e32d8c4ef62290588cf974aa5f213e5c67e797a06d33e61fa24ec  0001-intel-XMM7360-fix-big-endian-handling-of-ASN-integer.patch
++15e206739314e2d5730bda213f559cd171e99de25ae5c1f33334450772b261877e88f968715d5ca51d2609d31844ab04d6c7d7cbd9ed5bf990048bf7c7edeee3  0002-shared-qmi-do-not-abort-on-location-setup-after-unlock.patch
++4419ac70e81a0b1b12e6146ce06a4ad548b0cdd928fd52c64789d6676f9b6d8f47408ba571f5992c2bfc3bc7a280c91ae5485122e47182613c22d9759e8f9a2e  0003-qcom-soc-support-mhi_net-data-ports.patch
++"
+diff --git a/temp/modemmanager/modemmanager.initd b/temp/modemmanager/modemmanager.initd
+new file mode 100644
+index 0000000000..a9c0559930
+--- /dev/null
++++ b/temp/modemmanager/modemmanager.initd
+@@ -0,0 +1,12 @@
++#!/sbin/openrc-run
++
++supervisor=supervise-daemon
++command=/usr/sbin/ModemManager
++command_args="${modemmanager_opts}"
++
++description="ModemManager Daemon"
++
++depend() {
++   need dbus
++   need polkit
++}
+diff --git a/temp/modemmanager/modemmanager.rules b/temp/modemmanager/modemmanager.rules
+new file mode 100644
+index 0000000000..4c56fb7f9e
+--- /dev/null
++++ b/temp/modemmanager/modemmanager.rules
+@@ -0,0 +1,19 @@
++// Let users in plugdev group modify ModemManager
++polkit.addRule(function(action, subject) {
++    if ((action.id == "org.freedesktop.ModemManager1.Device.Control" ||
++	action.id == "org.freedesktop.ModemManager1.Contacts" ||
++	action.id == "org.freedesktop.ModemManager1.Messaging" ||
++	action.id == "org.freedesktop.ModemManager1.Location") &&
++        subject.isInGroup("plugdev") && subject.active) {
++        return "yes";
++    }
++});
++
++// Let geoclue modify ModemManager for location gathering
++polkit.addRule(function(action, subject) {
++    if ((action.id == "org.freedesktop.ModemManager1.Device.Control" ||
++	action.id == "org.freedesktop.ModemManager1.Location") &&
++        subject.isInGroup("geoclue")) {
++        return "yes";
++    }
++});
+-- 
+2.43.0
+

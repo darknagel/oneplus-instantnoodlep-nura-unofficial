@@ -38,6 +38,7 @@ chmod 600 $FW/*
 install -m 755 rfsd.py /usr/local/bin/sdx55-rfsd
 install -m 755 efssave.py /usr/local/bin/sdx55-efssave
 install -m 755 sdx55-gnss.py /usr/local/bin/sdx55-gnss
+install -m 755 sdx55-sim.py /usr/local/bin/sdx55-sim
 install -m 755 modemstate.py /usr/local/bin/sdx55-modemstate
 mkdir -p /var/lib/sdx55-rfs/efs /etc/udev/rules.d
 chmod 700 /var/lib/sdx55-rfs/efs
@@ -69,6 +70,23 @@ RestartSec=5
 WantedBy=multi-user.target
 UNIT
 
+cat > /etc/systemd/system/sdx55-sim.service <<'UNIT'
+[Unit]
+Description=SDX55 SIM activation
+After=sdx55-rfsd.service
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/sdx55-sim
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+install -D -m 644 sdx55-mhi-net.conf /etc/modprobe.d/sdx55-mhi-net.conf
+install -D -m 644 ModemManager-sdx55.conf /etc/systemd/system/ModemManager.service.d/sdx55.conf
+
 # The modem syncs its EFS through Sahara memory debug; the kernel hands each
 # sync over as a devcoredump. Without an answer the modem resets itself.
 echo 'SUBSYSTEM=="devcoredump", ACTION=="add", RUN+="/usr/bin/python3 /usr/local/bin/sdx55-efssave %k"' \
@@ -78,5 +96,5 @@ install -m 644 78-mm-sdx55-qrtr.rules /etc/udev/rules.d/
 systemctl disable --now tqftpserv 2>/dev/null || true
 systemctl daemon-reload
 udevadm control --reload
-systemctl enable sdx55-rfsd sdx55-gnss
+systemctl enable sdx55-rfsd sdx55-gnss sdx55-sim
 echo "Done. Reboot to start the modem."

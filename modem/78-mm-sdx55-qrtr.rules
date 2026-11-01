@@ -5,4 +5,8 @@ SUBSYSTEM=="net", DRIVERS=="mhi_net", ENV{ID_MM_QCOM_SOC}="1", ENV{ID_MM_PHYSDEV
 # The MHI QMI and MBIM ports do not answer; probing them stalls QMI over QRTR
 # and ModemManager gives up on the modem.
 SUBSYSTEM=="wwan", ENV{ID_MM_PORT_IGNORE}="1"
+# The modem carries data only on the IP_HW0 channel.
+SUBSYSTEM=="net", KERNEL=="mhi_swip*", ENV{ID_MM_PORT_IGNORE}="1"
+# mhi_net defaults to a much larger MTU than the data session has.
+SUBSYSTEM=="net", KERNEL=="mhi_hwip*", ATTR{mtu}="1500"
 LABEL="mm_sdx55_end"

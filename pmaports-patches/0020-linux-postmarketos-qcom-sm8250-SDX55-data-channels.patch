@@ -1,0 +1,136 @@
+From 7bd8206fbf92bbd7b72908f56e1ba3799529f57e Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 17:43:14 +0100
+Subject: [PATCH 20/20] linux-postmarketos-qcom-sm8250: SDX55 data channels
+
+Keep the IP_HW0 channels, the modem carries mobile data only on them, and run them without doorbell burst mode.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ...mhi-pci_generic-drop-IP_HW0-channels.patch | 26 -----------
+ ...-pci_generic-No-doorbell-burst-on-SD.patch | 44 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  6 +--
+ 3 files changed, 47 insertions(+), 29 deletions(-)
+ delete mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0027-DEBUG-mhi-pci_generic-drop-IP_HW0-channels.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0031-WIP-bus-mhi-host-pci_generic-No-doorbell-burst-on-SD.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0027-DEBUG-mhi-pci_generic-drop-IP_HW0-channels.patch b/device/testing/linux-postmarketos-qcom-sm8250/0027-DEBUG-mhi-pci_generic-drop-IP_HW0-channels.patch
+deleted file mode 100644
+index 4ac76dee86..0000000000
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0027-DEBUG-mhi-pci_generic-drop-IP_HW0-channels.patch
++++ /dev/null
+@@ -1,26 +0,0 @@
+-From 226ca0510d7dfaa10fcd9bb51057bc39fc4c920d Mon Sep 17 00:00:00 2001
+-From: Timo <1788603+darknagel@users.noreply.github.com>
+-Date: Tue, 27 Oct 2026 22:47:03 +0100
+-Subject: [PATCH 27/30] DEBUG: mhi: pci_generic: drop IP_HW0 channels
+-
+-Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+----
+- drivers/bus/mhi/host/pci_generic.c | 2 --
+- 1 file changed, 2 deletions(-)
+-
+-diff --git a/drivers/bus/mhi/host/pci_generic.c b/drivers/bus/mhi/host/pci_generic.c
+-index ab441782b..4ded7d965 100644
+---- a/drivers/bus/mhi/host/pci_generic.c
+-+++ b/drivers/bus/mhi/host/pci_generic.c
+-@@ -430,8 +430,6 @@ static const struct mhi_channel_config modem_qcom_sdx55_flashless_channels[] = {
+- 	MHI_CHANNEL_CONFIG_DL(21, "IPCR", 8, 0),
+- 	MHI_CHANNEL_CONFIG_UL(46, "IP_SW0", 64, 2),
+- 	MHI_CHANNEL_CONFIG_DL(47, "IP_SW0", 64, 3),
+--	MHI_CHANNEL_CONFIG_HW_UL(100, "IP_HW0", 128, 4),
+--	MHI_CHANNEL_CONFIG_HW_DL(101, "IP_HW0", 128, 5),
+- };
+- 
+- static const struct mhi_controller_config modem_qcom_sdx55_flashless_config = {
+--- 
+-2.43.0
+-
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0031-WIP-bus-mhi-host-pci_generic-No-doorbell-burst-on-SD.patch b/device/testing/linux-postmarketos-qcom-sm8250/0031-WIP-bus-mhi-host-pci_generic-No-doorbell-burst-on-SD.patch
+new file mode 100644
+index 0000000000..b675f982f7
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0031-WIP-bus-mhi-host-pci_generic-No-doorbell-burst-on-SD.patch
+@@ -0,0 +1,44 @@
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Subject: [PATCH] WIP: bus: mhi: host: pci_generic: No doorbell burst on SDX55 IP_HW0
++
++With burst mode the downlink stalls under load on this modem.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++--- a/drivers/bus/mhi/host/pci_generic.c
+++++ b/drivers/bus/mhi/host/pci_generic.c
++@@ -430,8 +430,32 @@
++ 	MHI_CHANNEL_CONFIG_DL(21, "IPCR", 8, 0),
++ 	MHI_CHANNEL_CONFIG_UL(46, "IP_SW0", 64, 2),
++ 	MHI_CHANNEL_CONFIG_DL(47, "IP_SW0", 64, 3),
++-	MHI_CHANNEL_CONFIG_HW_UL(100, "IP_HW0", 128, 4),
++-	MHI_CHANNEL_CONFIG_HW_DL(101, "IP_HW0", 128, 5),
+++	{
+++		.num = 100,
+++		.name = "IP_HW0",
+++		.num_elements = 128,
+++		.event_ring = 4,
+++		.dir = DMA_TO_DEVICE,
+++		.ee_mask = BIT(MHI_EE_AMSS),
+++		.pollcfg = 0,
+++		.doorbell = MHI_DB_BRST_DISABLE,
+++		.lpm_notify = false,
+++		.offload_channel = false,
+++		.doorbell_mode_switch = false,
+++	},
+++	{
+++		.num = 101,
+++		.name = "IP_HW0",
+++		.num_elements = 128,
+++		.event_ring = 5,
+++		.dir = DMA_FROM_DEVICE,
+++		.ee_mask = BIT(MHI_EE_AMSS),
+++		.pollcfg = 0,
+++		.doorbell = MHI_DB_BRST_DISABLE,
+++		.lpm_notify = false,
+++		.offload_channel = false,
+++		.doorbell_mode_switch = false,
+++	},
++ };
++
++ static const struct mhi_controller_config modem_qcom_sdx55_flashless_config = {
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 8fad72bcc8..567bb9c550 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=41
++pkgrel=43
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -66,10 +66,10 @@ source="
+ 	0024-DEBUG-sahara-1-MB-batches-log-bytes-taken.patch
+ 	0025-DEBUG-sahara-log-control-commands.patch
+ 	0026-DEBUG-modem-hog-AP2MDM-GPIOs-MHI-debug-output.patch
+-	0027-DEBUG-mhi-pci_generic-drop-IP_HW0-channels.patch
+ 	0028-DEBUG-mhi-pci_generic-collect-SDX55-RAM-dumps.patch
+ 	0029-DEBUG-mhi-keep-SAHARA-in-mission-mode.patch
+ 	0030-DEBUG-mhi-sahara-receive-the-SDX55-EFS-sync.patch
++	0031-WIP-bus-mhi-host-pci_generic-No-doorbell-burst-on-SD.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -143,8 +143,8 @@ c95fb2ed7de162b62a180139eca2ae902c63001b3b079f8110459c89f225d6794c2dcae0a5329889
+ 551140c8a4caac34a8ec3df0ab3e9ba9cb854457491ed3385aa3421611c496e248ff44baf3531246e87359dab06aaf8c7da9879271f5b93b9e663accf80860a3  0024-DEBUG-sahara-1-MB-batches-log-bytes-taken.patch
+ 5b47f5dde7f4b70da467aa71a546b1b1c5cb29103c26e22a1400fbc33a6ba4738c23319be53ed819db3ab277831026e8c7a676c8bb7ce661c427ecaf9881a6c7  0025-DEBUG-sahara-log-control-commands.patch
+ 6b99e6f405837d5cc289f1791964c097225c769a125399f491ea16bb1c92454628b3f02559c71c610b4927253052bdea56dd003768f06bb4e31a08fe70bb1ad1  0026-DEBUG-modem-hog-AP2MDM-GPIOs-MHI-debug-output.patch
+-3a63104f8d344a0fff3d81996a848ac8125f6ccda3abc0ff076a78cddd156c63f6dcd4d2c2a28f1506fd0bd2fa3e3e435a497d68372571fc70d4bf15c499637d  0027-DEBUG-mhi-pci_generic-drop-IP_HW0-channels.patch
+ 56ff801d6464218f0b6c582bbc564911c75bcbfa29b71281c5a386cc02ba631b9b63c44a98cd84b0208ae626209bb70c197be7a367271c28267b4f90449e52c7  0028-DEBUG-mhi-pci_generic-collect-SDX55-RAM-dumps.patch
+ 39781b113e2a2b65301c5ea123db2946c31243975a29c0fa9e2a11a0c8894a668334e6c6a25c6910fa4bcc4b28bc4ad8f7498d09ade372aa2847b36a36a36b56  0029-DEBUG-mhi-keep-SAHARA-in-mission-mode.patch
+ f217db62469d4cbe514a02d5074bf6b847305f85f79ce943bf37fc5b20f4357bf0a0c6e2442a028f8b21f959fa22a55f5b29894132decceb7eb7a00a05e9ba5f  0030-DEBUG-mhi-sahara-receive-the-SDX55-EFS-sync.patch
++0c04fe9621875de9b29d726da62ff76d3d1b6c23e57ddcdbb431a297a346aa9b19024feac267678238250129c51ce56f9401dca378581086a5f4eb90803043cb  0031-WIP-bus-mhi-host-pci_generic-No-doorbell-burst-on-SD.patch
+ "
+-- 
+2.43.0
+
