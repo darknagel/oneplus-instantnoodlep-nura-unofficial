@@ -88,6 +88,10 @@ nmcli con add type gsm ifname '*' con-name mobile apn YOUR_APN
 The connection then comes back on its own after the PIN at every boot. On congstar, use
 `apn internet.v6.telekom gsm.username congstar gsm.password cs`.
 
+With a desktop, you can also enter the PIN and APN in the settings. If Plasma Mobile then
+keeps asking for the APN password, save it in the connection:
+`nmcli con mod NAME gsm.password-flags 0 gsm.password YOURPASSWORD`
+
 Send an SMS, with the country code in the number:
 
 ```sh
