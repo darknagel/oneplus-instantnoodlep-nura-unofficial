@@ -312,12 +312,41 @@ position; in continuous mode it scans again when the sharpness changes.
 
 ### Enable the sensors
 
-The sensor DSP needs OnePlus' sensor libraries and configuration (`hexagonfs`), which are
-not redistributable. Build `firmware-oneplus-instantnoodlep-hexagonfs` yourself (section 5)
-from your own phone's stock firmware and install it with
-`apk add --allow-untrusted firmware-oneplus-instantnoodlep-hexagonfs-*.apk`, then reboot.
+The accelerometer, light and proximity sensors need OnePlus' own files. They may not be
+redistributed, so you take them from your own phone. It takes a few minutes.
 
----
+1. **Before flashing Linux**, with Android running and USB debugging on, save the sensor
+   configuration on your PC. Flashing erases it.
+
+   ```sh
+   adb pull /vendor/etc/sensors vendor
+   adb pull /odm/etc/sensor odm
+   ```
+
+2. After flashing, copy both folders to the phone (over USB, password `root`):
+
+   ```sh
+   ssh root@172.16.42.1 mkdir -p /root/android-sensors
+   scp -r vendor odm root@172.16.42.1:/root/android-sensors/
+   ```
+
+3. On the phone, as root. The script also copies the DSP files from the `dsp_a` partition.
+
+   ```sh
+   setup-sensors /root/android-sensors
+   reboot
+   ```
+
+4. Check it:
+
+   ```sh
+   ssccli --sensor accelerometer --timeout 3
+   ```
+
+Already on Linux without these folders? Get `vendor.img` and `odm.img` from a full OxygenOS
+update (not tested). If you built your own image, the script is in
+[`sensors/`](sensors/) and needs `hexagonrpcd-tools`, `libssc` and `iio-sensor-proxy`.
+Do not share these files.
 
 ## 5. Build it yourself
 
