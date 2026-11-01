@@ -4,7 +4,8 @@
 network registration, mobile data (IPv6 only, up to 90 Mbit/s, tested on congstar),
 SMS send and receive.
 **Not done:** calls.
-Tested on one IN2023 (EU). Not in the prebuilt image.
+Tested on one IN2023 (EU). The prebuilt image has all of this; the setup below is
+only for your own build.
 
 ## Setup
 
