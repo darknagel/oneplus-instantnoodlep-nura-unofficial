@@ -148,7 +148,8 @@ Do not share these files.
 ### NFC
 
 ```sh
-systemctl enable --now neard
+systemctl add-wants multi-user.target neard
+systemctl start neard
 nfctool --device nfc0 --enable
 nfctool --device nfc0 --poll=Initiator
 ```
