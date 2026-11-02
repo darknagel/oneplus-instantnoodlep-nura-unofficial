@@ -5,6 +5,8 @@ a Linux phone running [Nura](https://nura.eco) (formerly postmarketOS) on a main
 Unofficial and independent: not affiliated with or supported by the Nura project. Tool and
 package names still say `postmarketos`, so the commands here do too.
 
+Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-linux-nura-formerly-postmarketos-for-oneplus-8-pro-instantnoodlep.4807386/)
+
 > **AI disclosure:** These patches and the image were made with substantial help from an AI
 > coding assistant (Claude). Everything marked "works" was tested on one real device.
 > Nura's policy forbids AI-assisted contributions, so nothing here is submitted there. If
