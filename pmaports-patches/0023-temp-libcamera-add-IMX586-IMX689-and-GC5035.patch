@@ -1,0 +1,376 @@
+From bb1b037ef6e416d85bcdba2ee315b9ed65b97e9d Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 23:02:35 +0100
+Subject: [PATCH 23/23] temp/libcamera: add IMX586, IMX689 and GC5035
+
+Add the sensor helpers and tuning files, and shorten the autofocus scan.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ..._sensor-Add-IMX586-IMX689-and-GC5035.patch | 120 ++++++++++++++++++
+ .../0013-ipa-simple-af-Shorten-the-scan.patch | 100 +++++++++++++++
+ temp/libcamera/APKBUILD                       |  12 +-
+ temp/libcamera/gc5035.yaml                    |  11 ++
+ temp/libcamera/imx586.yaml                    |  19 +++
+ temp/libcamera/imx689.yaml                    |  19 +++
+ 6 files changed, 280 insertions(+), 1 deletion(-)
+ create mode 100644 temp/libcamera/0012-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch
+ create mode 100644 temp/libcamera/0013-ipa-simple-af-Shorten-the-scan.patch
+ create mode 100755 temp/libcamera/gc5035.yaml
+ create mode 100755 temp/libcamera/imx586.yaml
+ create mode 100755 temp/libcamera/imx689.yaml
+
+diff --git a/temp/libcamera/0012-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch b/temp/libcamera/0012-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch
+new file mode 100644
+index 0000000000..c2a0885247
+--- /dev/null
++++ b/temp/libcamera/0012-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch
+@@ -0,0 +1,120 @@
++From 38846149d1c9e3292c8e6af24987ebbf662ba1e7 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 2 Nov 2026 22:09:00 +0100
++Subject: [PATCH] libcamera: camera_sensor: Add IMX586, IMX689 and GC5035
++ properties and helpers
++
++Add the camera sensor properties and helpers for the ultrawide, main and
++colour filter cameras of the OnePlus 8 Pro. The black level of 64 at 10
++bits comes from the camera module data.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ src/ipa/libipa/camera_sensor_helper.cpp       | 36 +++++++++++++++++++
++ .../sensor/camera_sensor_properties.cpp       | 36 +++++++++++++++++++
++ 2 files changed, 72 insertions(+)
++
++diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
++index ff022dc..81ee8f7 100644
++--- a/src/ipa/libipa/camera_sensor_helper.cpp
+++++ b/src/ipa/libipa/camera_sensor_helper.cpp
++@@ -542,6 +542,18 @@ public:
++ };
++ REGISTER_CAMERA_SENSOR_HELPER("imx214", CameraSensorHelperImx214)
++ 
+++class CameraSensorHelperGc5035 : public CameraSensorHelper
+++{
+++public:
+++	CameraSensorHelperGc5035()
+++	{
+++		/* The code is close to a linear index, 64 at 10bits. */
+++		blackLevel_ = 4096;
+++		gain_ = AnalogueGainLinear{ 1, 1, 0, 1 };
+++	}
+++};
+++REGISTER_CAMERA_SENSOR_HELPER("gc5035", CameraSensorHelperGc5035)
+++
++ class CameraSensorHelperImx219 : public CameraSensorHelper
++ {
++ public:
++@@ -651,6 +663,30 @@ public:
++ };
++ REGISTER_CAMERA_SENSOR_HELPER("imx471", CameraSensorHelperImx471)
++ 
+++class CameraSensorHelperImx586 : public CameraSensorHelper
+++{
+++public:
+++	CameraSensorHelperImx586()
+++	{
+++		/* From the camera module data: 64 at 10bits. */
+++		blackLevel_ = 4096;
+++		gain_ = AnalogueGainLinear{ 0, 1024, -1, 1024 };
+++	}
+++};
+++REGISTER_CAMERA_SENSOR_HELPER("imx586", CameraSensorHelperImx586)
+++
+++class CameraSensorHelperImx689 : public CameraSensorHelper
+++{
+++public:
+++	CameraSensorHelperImx689()
+++	{
+++		/* From the camera module data: 64 at 10bits. */
+++		blackLevel_ = 4096;
+++		gain_ = AnalogueGainLinear{ 0, 1024, -1, 1024 };
+++	}
+++};
+++REGISTER_CAMERA_SENSOR_HELPER("imx689", CameraSensorHelperImx689)
+++
++ class CameraSensorHelperImx462 : public CameraSensorHelperImx290
++ {
++ };
++diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
++index eb5c24b..0120a03 100644
++--- a/src/libcamera/sensor/camera_sensor_properties.cpp
+++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
++@@ -303,6 +303,42 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
++ 				.hblankDelay = 2
++ 			},
++ 		} },
+++		{ "imx586", {
+++			.unitCellSize = { 800, 800 },
+++			.testPatternModes = {
+++				{ controls::draft::TestPatternModeOff, 0 },
+++			},
+++			.sensorDelays = {
+++				.exposureDelay = 2,
+++				.gainDelay = 2,
+++				.vblankDelay = 2,
+++				.hblankDelay = 2
+++			},
+++		} },
+++		{ "imx689", {
+++			.unitCellSize = { 1120, 1120 },
+++			.testPatternModes = {
+++				{ controls::draft::TestPatternModeOff, 0 },
+++			},
+++			.sensorDelays = {
+++				.exposureDelay = 2,
+++				.gainDelay = 2,
+++				.vblankDelay = 2,
+++				.hblankDelay = 2
+++			},
+++		} },
+++		{ "gc5035", {
+++			.unitCellSize = { 1120, 1120 },
+++			.testPatternModes = {
+++				{ controls::draft::TestPatternModeOff, 0 },
+++			},
+++			.sensorDelays = {
+++				.exposureDelay = 2,
+++				.gainDelay = 2,
+++				.vblankDelay = 2,
+++				.hblankDelay = 2
+++			},
+++		} },
++ 		{ "imx462", {
++ 			.unitCellSize = { 2900, 2900 },
++ 			.testPatternModes = {},
++-- 
++2.43.0
++
+diff --git a/temp/libcamera/0013-ipa-simple-af-Shorten-the-scan.patch b/temp/libcamera/0013-ipa-simple-af-Shorten-the-scan.patch
+new file mode 100644
+index 0000000000..1ea7ef16c5
+--- /dev/null
++++ b/temp/libcamera/0013-ipa-simple-af-Shorten-the-scan.patch
+@@ -0,0 +1,100 @@
++From 233438e49e406309dea1ec1bed5ab6875def2d18 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 2 Nov 2026 22:46:28 +0100
++Subject: [PATCH] ipa: simple: af: Shorten the scan
++
++Make the early stop of the coarse scan tunable, so that lenses with a
++flat curve past the peak stop as well, and only search half a coarse step
++around the peak in the fine scan. The coarse scan already measured the
++outer positions. Only stop early after a clear peak, the noise on a flat
++part of the curve looks like falling sharpness.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ src/ipa/simple/algorithms/af.cpp | 22 +++++++++++++++++-----
++ src/ipa/simple/algorithms/af.h   |  4 ++++
++ 2 files changed, 21 insertions(+), 5 deletions(-)
++
++diff --git a/src/ipa/simple/algorithms/af.cpp b/src/ipa/simple/algorithms/af.cpp
++index 4c2aa79..691da17 100755
++--- a/src/ipa/simple/algorithms/af.cpp
+++++ b/src/ipa/simple/algorithms/af.cpp
++@@ -47,6 +47,9 @@ int Af::init(IPAContext &context, const ValueNode &tuningData)
++ 	changeThreshold_ = tuningData["changeThreshold"].get<double>(changeThreshold_);
++ 	changeCount_ = tuningData["changeCount"].get<uint32_t>(changeCount_);
++ 	settleFrames_ = tuningData["settleFrames"].get<uint32_t>(settleFrames_);
+++	stopRatio_ = tuningData["stopRatio"].get<double>(stopRatio_);
+++	stopCount_ = tuningData["stopCount"].get<uint32_t>(stopCount_);
+++	minPeak_ = tuningData["minPeak"].get<double>(minPeak_);
++ 
++ 	context.ctrlMap[&controls::AfMode] =
++ 		ControlInfo(controls::AfModeValues,
++@@ -135,6 +138,7 @@ void Af::startScan(IPAContext &context)
++ 	scanEnd_ = af.max;
++ 	bestSharpness_ = 0.0;
++ 	bestPosition_ = af.min;
+++	minSharpness_ = 0.0;
++ 	belowBest_ = 0;
++ 	changed_ = 0;
++ 
++@@ -145,11 +149,14 @@ void Af::startScan(IPAContext &context)
++ 
++ void Af::record(int32_t position, double sharpness)
++ {
+++	if (minSharpness_ == 0.0 || sharpness < minSharpness_)
+++		minSharpness_ = sharpness;
+++
++ 	if (sharpness > bestSharpness_) {
++ 		bestSharpness_ = sharpness;
++ 		bestPosition_ = position;
++ 		belowBest_ = 0;
++-	} else if (sharpness < bestSharpness_ * 0.7) {
+++	} else if (sharpness < bestSharpness_ * stopRatio_) {
++ 		belowBest_++;
++ 	}
++ }
++@@ -219,17 +226,22 @@ void Af::process(IPAContext &context,
++ 		LOG(IPASoftAf, Debug)
++ 			<< "Coarse " << position_ << ": " << sharpness;
++ 
++-		/* Stop early once well past a clear peak. */
++-		if (position_ + step_ <= scanEnd_ && belowBest_ < 3) {
+++		/*
+++		 * Stop early once well past a clear peak. Without a peak the
+++		 * curve is flat and its noise says nothing, so keep scanning.
+++		 */
+++		if (position_ + step_ <= scanEnd_ &&
+++		    (belowBest_ < stopCount_ ||
+++		     bestSharpness_ < minSharpness_ * minPeak_)) {
++ 			moveTo(context, position_ + step_);
++ 			return;
++ 		}
++ 
++ 		state_ = State::Fine;
++ 		step_ = std::max<int32_t>(coarseStep_ * 2 / fineSteps_, 1);
++-		scanEnd_ = std::min(bestPosition_ + coarseStep_,
+++		scanEnd_ = std::min(bestPosition_ + coarseStep_ / 2,
++ 				    context.configuration.af.max);
++-		moveTo(context, bestPosition_ - coarseStep_);
+++		moveTo(context, bestPosition_ - coarseStep_ / 2);
++ 		return;
++ 
++ 	case State::Fine:
++diff --git a/src/ipa/simple/algorithms/af.h b/src/ipa/simple/algorithms/af.h
++index e7bcfa3..8e636b8 100755
++--- a/src/ipa/simple/algorithms/af.h
+++++ b/src/ipa/simple/algorithms/af.h
++@@ -46,6 +46,10 @@ private:
++ 	double changeThreshold_ = 0.3;
++ 	unsigned int changeCount_ = 3;
++ 	unsigned int settleFrames_ = 1;
+++	double stopRatio_ = 0.7;
+++	unsigned int stopCount_ = 3;
+++	double minPeak_ = 1.1;
+++	double minSharpness_ = 0.0;
++ 
++ 	controls::AfModeEnum mode_ = controls::AfModeContinuous;
++ 	controls::AfStateEnum afState_ = controls::AfStateIdle;
++-- 
++2.43.0
++
+diff --git a/temp/libcamera/APKBUILD b/temp/libcamera/APKBUILD
+index bedce85fe1..4d4a709745 100644
+--- a/temp/libcamera/APKBUILD
++++ b/temp/libcamera/APKBUILD
+@@ -3,7 +3,7 @@ maintainer="Robert Mader <robert.mader@collabora.com>"
+ pkgname=libcamera
+ _pkgver=0.7.2
+ pkgver=9999$_pkgver
+-pkgrel=8
++pkgrel=12
+ pkgdesc="Linux camera framework"
+ url="https://libcamera.org/"
+ arch="all"
+@@ -51,7 +51,10 @@ _tuning_files="
+ 	imx363.yaml
+ 	imx371.yaml
+ 	imx376.yaml
++	gc5035.yaml
+ 	imx471.yaml
++	imx586.yaml
++	imx689.yaml
+ 	imx519.yaml
+ 	imx800.yaml
+ 	imx858.yaml
+@@ -71,6 +74,8 @@ source="https://gitlab.freedesktop.org/camera/libcamera/-/archive/v$_pkgver/libc
+ 	0009-libcamera-software_isp-Add-a-sharpness-measure-to-th.patch
+ 	0010-libcamera-simple-Pass-focus-lens-controls-to-and-fro.patch
+ 	0011-ipa-simple-Add-contrast-detection-autofocus.patch
++	0012-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch
++	0013-ipa-simple-af-Shorten-the-scan.patch
+ 	qcam.desktop
+ 	$_tuning_files
+ 	"
+@@ -196,13 +201,18 @@ b317cdc96f61682ee0bf26dfb7c4d6441db9a9c5b93ab53528121a8cd44862b3d59cbaa3881bb083
+ cb846ead7df66ea38b9e0a75465ad667565d2210fd5de4fecc4e0f88c5b32924e8fae1c5b7cccf1439a44e83a035df1efc7243f73daefd35e9d4b53697f63c8a  0009-libcamera-software_isp-Add-a-sharpness-measure-to-th.patch
+ 59d5ed22ac8abf837e784de9954b4a3b93ffbae3541d935f8785492d3a8b4c67487d64049c56afc7e9295fe64a930e1cb318900aba2d753936d31d23567281fe  0010-libcamera-simple-Pass-focus-lens-controls-to-and-fro.patch
+ 3fb3dd9136e22fd592b1cc5b75bd2c695bb0a19537fa6979a873ff9058860566b64c50e44331fc7d68a4c251d9cc1b52bf30b4d81a2d6df54dc6b6d3e4aafed7  0011-ipa-simple-Add-contrast-detection-autofocus.patch
++d4438919145a298ad1c31e3d39bc6c020b1d0b820bc378a7a1f8785c9e8ab227970c3a61e4db3159a3f06123ca8e7ab01abca34e8558311e023956c6f6de72a8  0012-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch
++84b7e546e555c847ce2d1256076e954ef657b178d4fc43901f1f2ce191947d0299e93f2c5bf88ea270b63e33ef624f0e2838055d6a7912c2203044adb86ffe18  0013-ipa-simple-af-Shorten-the-scan.patch
+ 22167a4eceb6d1b40b0b7c45fdf116c71684f5340de7f767535cb8e160ad9d2ae0f00cb3d461f73a344520a48a4641cf46226841d78bee06bfbfd2a91337f754  qcam.desktop
+ 2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  hi846.yaml
+ 4942edd551dcf51630246f71e600c17760d3574d5d45e5530d6cfeefe2c9ab1a812fbe220f8e89d92e19a499c592b2507c801ca4eb74cd15fcecb60bff5c650b  imx355.yaml
+ 285c6d0d712df341c0117c3762ddc139f53f44e6be36c3388d1a62696429175e2916f392163131e21f410c3676f02f5d125f375171f45f8d82ad278aa5076c62  imx363.yaml
+ 1b1f6d36311bee38006eaa1e380571fc9fbd5625fd72f63309426d3651483cef52a176d56cdebd2ce46cbb264684ede186740df169027d2bf27d0f3057da2f86  imx371.yaml
+ 1b1f6d36311bee38006eaa1e380571fc9fbd5625fd72f63309426d3651483cef52a176d56cdebd2ce46cbb264684ede186740df169027d2bf27d0f3057da2f86  imx376.yaml
++2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  gc5035.yaml
+ 2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  imx471.yaml
++8cd6fe7f640e0f7cd691a8c999e892688320cb31ec38988707fa3fada511951499cba60a5baea59ca39912c90c00248103c6eaba7b75f47bc45fb5191bfdd210  imx586.yaml
++8cd6fe7f640e0f7cd691a8c999e892688320cb31ec38988707fa3fada511951499cba60a5baea59ca39912c90c00248103c6eaba7b75f47bc45fb5191bfdd210  imx689.yaml
+ 1b1f6d36311bee38006eaa1e380571fc9fbd5625fd72f63309426d3651483cef52a176d56cdebd2ce46cbb264684ede186740df169027d2bf27d0f3057da2f86  imx519.yaml
+ 55dab9dcb9b1982143b9d63e4e51138c5bffd7c8f4a8e4e122750b3ad9d475446956bc297d9f564819ade4be75a575d06633a064e14f8ba3ef77986783c5f067  imx800.yaml
+ 55dab9dcb9b1982143b9d63e4e51138c5bffd7c8f4a8e4e122750b3ad9d475446956bc297d9f564819ade4be75a575d06633a064e14f8ba3ef77986783c5f067  imx858.yaml
+diff --git a/temp/libcamera/gc5035.yaml b/temp/libcamera/gc5035.yaml
+new file mode 100755
+index 0000000000..e903d96a8f
+--- /dev/null
++++ b/temp/libcamera/gc5035.yaml
+@@ -0,0 +1,11 @@
++# SPDX-License-Identifier: CC0-1.0
++%YAML 1.1
++---
++version: 1
++algorithms:
++  - BlackLevel:
++      blackLevel: 4096
++  - Awb:
++  - Adjust:
++  - Agc:
++...
+diff --git a/temp/libcamera/imx586.yaml b/temp/libcamera/imx586.yaml
+new file mode 100755
+index 0000000000..7ad39396fd
+--- /dev/null
++++ b/temp/libcamera/imx586.yaml
+@@ -0,0 +1,19 @@
++# SPDX-License-Identifier: CC0-1.0
++%YAML 1.1
++---
++version: 1
++algorithms:
++  - BlackLevel:
++      blackLevel: 4096
++  - Awb:
++  - Adjust:
++  - Agc:
++  - Af:
++      coarseStep: 384
++      fineSteps: 4
++      warmup: 4
++      stopRatio: 0.95
++      stopCount: 2
++      changeThreshold: 0.1
++      changeCount: 2
++...
+diff --git a/temp/libcamera/imx689.yaml b/temp/libcamera/imx689.yaml
+new file mode 100755
+index 0000000000..7ad39396fd
+--- /dev/null
++++ b/temp/libcamera/imx689.yaml
+@@ -0,0 +1,19 @@
++# SPDX-License-Identifier: CC0-1.0
++%YAML 1.1
++---
++version: 1
++algorithms:
++  - BlackLevel:
++      blackLevel: 4096
++  - Awb:
++  - Adjust:
++  - Agc:
++  - Af:
++      coarseStep: 384
++      fineSteps: 4
++      warmup: 4
++      stopRatio: 0.95
++      stopCount: 2
++      changeThreshold: 0.1
++      changeCount: 2
++...
+-- 
+2.43.0
+

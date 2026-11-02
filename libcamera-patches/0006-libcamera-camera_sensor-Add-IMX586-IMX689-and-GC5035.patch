@@ -1,0 +1,120 @@
+From 38846149d1c9e3292c8e6af24987ebbf662ba1e7 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 22:09:00 +0100
+Subject: [PATCH 6/7] libcamera: camera_sensor: Add IMX586, IMX689 and GC5035
+ properties and helpers
+
+Add the camera sensor properties and helpers for the ultrawide, main and
+colour filter cameras of the OnePlus 8 Pro. The black level of 64 at 10
+bits comes from the camera module data.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ src/ipa/libipa/camera_sensor_helper.cpp       | 36 +++++++++++++++++++
+ .../sensor/camera_sensor_properties.cpp       | 36 +++++++++++++++++++
+ 2 files changed, 72 insertions(+)
+
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+index ff022dc..81ee8f7 100644
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -542,6 +542,18 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("imx214", CameraSensorHelperImx214)
+ 
++class CameraSensorHelperGc5035 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperGc5035()
++	{
++		/* The code is close to a linear index, 64 at 10bits. */
++		blackLevel_ = 4096;
++		gain_ = AnalogueGainLinear{ 1, 1, 0, 1 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("gc5035", CameraSensorHelperGc5035)
++
+ class CameraSensorHelperImx219 : public CameraSensorHelper
+ {
+ public:
+@@ -651,6 +663,30 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("imx471", CameraSensorHelperImx471)
+ 
++class CameraSensorHelperImx586 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperImx586()
++	{
++		/* From the camera module data: 64 at 10bits. */
++		blackLevel_ = 4096;
++		gain_ = AnalogueGainLinear{ 0, 1024, -1, 1024 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("imx586", CameraSensorHelperImx586)
++
++class CameraSensorHelperImx689 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperImx689()
++	{
++		/* From the camera module data: 64 at 10bits. */
++		blackLevel_ = 4096;
++		gain_ = AnalogueGainLinear{ 0, 1024, -1, 1024 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("imx689", CameraSensorHelperImx689)
++
+ class CameraSensorHelperImx462 : public CameraSensorHelperImx290
+ {
+ };
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+index eb5c24b..0120a03 100644
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -303,6 +303,42 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 				.hblankDelay = 2
+ 			},
+ 		} },
++		{ "imx586", {
++			.unitCellSize = { 800, 800 },
++			.testPatternModes = {
++				{ controls::draft::TestPatternModeOff, 0 },
++			},
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
++		{ "imx689", {
++			.unitCellSize = { 1120, 1120 },
++			.testPatternModes = {
++				{ controls::draft::TestPatternModeOff, 0 },
++			},
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
++		{ "gc5035", {
++			.unitCellSize = { 1120, 1120 },
++			.testPatternModes = {
++				{ controls::draft::TestPatternModeOff, 0 },
++			},
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
+ 		{ "imx462", {
+ 			.unitCellSize = { 2900, 2900 },
+ 			.testPatternModes = {},
+-- 
+2.43.0
+

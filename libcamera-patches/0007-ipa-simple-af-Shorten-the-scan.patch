@@ -1,0 +1,100 @@
+From 233438e49e406309dea1ec1bed5ab6875def2d18 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 22:46:28 +0100
+Subject: [PATCH 7/7] ipa: simple: af: Shorten the scan
+
+Make the early stop of the coarse scan tunable, so that lenses with a
+flat curve past the peak stop as well, and only search half a coarse step
+around the peak in the fine scan. The coarse scan already measured the
+outer positions. Only stop early after a clear peak, the noise on a flat
+part of the curve looks like falling sharpness.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ src/ipa/simple/algorithms/af.cpp | 22 +++++++++++++++++-----
+ src/ipa/simple/algorithms/af.h   |  4 ++++
+ 2 files changed, 21 insertions(+), 5 deletions(-)
+
+diff --git a/src/ipa/simple/algorithms/af.cpp b/src/ipa/simple/algorithms/af.cpp
+index 4c2aa79..691da17 100755
+--- a/src/ipa/simple/algorithms/af.cpp
++++ b/src/ipa/simple/algorithms/af.cpp
+@@ -47,6 +47,9 @@ int Af::init(IPAContext &context, const ValueNode &tuningData)
+ 	changeThreshold_ = tuningData["changeThreshold"].get<double>(changeThreshold_);
+ 	changeCount_ = tuningData["changeCount"].get<uint32_t>(changeCount_);
+ 	settleFrames_ = tuningData["settleFrames"].get<uint32_t>(settleFrames_);
++	stopRatio_ = tuningData["stopRatio"].get<double>(stopRatio_);
++	stopCount_ = tuningData["stopCount"].get<uint32_t>(stopCount_);
++	minPeak_ = tuningData["minPeak"].get<double>(minPeak_);
+ 
+ 	context.ctrlMap[&controls::AfMode] =
+ 		ControlInfo(controls::AfModeValues,
+@@ -135,6 +138,7 @@ void Af::startScan(IPAContext &context)
+ 	scanEnd_ = af.max;
+ 	bestSharpness_ = 0.0;
+ 	bestPosition_ = af.min;
++	minSharpness_ = 0.0;
+ 	belowBest_ = 0;
+ 	changed_ = 0;
+ 
+@@ -145,11 +149,14 @@ void Af::startScan(IPAContext &context)
+ 
+ void Af::record(int32_t position, double sharpness)
+ {
++	if (minSharpness_ == 0.0 || sharpness < minSharpness_)
++		minSharpness_ = sharpness;
++
+ 	if (sharpness > bestSharpness_) {
+ 		bestSharpness_ = sharpness;
+ 		bestPosition_ = position;
+ 		belowBest_ = 0;
+-	} else if (sharpness < bestSharpness_ * 0.7) {
++	} else if (sharpness < bestSharpness_ * stopRatio_) {
+ 		belowBest_++;
+ 	}
+ }
+@@ -219,17 +226,22 @@ void Af::process(IPAContext &context,
+ 		LOG(IPASoftAf, Debug)
+ 			<< "Coarse " << position_ << ": " << sharpness;
+ 
+-		/* Stop early once well past a clear peak. */
+-		if (position_ + step_ <= scanEnd_ && belowBest_ < 3) {
++		/*
++		 * Stop early once well past a clear peak. Without a peak the
++		 * curve is flat and its noise says nothing, so keep scanning.
++		 */
++		if (position_ + step_ <= scanEnd_ &&
++		    (belowBest_ < stopCount_ ||
++		     bestSharpness_ < minSharpness_ * minPeak_)) {
+ 			moveTo(context, position_ + step_);
+ 			return;
+ 		}
+ 
+ 		state_ = State::Fine;
+ 		step_ = std::max<int32_t>(coarseStep_ * 2 / fineSteps_, 1);
+-		scanEnd_ = std::min(bestPosition_ + coarseStep_,
++		scanEnd_ = std::min(bestPosition_ + coarseStep_ / 2,
+ 				    context.configuration.af.max);
+-		moveTo(context, bestPosition_ - coarseStep_);
++		moveTo(context, bestPosition_ - coarseStep_ / 2);
+ 		return;
+ 
+ 	case State::Fine:
+diff --git a/src/ipa/simple/algorithms/af.h b/src/ipa/simple/algorithms/af.h
+index e7bcfa3..8e636b8 100755
+--- a/src/ipa/simple/algorithms/af.h
++++ b/src/ipa/simple/algorithms/af.h
+@@ -46,6 +46,10 @@ private:
+ 	double changeThreshold_ = 0.3;
+ 	unsigned int changeCount_ = 3;
+ 	unsigned int settleFrames_ = 1;
++	double stopRatio_ = 0.7;
++	unsigned int stopCount_ = 3;
++	double minPeak_ = 1.1;
++	double minSharpness_ = 0.0;
+ 
+ 	controls::AfModeEnum mode_ = controls::AfModeContinuous;
+ 	controls::AfStateEnum afState_ = controls::AfStateIdle;
+-- 
+2.43.0
+

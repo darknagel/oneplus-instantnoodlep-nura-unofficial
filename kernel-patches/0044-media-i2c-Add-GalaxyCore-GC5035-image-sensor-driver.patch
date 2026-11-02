@@ -1,0 +1,1011 @@
+From 08a292d0212dcc71a048a96485d4684e9d07e079 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 23:00:51 +0100
+Subject: [PATCH 44/45] media: i2c: Add GalaxyCore GC5035 image sensor driver
+
+Add a driver for the GalaxyCore GC5035, the colour filter camera of the
+OnePlus 8 Pro, which also sees near infrared. It uses two D-PHY lanes and
+a 19.2 MHz clock. The register settings come from the camera module data
+of the phone.
+
+The analogue gain control is an index into the gain table of the sensor,
+and only the full resolution mode is supported.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/media/i2c/Kconfig  |  10 +
+ drivers/media/i2c/Makefile |   1 +
+ drivers/media/i2c/gc5035.c | 948 +++++++++++++++++++++++++++++++++++++
+ 3 files changed, 959 insertions(+)
+ create mode 100644 drivers/media/i2c/gc5035.c
+
+diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
+index 9d7764ad4..e5375804b 100644
+--- a/drivers/media/i2c/Kconfig
++++ b/drivers/media/i2c/Kconfig
+@@ -307,6 +307,16 @@ config VIDEO_IMX586
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called imx586.
+ 
++config VIDEO_GC5035
++	tristate "GalaxyCore GC5035 sensor support"
++	select V4L2_CCI_I2C
++	help
++	  This is a Video4Linux2 sensor driver for the GalaxyCore
++	  GC5035 camera.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called gc5035.
++
+ config VIDEO_IMX689
+ 	tristate "Sony IMX689 sensor support"
+ 	select V4L2_CCI_I2C
+diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
+index eb984cfc0..a3b2d75a0 100644
+--- a/drivers/media/i2c/Makefile
++++ b/drivers/media/i2c/Makefile
+@@ -64,6 +64,7 @@ obj-$(CONFIG_VIDEO_IMX415) += imx415.o
+ obj-$(CONFIG_VIDEO_IMX471) += imx471.o
+ obj-$(CONFIG_VIDEO_IMX689) += imx689.o
+ obj-$(CONFIG_VIDEO_IMX586) += imx586.o
++obj-$(CONFIG_VIDEO_GC5035) += gc5035.o
+ obj-$(CONFIG_VIDEO_IR_I2C) += ir-kbd-i2c.o
+ obj-$(CONFIG_VIDEO_ISL7998X) += isl7998x.o
+ obj-$(CONFIG_VIDEO_KS0127) += ks0127.o
+diff --git a/drivers/media/i2c/gc5035.c b/drivers/media/i2c/gc5035.c
+new file mode 100644
+index 000000000..5b3e8a86d
+--- /dev/null
++++ b/drivers/media/i2c/gc5035.c
+@@ -0,0 +1,948 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * GalaxyCore GC5035 image sensor driver
++ *
++ * The register settings are taken from the camera module data of the
++ * OnePlus 8 Pro, which uses the GC5035 as colour filter camera with a 19.2 MHz
++ * MCLK and two CSI-2 D-PHY data lanes.
++ */
++
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/pm_runtime.h>
++#include <linux/regulator/consumer.h>
++#include <linux/units.h>
++#include <media/v4l2-cci.h>
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-fwnode.h>
++
++#define GC5035_MCLK_FREQ		(19200 * HZ_PER_KHZ)
++#define GC5035_DATA_LANES		2
++
++#define GC5035_REG_CHIP_ID		CCI_REG16(0xf0)
++#define GC5035_CHIP_ID			0x5035
++
++#define GC5035_REG_PAGE			CCI_REG8(0xfe)
++
++#define GC5035_REG_MODE_SELECT		CCI_REG8(0x3e)
++#define GC5035_MODE_STANDBY		0x01
++#define GC5035_MODE_STREAMING		0x91
++
++#define GC5035_REG_EXPOSURE		CCI_REG16(0x03)
++#define GC5035_EXPOSURE_MIN		4
++#define GC5035_EXPOSURE_STEP		1
++#define GC5035_EXPOSURE_MARGIN		16
++#define GC5035_EXPOSURE_DEFAULT		1000
++
++/* Analogue gain is an index into the gain table of the sensor */
++#define GC5035_REG_AGAIN		CCI_REG8(0xb6)
++#define GC5035_AGAIN_MIN		0
++#define GC5035_AGAIN_MAX		16
++#define GC5035_AGAIN_STEP		1
++#define GC5035_AGAIN_DEFAULT		0
++
++#define GC5035_REG_VTS			CCI_REG16(0x41)
++#define GC5035_VTS_MAX			0x3fff
++
++
++#define GC5035_NATIVE_WIDTH		2592
++#define GC5035_NATIVE_HEIGHT		1944
++
++#define to_gc5035(_sd)			container_of(_sd, struct gc5035, sd)
++
++static const s64 gc5035_link_freq_menu[] = {
++	438000000,
++};
++
++struct gc5035_reg_list {
++	const struct cci_reg_sequence *regs;
++	unsigned int num_regs;
++};
++
++struct gc5035_mode {
++	u32 width;			/* Frame width in pixels */
++	u32 height;			/* Frame height in pixels */
++	u32 hts;			/* Horizontal timing size */
++	u32 vts;			/* Default vertical timing size */
++	u32 link_freq_index;		/* Index into gc5035_link_freq_menu */
++	u64 pixel_rate;			/* Pixel rate matching hts and vts */
++	struct v4l2_rect crop;		/* Analogue crop rectangle */
++
++	const struct gc5035_reg_list reg_list;	/* Sensor register setting */
++};
++
++static const char * const gc5035_test_pattern_menu[] = {
++	"Disabled",
++	"Solid colour",
++	"Colour bars",
++	"Fade to grey colour bars",
++	"PN9",
++};
++
++static const char * const gc5035_supply_names[] = {
++	"avdd",		/* Analog power */
++	"dvdd",		/* Digital core power */
++	"dovdd",	/* Digital I/O power */
++};
++
++#define GC5035_NUM_SUPPLIES	ARRAY_SIZE(gc5035_supply_names)
++
++struct gc5035 {
++	struct device *dev;
++	struct regmap *regmap;
++	struct clk *mclk;
++	struct gpio_desc *reset_gpio;
++	struct regulator_bulk_data supplies[GC5035_NUM_SUPPLIES];
++
++	struct v4l2_subdev sd;
++	struct media_pad pad;
++
++	struct v4l2_ctrl_handler ctrl_handler;
++	struct v4l2_ctrl *link_freq;
++	struct v4l2_ctrl *pixel_rate;
++	struct v4l2_ctrl *hblank;
++	struct v4l2_ctrl *vblank;
++	struct v4l2_ctrl *exposure;
++
++	const struct gc5035_mode *mode;
++};
++
++
++static const struct cci_reg_sequence gc5035_2592x1944_regs[] = {
++	{ CCI_REG8(0xfc), 0x01 },
++	{ CCI_REG8(0xf4), 0x40 },
++	{ CCI_REG8(0xf5), 0xe9 },
++	{ CCI_REG8(0xf6), 0x14 },
++	{ CCI_REG8(0xf8), 0x49 },
++	{ CCI_REG8(0xf9), 0x82 },
++	{ CCI_REG8(0xfa), 0x00 },
++	{ CCI_REG8(0xfc), 0x81 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0x36), 0x01 },
++	{ CCI_REG8(0xd3), 0x87 },
++	{ CCI_REG8(0x36), 0x00 },
++	{ CCI_REG8(0x33), 0x00 },
++	{ CCI_REG8(0xfe), 0x03 },
++	{ CCI_REG8(0x01), 0xe7 },
++	{ CCI_REG8(0xf7), 0x01 },
++	{ CCI_REG8(0xfc), 0x8f },
++	{ CCI_REG8(0xfc), 0x8f },
++	{ CCI_REG8(0xfc), 0x8e },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xee), 0x30 },
++	{ CCI_REG8(0x87), 0x18 },
++	{ CCI_REG8(0xfe), 0x01 },
++	{ CCI_REG8(0x8c), 0x90 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0x41), 0x07 },
++	{ CCI_REG8(0x42), 0xd8 },
++	{ CCI_REG8(0x05), 0x02 },
++	{ CCI_REG8(0x06), 0xda },
++	{ CCI_REG8(0x9d), 0x0c },
++	{ CCI_REG8(0x09), 0x00 },
++	{ CCI_REG8(0x0a), 0x04 },
++	{ CCI_REG8(0x0b), 0x00 },
++	{ CCI_REG8(0x0c), 0x03 },
++	{ CCI_REG8(0x0d), 0x07 },
++	{ CCI_REG8(0x0e), 0xa8 },
++	{ CCI_REG8(0x0f), 0x0a },
++	{ CCI_REG8(0x10), 0x30 },
++	{ CCI_REG8(0x11), 0x02 },
++	{ CCI_REG8(0x17), 0x80 },
++	{ CCI_REG8(0x19), 0x05 },
++	{ CCI_REG8(0xfe), 0x02 },
++	{ CCI_REG8(0x30), 0x03 },
++	{ CCI_REG8(0x31), 0x03 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xd9), 0xc0 },
++	{ CCI_REG8(0x1b), 0x20 },
++	{ CCI_REG8(0x21), 0x48 },
++	{ CCI_REG8(0x28), 0x22 },
++	{ CCI_REG8(0x29), 0x58 },
++	{ CCI_REG8(0x44), 0x20 },
++	{ CCI_REG8(0x4b), 0x10 },
++	{ CCI_REG8(0x4e), 0x1a },
++	{ CCI_REG8(0x50), 0x11 },
++	{ CCI_REG8(0x52), 0x33 },
++	{ CCI_REG8(0x53), 0x44 },
++	{ CCI_REG8(0x55), 0x10 },
++	{ CCI_REG8(0x5b), 0x11 },
++	{ CCI_REG8(0xc5), 0x02 },
++	{ CCI_REG8(0x8c), 0x1a },
++	{ CCI_REG8(0xfe), 0x02 },
++	{ CCI_REG8(0x33), 0x05 },
++	{ CCI_REG8(0x32), 0x38 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0x91), 0x80 },
++	{ CCI_REG8(0x92), 0x28 },
++	{ CCI_REG8(0x93), 0x20 },
++	{ CCI_REG8(0x95), 0xa0 },
++	{ CCI_REG8(0x96), 0xe0 },
++	{ CCI_REG8(0xd5), 0xfc },
++	{ CCI_REG8(0x97), 0x28 },
++	{ CCI_REG8(0x16), 0x0c },
++	{ CCI_REG8(0x1a), 0x1a },
++	{ CCI_REG8(0x1f), 0x11 },
++	{ CCI_REG8(0x20), 0x10 },
++	{ CCI_REG8(0x46), 0x83 },
++	{ CCI_REG8(0x4a), 0x04 },
++	{ CCI_REG8(0x54), 0x02 },
++	{ CCI_REG8(0x62), 0x00 },
++	{ CCI_REG8(0x72), 0x8f },
++	{ CCI_REG8(0x73), 0x89 },
++	{ CCI_REG8(0x7a), 0x05 },
++	{ CCI_REG8(0x7d), 0xcc },
++	{ CCI_REG8(0x90), 0x00 },
++	{ CCI_REG8(0xce), 0x18 },
++	{ CCI_REG8(0xd0), 0xb2 },
++	{ CCI_REG8(0xd2), 0x40 },
++	{ CCI_REG8(0xe6), 0xe0 },
++	{ CCI_REG8(0xfe), 0x02 },
++	{ CCI_REG8(0x12), 0x01 },
++	{ CCI_REG8(0x13), 0x01 },
++	{ CCI_REG8(0x14), 0x01 },
++	{ CCI_REG8(0x15), 0x02 },
++	{ CCI_REG8(0x22), 0x7c },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xfc), 0x88 },
++	{ CCI_REG8(0xfe), 0x10 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xfc), 0x8e },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xfc), 0x88 },
++	{ CCI_REG8(0xfe), 0x10 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xfc), 0x8e },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xb0), 0x6e },
++	{ CCI_REG8(0xb1), 0x01 },
++	{ CCI_REG8(0xb2), 0x00 },
++	{ CCI_REG8(0xb3), 0x00 },
++	{ CCI_REG8(0xb4), 0x00 },
++	{ CCI_REG8(0xb6), 0x00 },
++	{ CCI_REG8(0xfe), 0x01 },
++	{ CCI_REG8(0x53), 0x00 },
++	{ CCI_REG8(0x89), 0x03 },
++	{ CCI_REG8(0x60), 0x40 },
++	{ CCI_REG8(0xfe), 0x01 },
++	{ CCI_REG8(0x42), 0x21 },
++	{ CCI_REG8(0x49), 0x03 },
++	{ CCI_REG8(0x4a), 0xff },
++	{ CCI_REG8(0x4b), 0xc0 },
++	{ CCI_REG8(0x55), 0x00 },
++	{ CCI_REG8(0xfe), 0x01 },
++	{ CCI_REG8(0x41), 0x28 },
++	{ CCI_REG8(0x4c), 0x00 },
++	{ CCI_REG8(0x4d), 0x00 },
++	{ CCI_REG8(0x4e), 0x3c },
++	{ CCI_REG8(0x44), 0x08 },
++	{ CCI_REG8(0x48), 0x02 },
++	{ CCI_REG8(0xfe), 0x01 },
++	{ CCI_REG8(0x91), 0x00 },
++	{ CCI_REG8(0x92), 0x08 },
++	{ CCI_REG8(0x93), 0x00 },
++	{ CCI_REG8(0x94), 0x07 },
++	{ CCI_REG8(0x95), 0x07 },
++	{ CCI_REG8(0x96), 0x98 },
++	{ CCI_REG8(0x97), 0x0a },
++	{ CCI_REG8(0x98), 0x20 },
++	{ CCI_REG8(0x99), 0x00 },
++	{ CCI_REG8(0xfe), 0x03 },
++	{ CCI_REG8(0x02), 0x57 },
++	{ CCI_REG8(0x03), 0xb7 },
++	{ CCI_REG8(0x15), 0x14 },
++	{ CCI_REG8(0x18), 0x0f },
++	{ CCI_REG8(0x21), 0x22 },
++	{ CCI_REG8(0x22), 0x06 },
++	{ CCI_REG8(0x23), 0x48 },
++	{ CCI_REG8(0x24), 0x12 },
++	{ CCI_REG8(0x25), 0x28 },
++	{ CCI_REG8(0x26), 0x08 },
++	{ CCI_REG8(0x29), 0x06 },
++	{ CCI_REG8(0x2a), 0x58 },
++	{ CCI_REG8(0x2b), 0x08 },
++	{ CCI_REG8(0xfe), 0x01 },
++	{ CCI_REG8(0x8c), 0x10 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0x3e), 0x01 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0x85), 0x03 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0x00), 0x09 },
++	{ CCI_REG8(0x83), 0x10 },
++	{ CCI_REG8(0x86), 0x04 },
++	{ CCI_REG8(0x88), 0x00 },
++	{ CCI_REG8(0x89), 0x04 },
++	{ CCI_REG8(0x8a), 0x00 },
++	{ CCI_REG8(0x8b), 0x20 },
++	{ CCI_REG8(0x84), 0x80 },
++	{ CCI_REG8(0x87), 0x09 },
++	{ CCI_REG8(0x85), 0x53 },
++	{ CCI_REG8(0x82), 0x08 },
++	{ CCI_REG8(0xfe), 0x00 },
++};
++
++static const struct cci_reg_sequence gc5035_stream_on_regs[] = {
++	{ CCI_REG8(0xfc), 0x88 },
++	{ CCI_REG8(0xfe), 0x10 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xfc), 0x8e },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xfc), 0x88 },
++	{ CCI_REG8(0xfe), 0x10 },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0xfc), 0x8e },
++	{ CCI_REG8(0xfe), 0x00 },
++	{ CCI_REG8(0x3e), 0x91 },
++};
++
++static const struct gc5035_mode gc5035_supported_modes[] = {
++	{
++		/* 30 fps */
++		.width = 2592,
++		.height = 1944,
++		.hts = 2920,
++		.vts = 2008,
++		.link_freq_index = 0,
++		.pixel_rate = 175200000,
++		.crop = {
++			.left = 0,
++			.top = 0,
++			.width = 2592,
++			.height = 1944,
++		},
++		.reg_list = {
++			.regs = gc5035_2592x1944_regs,
++			.num_regs = ARRAY_SIZE(gc5035_2592x1944_regs),
++		},
++	},
++};
++
++static int gc5035_set_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct gc5035 *gc5035 = container_of(ctrl->handler, struct gc5035,
++					     ctrl_handler);
++	const struct gc5035_mode *mode = gc5035->mode;
++	s64 exposure_max;
++	int ret;
++
++	if (ctrl->id == V4L2_CID_VBLANK) {
++		/* Update max exposure while meeting expected vblanking */
++		exposure_max = mode->height + ctrl->val - GC5035_EXPOSURE_MARGIN;
++		__v4l2_ctrl_modify_range(gc5035->exposure,
++					 gc5035->exposure->minimum,
++					 exposure_max,
++					 gc5035->exposure->step,
++					 gc5035->exposure->default_value);
++	}
++
++	/* V4L2 controls are applied, when sensor is powered up for streaming */
++	if (!pm_runtime_get_if_active(gc5035->dev))
++		return 0;
++
++	cci_write(gc5035->regmap, GC5035_REG_PAGE, 0, NULL);
++
++	switch (ctrl->id) {
++	case V4L2_CID_ANALOGUE_GAIN:
++		ret = cci_write(gc5035->regmap, GC5035_REG_AGAIN,
++				ctrl->val, NULL);
++		break;
++	case V4L2_CID_EXPOSURE:
++		ret = cci_write(gc5035->regmap, GC5035_REG_EXPOSURE,
++				ctrl->val, NULL);
++		break;
++	case V4L2_CID_VBLANK:
++		ret = cci_write(gc5035->regmap, GC5035_REG_VTS,
++				ctrl->val + mode->height, NULL);
++		break;
++	case V4L2_CID_TEST_PATTERN:
++		/* Not supported yet, the page 1 register is left alone */
++		ret = 0;
++		break;
++	default:
++		ret = -EINVAL;
++		break;
++	}
++
++	pm_runtime_put(gc5035->dev);
++
++	return ret;
++}
++
++static const struct v4l2_ctrl_ops gc5035_ctrl_ops = {
++	.s_ctrl = gc5035_set_ctrl,
++};
++
++static int gc5035_init_controls(struct gc5035 *gc5035)
++{
++	struct v4l2_ctrl_handler *ctrl_hdlr = &gc5035->ctrl_handler;
++	const struct gc5035_mode *mode = gc5035->mode;
++	s64 hblank, vblank, exposure_max;
++	struct v4l2_fwnode_device_properties props;
++	int ret;
++
++	v4l2_ctrl_handler_init(ctrl_hdlr, 9);
++
++	gc5035->link_freq = v4l2_ctrl_new_int_menu(ctrl_hdlr, &gc5035_ctrl_ops,
++						   V4L2_CID_LINK_FREQ,
++						   ARRAY_SIZE(gc5035_link_freq_menu) - 1,
++						   mode->link_freq_index,
++						   gc5035_link_freq_menu);
++	if (gc5035->link_freq)
++		gc5035->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	gc5035->pixel_rate = v4l2_ctrl_new_std(ctrl_hdlr, &gc5035_ctrl_ops,
++					       V4L2_CID_PIXEL_RATE,
++					       gc5035_supported_modes[0].pixel_rate,
++					       gc5035_supported_modes[0].pixel_rate,
++					       1, mode->pixel_rate);
++	if (gc5035->pixel_rate)
++		gc5035->pixel_rate->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	hblank = mode->hts - mode->width;
++	gc5035->hblank = v4l2_ctrl_new_std(ctrl_hdlr, &gc5035_ctrl_ops,
++					   V4L2_CID_HBLANK, hblank,
++					   hblank, 1, hblank);
++	if (gc5035->hblank)
++		gc5035->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	vblank = mode->vts - mode->height;
++	gc5035->vblank = v4l2_ctrl_new_std(ctrl_hdlr, &gc5035_ctrl_ops,
++					   V4L2_CID_VBLANK, vblank,
++					   GC5035_VTS_MAX - mode->height, 1,
++					   vblank);
++
++	v4l2_ctrl_new_std(ctrl_hdlr, &gc5035_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
++			  GC5035_AGAIN_MIN, GC5035_AGAIN_MAX,
++			  GC5035_AGAIN_STEP, GC5035_AGAIN_DEFAULT);
++
++	exposure_max = mode->vts - GC5035_EXPOSURE_MARGIN;
++	gc5035->exposure = v4l2_ctrl_new_std(ctrl_hdlr, &gc5035_ctrl_ops,
++					     V4L2_CID_EXPOSURE,
++					     GC5035_EXPOSURE_MIN,
++					     exposure_max,
++					     GC5035_EXPOSURE_STEP,
++					     GC5035_EXPOSURE_DEFAULT);
++
++	v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &gc5035_ctrl_ops,
++				     V4L2_CID_TEST_PATTERN,
++				     ARRAY_SIZE(gc5035_test_pattern_menu) - 1,
++				     0, 0, gc5035_test_pattern_menu);
++
++	ret = v4l2_fwnode_device_parse(gc5035->dev, &props);
++	if (ret)
++		goto error_free_hdlr;
++
++	ret = v4l2_ctrl_new_fwnode_properties(ctrl_hdlr, &gc5035_ctrl_ops,
++					      &props);
++	if (ret)
++		goto error_free_hdlr;
++
++	if (ctrl_hdlr->error) {
++		ret = ctrl_hdlr->error;
++		goto error_free_hdlr;
++	}
++
++	gc5035->sd.ctrl_handler = ctrl_hdlr;
++
++	return 0;
++
++error_free_hdlr:
++	v4l2_ctrl_handler_free(ctrl_hdlr);
++
++	return ret;
++}
++
++static int gc5035_enable_streams(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state, u32 pad,
++				 u64 streams_mask)
++{
++	struct gc5035 *gc5035 = to_gc5035(sd);
++	const struct gc5035_reg_list *reg_list = &gc5035->mode->reg_list;
++	int ret;
++
++	ret = pm_runtime_resume_and_get(gc5035->dev);
++	if (ret)
++		return ret;
++
++	ret = cci_multi_reg_write(gc5035->regmap, reg_list->regs,
++				  reg_list->num_regs, NULL);
++	if (ret)
++		goto error;
++
++	ret = __v4l2_ctrl_handler_setup(gc5035->sd.ctrl_handler);
++	if (ret)
++		goto error;
++
++	ret = cci_multi_reg_write(gc5035->regmap, gc5035_stream_on_regs,
++				  ARRAY_SIZE(gc5035_stream_on_regs), NULL);
++	if (ret)
++		goto error;
++
++	return 0;
++
++error:
++	dev_err(gc5035->dev, "failed to start streaming: %d\n", ret);
++	pm_runtime_put_autosuspend(gc5035->dev);
++
++	return ret;
++}
++
++static int gc5035_disable_streams(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *state, u32 pad,
++				  u64 streams_mask)
++{
++	struct gc5035 *gc5035 = to_gc5035(sd);
++	int ret;
++
++	cci_write(gc5035->regmap, GC5035_REG_PAGE, 0, NULL);
++	ret = cci_write(gc5035->regmap, GC5035_REG_MODE_SELECT,
++			GC5035_MODE_STANDBY, NULL);
++	if (ret)
++		dev_err(gc5035->dev, "failed to stop streaming: %d\n", ret);
++
++	pm_runtime_put_autosuspend(gc5035->dev);
++
++	return ret;
++}
++
++static void gc5035_update_pad_format(const struct gc5035_mode *mode,
++				     struct v4l2_mbus_framefmt *fmt)
++{
++	fmt->code = MEDIA_BUS_FMT_SRGGB10_1X10;
++	fmt->width = mode->width;
++	fmt->height = mode->height;
++	fmt->field = V4L2_FIELD_NONE;
++	fmt->colorspace = V4L2_COLORSPACE_RAW;
++	fmt->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
++	fmt->quantization = V4L2_QUANTIZATION_FULL_RANGE;
++	fmt->xfer_func = V4L2_XFER_FUNC_NONE;
++}
++
++static int gc5035_set_pad_format(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state,
++				 struct v4l2_subdev_format *fmt)
++{
++	struct gc5035 *gc5035 = to_gc5035(sd);
++	s64 hblank, vblank, exposure_max;
++	const struct gc5035_mode *mode;
++
++	mode = v4l2_find_nearest_size(gc5035_supported_modes,
++				      ARRAY_SIZE(gc5035_supported_modes),
++				      width, height,
++				      fmt->format.width, fmt->format.height);
++
++	gc5035_update_pad_format(mode, &fmt->format);
++
++	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY || gc5035->mode == mode)
++		goto set_format;
++
++	__v4l2_ctrl_s_ctrl(gc5035->link_freq, mode->link_freq_index);
++	__v4l2_ctrl_s_ctrl_int64(gc5035->pixel_rate, mode->pixel_rate);
++
++	hblank = mode->hts - mode->width;
++	__v4l2_ctrl_modify_range(gc5035->hblank, hblank, hblank, 1, hblank);
++
++	vblank = mode->vts - mode->height;
++	__v4l2_ctrl_modify_range(gc5035->vblank, vblank,
++				 GC5035_VTS_MAX - mode->height, 1, vblank);
++	__v4l2_ctrl_s_ctrl(gc5035->vblank, vblank);
++
++	exposure_max = mode->vts - GC5035_EXPOSURE_MARGIN;
++	__v4l2_ctrl_modify_range(gc5035->exposure, GC5035_EXPOSURE_MIN,
++				 exposure_max, GC5035_EXPOSURE_STEP,
++				 GC5035_EXPOSURE_DEFAULT);
++
++	if (gc5035->sd.ctrl_handler->error)
++		return gc5035->sd.ctrl_handler->error;
++
++	gc5035->mode = mode;
++
++set_format:
++	*v4l2_subdev_state_get_format(state, 0) = fmt->format;
++
++	return 0;
++}
++
++static int gc5035_enum_mbus_code(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *sd_state,
++				 struct v4l2_subdev_mbus_code_enum *code)
++{
++	if (code->index > 0)
++		return -EINVAL;
++
++	code->code = MEDIA_BUS_FMT_SRGGB10_1X10;
++
++	return 0;
++}
++
++static int gc5035_enum_frame_size(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *sd_state,
++				  struct v4l2_subdev_frame_size_enum *fse)
++{
++	if (fse->index >= ARRAY_SIZE(gc5035_supported_modes))
++		return -EINVAL;
++
++	if (fse->code != MEDIA_BUS_FMT_SRGGB10_1X10)
++		return -EINVAL;
++
++	fse->min_width = gc5035_supported_modes[fse->index].width;
++	fse->max_width = fse->min_width;
++	fse->min_height = gc5035_supported_modes[fse->index].height;
++	fse->max_height = fse->min_height;
++
++	return 0;
++}
++
++static int gc5035_get_selection(struct v4l2_subdev *sd,
++				struct v4l2_subdev_state *sd_state,
++				struct v4l2_subdev_selection *sel)
++{
++	struct gc5035 *gc5035 = to_gc5035(sd);
++
++	switch (sel->target) {
++	case V4L2_SEL_TGT_CROP:
++		sel->r = gc5035->mode->crop;
++		return 0;
++	case V4L2_SEL_TGT_NATIVE_SIZE:
++	case V4L2_SEL_TGT_CROP_BOUNDS:
++	case V4L2_SEL_TGT_CROP_DEFAULT:
++		sel->r.left = 0;
++		sel->r.top = 0;
++		sel->r.width = GC5035_NATIVE_WIDTH;
++		sel->r.height = GC5035_NATIVE_HEIGHT;
++		return 0;
++	default:
++		return -EINVAL;
++	}
++}
++
++static int gc5035_init_state(struct v4l2_subdev *sd,
++			     struct v4l2_subdev_state *state)
++{
++	struct gc5035 *gc5035 = to_gc5035(sd);
++	struct v4l2_subdev_format fmt = {
++		.which = V4L2_SUBDEV_FORMAT_TRY,
++		.pad = 0,
++		.format = {
++			.width = gc5035->mode->width,
++			.height = gc5035->mode->height,
++		},
++	};
++
++	gc5035_set_pad_format(sd, state, &fmt);
++
++	return 0;
++}
++
++static const struct v4l2_subdev_video_ops gc5035_video_ops = {
++	.s_stream = v4l2_subdev_s_stream_helper,
++};
++
++static const struct v4l2_subdev_pad_ops gc5035_pad_ops = {
++	.set_fmt = gc5035_set_pad_format,
++	.get_fmt = v4l2_subdev_get_fmt,
++	.get_selection = gc5035_get_selection,
++	.enum_mbus_code = gc5035_enum_mbus_code,
++	.enum_frame_size = gc5035_enum_frame_size,
++	.enable_streams = gc5035_enable_streams,
++	.disable_streams = gc5035_disable_streams,
++};
++
++static const struct v4l2_subdev_ops gc5035_subdev_ops = {
++	.video = &gc5035_video_ops,
++	.pad = &gc5035_pad_ops,
++};
++
++static const struct v4l2_subdev_internal_ops gc5035_internal_ops = {
++	.init_state = gc5035_init_state,
++};
++
++static const struct media_entity_operations gc5035_subdev_entity_ops = {
++	.link_validate = v4l2_subdev_link_validate,
++};
++
++static int gc5035_identify_sensor(struct gc5035 *gc5035)
++{
++	u64 val;
++	int ret;
++
++	ret = cci_read(gc5035->regmap, GC5035_REG_CHIP_ID, &val, NULL);
++	if (ret) {
++		dev_err(gc5035->dev, "failed to read chip id: %d\n", ret);
++		return ret;
++	}
++
++	if (val != GC5035_CHIP_ID) {
++		dev_err(gc5035->dev, "chip id mismatch: %x!=%llx\n",
++			GC5035_CHIP_ID, val);
++		return -ENODEV;
++	}
++
++	return 0;
++}
++
++static int gc5035_check_hwcfg(struct gc5035 *gc5035)
++{
++	struct fwnode_handle *fwnode = dev_fwnode(gc5035->dev), *ep;
++	struct v4l2_fwnode_endpoint bus_cfg = {
++		.bus_type = V4L2_MBUS_CSI2_DPHY,
++	};
++	unsigned long freq_bitmap;
++	int ret;
++
++	if (!fwnode)
++		return -ENODEV;
++
++	ep = fwnode_graph_get_next_endpoint(fwnode, NULL);
++	if (!ep)
++		return -EINVAL;
++
++	ret = v4l2_fwnode_endpoint_alloc_parse(ep, &bus_cfg);
++	fwnode_handle_put(ep);
++	if (ret)
++		return ret;
++
++	if (bus_cfg.bus.mipi_csi2.num_data_lanes != GC5035_DATA_LANES) {
++		dev_err(gc5035->dev, "Invalid number of data lanes: %u\n",
++			bus_cfg.bus.mipi_csi2.num_data_lanes);
++		ret = -EINVAL;
++		goto endpoint_free;
++	}
++
++	ret = v4l2_link_freq_to_bitmap(gc5035->dev, bus_cfg.link_frequencies,
++				       bus_cfg.nr_of_link_frequencies,
++				       gc5035_link_freq_menu,
++				       ARRAY_SIZE(gc5035_link_freq_menu),
++				       &freq_bitmap);
++	if (ret)
++		goto endpoint_free;
++
++	/* The link frequencies of all modes are needed */
++	if (freq_bitmap != GENMASK(ARRAY_SIZE(gc5035_link_freq_menu) - 1, 0)) {
++		dev_err(gc5035->dev, "Not all link frequencies are supported\n");
++		ret = -EINVAL;
++	}
++
++endpoint_free:
++	v4l2_fwnode_endpoint_free(&bus_cfg);
++
++	return ret;
++}
++
++static int gc5035_power_on(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct gc5035 *gc5035 = to_gc5035(sd);
++	int ret;
++
++	ret = regulator_bulk_enable(GC5035_NUM_SUPPLIES, gc5035->supplies);
++	if (ret)
++		return ret;
++
++	/* Let the supplies settle before the clock is enabled */
++	usleep_range(2 * USEC_PER_MSEC, 3 * USEC_PER_MSEC);
++
++	ret = clk_prepare_enable(gc5035->mclk);
++	if (ret)
++		goto disable_regulators;
++
++	usleep_range(2 * USEC_PER_MSEC, 3 * USEC_PER_MSEC);
++	gpiod_set_value_cansleep(gc5035->reset_gpio, 0);
++	usleep_range(10 * USEC_PER_MSEC, 15 * USEC_PER_MSEC);
++
++	return 0;
++
++disable_regulators:
++	regulator_bulk_disable(GC5035_NUM_SUPPLIES, gc5035->supplies);
++
++	return ret;
++}
++
++static int gc5035_power_off(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct gc5035 *gc5035 = to_gc5035(sd);
++
++	gpiod_set_value_cansleep(gc5035->reset_gpio, 1);
++
++	clk_disable_unprepare(gc5035->mclk);
++
++	regulator_bulk_disable(GC5035_NUM_SUPPLIES, gc5035->supplies);
++
++	return 0;
++}
++
++static int gc5035_probe(struct i2c_client *client)
++{
++	struct gc5035 *gc5035;
++	unsigned long freq;
++	unsigned int i;
++	int ret;
++
++	gc5035 = devm_kzalloc(&client->dev, sizeof(*gc5035), GFP_KERNEL);
++	if (!gc5035)
++		return -ENOMEM;
++
++	gc5035->dev = &client->dev;
++	v4l2_i2c_subdev_init(&gc5035->sd, client, &gc5035_subdev_ops);
++
++	gc5035->regmap = devm_cci_regmap_init_i2c(client, 8);
++	if (IS_ERR(gc5035->regmap))
++		return dev_err_probe(gc5035->dev, PTR_ERR(gc5035->regmap),
++				     "failed to init CCI\n");
++
++	gc5035->mclk = devm_v4l2_sensor_clk_get(gc5035->dev, NULL);
++	if (IS_ERR(gc5035->mclk))
++		return dev_err_probe(gc5035->dev, PTR_ERR(gc5035->mclk),
++				     "failed to get MCLK clock\n");
++
++	freq = clk_get_rate(gc5035->mclk);
++	if (freq != GC5035_MCLK_FREQ)
++		return dev_err_probe(gc5035->dev, -EINVAL,
++				     "MCLK clock frequency %lu is not supported\n",
++				     freq);
++
++	ret = gc5035_check_hwcfg(gc5035);
++	if (ret)
++		return dev_err_probe(gc5035->dev, ret,
++				     "failed to check HW configuration\n");
++
++	gc5035->reset_gpio = devm_gpiod_get_optional(gc5035->dev, "reset",
++						     GPIOD_OUT_HIGH);
++	if (IS_ERR(gc5035->reset_gpio))
++		return dev_err_probe(gc5035->dev, PTR_ERR(gc5035->reset_gpio),
++				     "cannot get reset GPIO\n");
++
++	for (i = 0; i < GC5035_NUM_SUPPLIES; i++)
++		gc5035->supplies[i].supply = gc5035_supply_names[i];
++
++	ret = devm_regulator_bulk_get(gc5035->dev, GC5035_NUM_SUPPLIES,
++				      gc5035->supplies);
++	if (ret)
++		return dev_err_probe(gc5035->dev, ret,
++				     "failed to get supply regulators\n");
++
++	/* The sensor must be powered on to read the CHIP_ID register */
++	ret = gc5035_power_on(gc5035->dev);
++	if (ret)
++		return ret;
++
++	ret = gc5035_identify_sensor(gc5035);
++	if (ret) {
++		dev_err_probe(gc5035->dev, ret, "failed to find sensor\n");
++		goto power_off;
++	}
++
++	gc5035->mode = &gc5035_supported_modes[0];
++	ret = gc5035_init_controls(gc5035);
++	if (ret) {
++		dev_err_probe(gc5035->dev, ret, "failed to init controls\n");
++		goto power_off;
++	}
++
++	gc5035->sd.state_lock = gc5035->ctrl_handler.lock;
++	gc5035->sd.internal_ops = &gc5035_internal_ops;
++	gc5035->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	gc5035->sd.entity.ops = &gc5035_subdev_entity_ops;
++	gc5035->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
++	gc5035->pad.flags = MEDIA_PAD_FL_SOURCE;
++
++	ret = media_entity_pads_init(&gc5035->sd.entity, 1, &gc5035->pad);
++	if (ret) {
++		dev_err_probe(gc5035->dev, ret,
++			      "failed to init media entity pads\n");
++		goto v4l2_ctrl_handler_free;
++	}
++
++	ret = v4l2_subdev_init_finalize(&gc5035->sd);
++	if (ret < 0) {
++		dev_err_probe(gc5035->dev, ret,
++			      "failed to finalize subdev init\n");
++		goto media_entity_cleanup;
++	}
++
++	pm_runtime_set_active(gc5035->dev);
++	pm_runtime_enable(gc5035->dev);
++
++	ret = v4l2_async_register_subdev_sensor(&gc5035->sd);
++	if (ret < 0) {
++		dev_err_probe(gc5035->dev, ret,
++			      "failed to register V4L2 subdev\n");
++		goto subdev_cleanup;
++	}
++
++	pm_runtime_set_autosuspend_delay(gc5035->dev, 1000);
++	pm_runtime_use_autosuspend(gc5035->dev);
++	pm_runtime_idle(gc5035->dev);
++
++	return 0;
++
++subdev_cleanup:
++	v4l2_subdev_cleanup(&gc5035->sd);
++	pm_runtime_disable(gc5035->dev);
++	pm_runtime_set_suspended(gc5035->dev);
++
++media_entity_cleanup:
++	media_entity_cleanup(&gc5035->sd.entity);
++
++v4l2_ctrl_handler_free:
++	v4l2_ctrl_handler_free(gc5035->sd.ctrl_handler);
++
++power_off:
++	gc5035_power_off(gc5035->dev);
++
++	return ret;
++}
++
++static void gc5035_remove(struct i2c_client *client)
++{
++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
++	struct gc5035 *gc5035 = to_gc5035(sd);
++
++	v4l2_async_unregister_subdev(sd);
++	v4l2_subdev_cleanup(sd);
++	media_entity_cleanup(&sd->entity);
++	v4l2_ctrl_handler_free(sd->ctrl_handler);
++	pm_runtime_disable(gc5035->dev);
++
++	if (!pm_runtime_status_suspended(gc5035->dev)) {
++		gc5035_power_off(gc5035->dev);
++		pm_runtime_set_suspended(gc5035->dev);
++	}
++}
++
++static const struct dev_pm_ops gc5035_pm_ops = {
++	SET_RUNTIME_PM_OPS(gc5035_power_off, gc5035_power_on, NULL)
++};
++
++static const struct of_device_id gc5035_of_match[] = {
++	{ .compatible = "galaxycore,gc5035" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, gc5035_of_match);
++
++static struct i2c_driver gc5035_i2c_driver = {
++	.driver = {
++		.name = "gc5035",
++		.pm = &gc5035_pm_ops,
++		.of_match_table = gc5035_of_match,
++	},
++	.probe = gc5035_probe,
++	.remove = gc5035_remove,
++};
++
++module_i2c_driver(gc5035_i2c_driver);
++
++MODULE_AUTHOR("Timo <1788603+darknagel@users.noreply.github.com>");
++MODULE_DESCRIPTION("GalaxyCore GC5035 image sensor driver");
++MODULE_LICENSE("GPL");
+-- 
+2.43.0
+

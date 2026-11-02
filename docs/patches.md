@@ -21,7 +21,12 @@
 | Mobile data (IPv6 only, tested on congstar) | works, see [`modem/`](../modem/) | pmaports 0019, 0020 |
 | SMS, send and receive (`mmcli`, Spacebar under Plasma Mobile) | works, see [`modem/`](../modem/) | – |
 | NFC (NXP chip, reading tags with `neard`; PCIe 1 is disabled because it took the enable pin) | works | kernel 0032, pmaports 0021 |
-| Main/ultrawide camera (C-PHY), OIS, colour tuning of the front camera, magnetometer, calls | not done | – |
+| C-PHY on SM8250 CAMSS (posted series, see below) | works | kernel 0033–0041, pmaports 0022 |
+| Main camera Sony IMX689 (new driver, 3 C-PHY trios, 4000×3000 @ 30) | works | kernel 0042, 0045, pmaports 0022, libcamera 0006 |
+| Ultrawide camera Sony IMX586 (new driver, 3 C-PHY trios, 4000×3000 @ 30) | works | kernel 0043, 0045, pmaports 0022, libcamera 0006 |
+| Colour filter camera GalaxyCore GC5035 (new driver, 2592×1944, also sees near infrared) | works | kernel 0044, 0045, pmaports 0022, libcamera 0006 |
+| Autofocus on main and ultrawide camera (AK7377 actuators with the AK7375 driver) | works, see known issues | kernel 0045, pmaports 0023, libcamera 0007 |
+| OIS, colour tuning of the front camera, magnetometer, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
 `camnoc_axi_src` clock was never scaled, so full resolution RDI capture never completed a
@@ -59,7 +64,8 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   the kernel and libcamera patches inside the packages. 0018 adds the modem kernel
   patches (kernel 0016–0031 without 0027, partly debug quality, see
   [`modem/`](../modem/)), 0019 fixes ModemManager for this modem, 0020 keeps the
-  modem's data channels, 0021 fixes NFC.
+  modem's data channels, 0021 fixes NFC, 0022 adds the C-PHY series and the remaining
+  cameras, 0023 adds them to libcamera.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `docs/` – this file and details moved out of the README.
@@ -67,7 +73,12 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   Adds a writable sensor registry (`-w DIR`), needed by the OnePlus sensor DSP.
 - `libcamera-patches/` – against libcamera v0.7.2 plus the patches already carried in
   Nura `temp/libcamera`: sensor helpers for S5K3M5 and IMX471 (0001–0002) and the
-  autofocus series (0003–0005).
+  autofocus series (0003–0005), sensor helpers for IMX586, IMX689 and GC5035 (0006) and a
+  shorter autofocus scan (0007).
+
+Kernel patches 0033–0041 are not my work either: they are the series "media: camss: Add
+support for C-PHY" v5 by David Heidelberg, with patches by Casey Connolly and Luca Weiss.
+Use the original from lore.kernel.org if you need it.
 
 Kernel patch 0014 (LC898217XC driver) is not my work: it is v4 of the driver Vasiliy
 Doylov posted to the linux-media mailing list in March 2026
