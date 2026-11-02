@@ -23,7 +23,7 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 | Mobile data | works, tested on congstar (IPv6 only, up to 90 Mbit/s) |
 | GPS | works, fix without SIM |
 | NFC | reading tags works |
-| Main, ultrawide, telephoto and front camera, colour filter camera | works, autofocus on main, ultrawide and telephoto. Not in release v2026.11.01, build it yourself |
+| Main, ultrawide, telephoto and front camera, colour filter camera | works, autofocus on main, ultrawide and telephoto |
 | Accelerometer, light, proximity | works, needs [your own sensor files](#sensors) |
 | Calls, OIS, magnetometer | not done |
 
@@ -196,8 +196,8 @@ Using the phone as a small server (screen off, charge limit, sleep):
   `echo 23-0010 > /sys/bus/i2c/drivers/imx471/bind`
 - Main and ultrawide camera: one mode each (4000x3000 at 30 fps) and contrast autofocus only,
   which takes about 3 seconds and is not always right. Bright areas clip.
-- After testing with `cam` or `media-ctl`, run `media-ctl -d /dev/media0 -r`, otherwise apps
-  fail with `Resource busy`.
+- After testing with `cam` or `media-ctl`, run `media-ctl -d /dev/media0 -r` (`apk add v4l-utils`),
+  otherwise apps fail with `Resource busy`.
 - After a new libcamera: `systemctl --user restart pipewire wireplumber`
 - Modem data is copied with the first boot: `/lib/firmware/postmarketos/qcom/sdx55m` holds your
   calibration and IDs. Never share it.
