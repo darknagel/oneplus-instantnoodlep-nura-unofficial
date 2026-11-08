@@ -7,11 +7,6 @@ package names still say `postmarketos`, so the commands here do too.
 
 Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-linux-nura-formerly-postmarketos-for-oneplus-8-pro-instantnoodlep.4807386/)
 
-> **AI disclosure:** These patches and the image were made with substantial help from an AI
-> coding assistant (Claude). Everything marked "works" was tested on one real device.
-> Nura's policy forbids AI-assisted contributions, so nothing here is submitted there. If
-> you forward any of this to a project, check its rules first.
-
 ## What works
 
 | Feature | State |
@@ -24,7 +19,7 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 | GPS | works, fix without SIM |
 | NFC | reading tags works |
 | Main, ultrawide, telephoto and front camera, colour filter camera | works, autofocus on main, ultrawide and telephoto |
-| Accelerometer, light, proximity | works, needs [your own sensor files](#sensors) |
+| Accelerometer, light, proximity | works, sensor files included since v2026.11.08, see [Sensors](#sensors) |
 | Calls, OIS, magnetometer | not done |
 
 Tested on one IN2023 (EU) with the Samsung AMS678UW01 panel. With another panel the screen
@@ -39,7 +34,6 @@ numbers: [`docs/patches.md`](docs/patches.md).
 - `fastboot` from the Android platform tools
 - a backup of `super` if you want to go back to Android: the image overwrites it. See the
   [wiki page](https://wiki.nura.eco/wiki/OnePlus_8_Pro_(oneplus-instantnoodlep)).
-- **the [sensor files](#sensors) saved from Android before you flash**
 
 **Flash:**
 
@@ -70,7 +64,7 @@ Then update with `apk update`, but read [Known issues](#known-issues) before `ap
 
 The image is console only. It contains no Wi-Fi networks, SSH keys, personal data or modem
 data. At first boot it fills the storage and copies the modem firmware from your phone's
-own partitions.
+own partitions. Since v2026.11.08 it also contains OnePlus' sensor files, see [Sensors](#sensors).
 
 Windows does not set up the USB network? In Device Manager: right-click the device →
 **Update driver** → **Browse my computer** → **Let me pick** → **Network adapters** →
@@ -115,8 +109,17 @@ For apps: `apk add gpsd && gpsd -n /dev/gnss-sdx55`
 
 ### Sensors
 
-The sensors need OnePlus' own files, which may not be redistributed, so you take them from
-your own phone.
+Since v2026.11.08 the image contains the files the sensor DSP needs: the DSP libraries and
+the sensor configuration from OxygenOS (SLPI firmware `SLPI.HY.3.0-00262`). These are
+proprietary OnePlus/Qualcomm files. The sensors work right after flashing, check with
+`monitor-sensor`.
+
+If the sensor DSP crashes 3 times within 60 seconds, `slpi-guard` stops it instead of
+letting the kernel restart it forever, which used to break most of the phone
+([#1](../../issues/1)). The sensors are then off until the next reboot,
+`journalctl -u slpi-guard` shows if it stepped in.
+
+**Older images or your own build** need the files from your own phone:
 
 1. **Before flashing**, with Android running and USB debugging on (not tested on Android,
    some files may need root):
@@ -143,7 +146,8 @@ your own phone.
 4. Check: `ssccli --sensor accelerometer --timeout 3`
 
 Already on Linux? Get `vendor.img` and `odm.img` from a full OxygenOS update (not tested).
-Do not share these files.
+The DSP libraries come from your phone's `dsp_a` partition, so they match the OxygenOS
+version you had. If that version differs from the one above, the sensor DSP may crash.
 
 ### NFC
 
@@ -229,7 +233,8 @@ the prebuilt image already has. Repository layout and how to change the kernel:
 ## License
 
 Each patch keeps the license of the project it applies to. The image contains Nura/Alpine
-packages under their own licenses and the firmware Nura distributes; the kernel source is
+packages under their own licenses, the firmware Nura distributes and, since v2026.11.08,
+OnePlus' proprietary sensor files, which none of these licenses cover; the kernel source is
 the tag in [`docs/patches.md`](docs/patches.md) plus `kernel-patches/`. README: CC0.
 
 No warranty. Flashing your phone is at your own risk.

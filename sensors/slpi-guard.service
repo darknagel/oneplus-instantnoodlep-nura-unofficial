@@ -1,0 +1,9 @@
+[Unit]
+Description=Stop the sensor DSP when it keeps crashing
+After=systemd-journald.service
+
+[Service]
+ExecStart=/usr/local/bin/slpi-guard
+
+[Install]
+WantedBy=multi-user.target
