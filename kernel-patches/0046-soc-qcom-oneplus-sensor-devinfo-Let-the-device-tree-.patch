@@ -1,0 +1,87 @@
+From 92f0d710b0146038a201f7be6580a52c66844ae1 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 22:58:11 +0100
+Subject: [PATCH 46/47] soc: qcom: oneplus-sensor-devinfo: Let the device tree
+ fix the layout
+
+The sensor DSP firmware reads SMEM item 130 with a fixed number of chips
+per sensor type. The SLPI firmware of the OnePlus 8 Pro (SLPI.HY.3.0-00262)
+always uses the older layout with 2 chips per type and never looks at the
+size of the item, while the driver picked 3 whenever the item had that
+size or had to be allocated. The firmware then found the entries of every
+sensor type except the accelerometer at the wrong offsets. It only
+registers the magnetometer drivers whose chip it finds there, so the
+magnetometer never came up.
+
+Add the oneplus,sources-per-sensor property to choose the layout. Without
+it, the layout still follows the size of the item.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../soc/qcom/oneplus,sensor-devinfo.yaml        |  9 +++++++++
+ drivers/soc/qcom/oneplus-sensor-devinfo.c       | 17 +++++++++++++----
+ 2 files changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml b/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
+index 403ab2f6a..6a1c739a4 100755
+--- a/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
++++ b/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
+@@ -19,6 +19,15 @@ properties:
+   compatible:
+     const: oneplus,sensor-devinfo
+ 
++  oneplus,sources-per-sensor:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    enum: [2, 3]
++    description:
++      Number of alternative chips per sensor type in the layout of SMEM item
++      130. Older firmware always reads 2, newer firmware 3, independent of
++      the size of the item. Without this property, the layout follows the
++      size of the item.
++
+ patternProperties:
+   "^(gsensor|msensor|lsensor|lrsensor|psensor|ssensor|sdsensor|cctsensor|cctrsensor)-[0-9]$":
+     type: object
+diff --git a/drivers/soc/qcom/oneplus-sensor-devinfo.c b/drivers/soc/qcom/oneplus-sensor-devinfo.c
+index 6e1625b0b..1a6b38a38 100755
+--- a/drivers/soc/qcom/oneplus-sensor-devinfo.c
++++ b/drivers/soc/qcom/oneplus-sensor-devinfo.c
+@@ -324,12 +324,19 @@ static int oneplus_sensor_devinfo_probe(struct platform_device *pdev)
+ 	struct oneplus_sensor_devinfo di;
+ 	struct device *dev = &pdev->dev;
+ 	size_t size = 0;
+-	u32 type;
++	u32 type, n_sources = 0;
+ 	int ret;
+ 
++	/* The firmware reads a fixed layout, whatever the size of the item */
++	if (!of_property_read_u32(dev->of_node, "oneplus,sources-per-sensor", &n_sources) &&
++	    n_sources != 2 && n_sources != 3)
++		return dev_err_probe(dev, -EINVAL,
++				     "invalid sources-per-sensor %u\n", n_sources);
++
+ 	di.info = qcom_smem_get(QCOM_SMEM_HOST_ANY, SMEM_SENSOR, &size);
+ 	if (PTR_ERR(di.info) == -ENOENT) {
+-		ret = qcom_smem_alloc(QCOM_SMEM_HOST_ANY, SMEM_SENSOR, info_size(3));
++		ret = qcom_smem_alloc(QCOM_SMEM_HOST_ANY, SMEM_SENSOR,
++				      info_size(n_sources ?: 3));
+ 		if (ret && ret != -EEXIST)
+ 			return dev_err_probe(dev, ret, "failed to allocate SMEM item\n");
+ 
+@@ -338,9 +345,11 @@ static int oneplus_sensor_devinfo_probe(struct platform_device *pdev)
+ 	if (IS_ERR(di.info))
+ 		return dev_err_probe(dev, PTR_ERR(di.info), "failed to get SMEM item\n");
+ 
+-	if (size == info_size(3))
++	if (n_sources && size >= info_size(n_sources))
++		di.n_sources = n_sources;
++	else if (!n_sources && size == info_size(3))
+ 		di.n_sources = 3;
+-	else if (size == info_size(2))
++	else if (!n_sources && size == info_size(2))
+ 		di.n_sources = 2;
+ 	else
+ 		return dev_err_probe(dev, -EINVAL, "unexpected SMEM item size %zu\n", size);
+-- 
+2.43.0
+

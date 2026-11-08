@@ -26,7 +26,8 @@
 | Ultrawide camera Sony IMX586 (new driver, 3 C-PHY trios, 4000×3000 @ 30) | works | kernel 0043, 0045, pmaports 0022, libcamera 0006 |
 | Colour filter camera GalaxyCore GC5035 (new driver, 2592×1944, also sees near infrared) | works | kernel 0044, 0045, pmaports 0022, libcamera 0006 |
 | Autofocus on main and ultrawide camera (AK7377 actuators with the AK7375 driver) | works, see known issues | kernel 0045, pmaports 0023, libcamera 0007 |
-| OIS, colour tuning of the front camera, magnetometer, calls | not done | – |
+| Magnetometer MMC5603: the SLPI firmware reads SMEM item 130 with 2 chips per sensor type, the driver wrote 3 | works (raw values), compass heading not yet | kernel 0046–0047, pmaports 0024 |
+| OIS, colour tuning of the front camera, compass heading, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
 `camnoc_axi_src` clock was never scaled, so full resolution RDI capture never completed a

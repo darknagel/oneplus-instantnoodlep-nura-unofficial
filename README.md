@@ -19,8 +19,9 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 | GPS | works, fix without SIM |
 | NFC | reading tags works |
 | Main, ultrawide, telephoto and front camera, colour filter camera | works, autofocus on main, ultrawide and telephoto |
-| Accelerometer, light, proximity | works, sensor files included since v2026.11.08, see [Sensors](#sensors) |
-| Calls, OIS, magnetometer | not done |
+| Accelerometer, light, proximity, gyroscope | works, sensor files included since v2026.11.08, see [Sensors](#sensors) |
+| Magnetometer | works in your own build with kernel 0046–0047 (`ssccli --sensor magnetometer`), not in the image yet; no compass heading yet |
+| Calls, OIS | not done |
 
 Tested on one IN2023 (EU) with the Samsung AMS678UW01 panel. With another panel the screen
 may stay black, see [`docs/panel-log.md`](docs/panel-log.md). Technical details and patch

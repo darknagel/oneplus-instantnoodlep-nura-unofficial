@@ -1,0 +1,188 @@
+From 980e58c2bd6c11a7b2eaa1d0fddb3bb160cc8077 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 22:58:29 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: magnetometer of the OnePlus 8
+ Pro
+
+The sensor DSP firmware reads the sensor device info in SMEM with 2 chips
+per sensor type. Let the device tree choose that layout, so that the
+firmware finds the MMC5603 magnetometer.
+---
+ ...-sensor-devinfo-Let-the-device-tree-.patch | 87 +++++++++++++++++++
+ ...m8250-oneplus-instantnoodlep-Fix-the.patch | 40 +++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  6 +-
+ 3 files changed, 132 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0046-soc-qcom-oneplus-sensor-devinfo-Let-the-device-tree-.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0047-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-the.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0046-soc-qcom-oneplus-sensor-devinfo-Let-the-device-tree-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0046-soc-qcom-oneplus-sensor-devinfo-Let-the-device-tree-.patch
+new file mode 100644
+index 0000000000..ec56b6e044
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0046-soc-qcom-oneplus-sensor-devinfo-Let-the-device-tree-.patch
+@@ -0,0 +1,87 @@
++From 92f0d710b0146038a201f7be6580a52c66844ae1 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 8 Nov 2026 22:58:11 +0100
++Subject: [PATCH 46/47] soc: qcom: oneplus-sensor-devinfo: Let the device tree
++ fix the layout
++
++The sensor DSP firmware reads SMEM item 130 with a fixed number of chips
++per sensor type. The SLPI firmware of the OnePlus 8 Pro (SLPI.HY.3.0-00262)
++always uses the older layout with 2 chips per type and never looks at the
++size of the item, while the driver picked 3 whenever the item had that
++size or had to be allocated. The firmware then found the entries of every
++sensor type except the accelerometer at the wrong offsets. It only
++registers the magnetometer drivers whose chip it finds there, so the
++magnetometer never came up.
++
++Add the oneplus,sources-per-sensor property to choose the layout. Without
++it, the layout still follows the size of the item.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ .../soc/qcom/oneplus,sensor-devinfo.yaml        |  9 +++++++++
++ drivers/soc/qcom/oneplus-sensor-devinfo.c       | 17 +++++++++++++----
++ 2 files changed, 22 insertions(+), 4 deletions(-)
++
++diff --git a/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml b/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
++index 403ab2f6a..6a1c739a4 100755
++--- a/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
+++++ b/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
++@@ -19,6 +19,15 @@ properties:
++   compatible:
++     const: oneplus,sensor-devinfo
++ 
+++  oneplus,sources-per-sensor:
+++    $ref: /schemas/types.yaml#/definitions/uint32
+++    enum: [2, 3]
+++    description:
+++      Number of alternative chips per sensor type in the layout of SMEM item
+++      130. Older firmware always reads 2, newer firmware 3, independent of
+++      the size of the item. Without this property, the layout follows the
+++      size of the item.
+++
++ patternProperties:
++   "^(gsensor|msensor|lsensor|lrsensor|psensor|ssensor|sdsensor|cctsensor|cctrsensor)-[0-9]$":
++     type: object
++diff --git a/drivers/soc/qcom/oneplus-sensor-devinfo.c b/drivers/soc/qcom/oneplus-sensor-devinfo.c
++index 6e1625b0b..1a6b38a38 100755
++--- a/drivers/soc/qcom/oneplus-sensor-devinfo.c
+++++ b/drivers/soc/qcom/oneplus-sensor-devinfo.c
++@@ -324,12 +324,19 @@ static int oneplus_sensor_devinfo_probe(struct platform_device *pdev)
++ 	struct oneplus_sensor_devinfo di;
++ 	struct device *dev = &pdev->dev;
++ 	size_t size = 0;
++-	u32 type;
+++	u32 type, n_sources = 0;
++ 	int ret;
++ 
+++	/* The firmware reads a fixed layout, whatever the size of the item */
+++	if (!of_property_read_u32(dev->of_node, "oneplus,sources-per-sensor", &n_sources) &&
+++	    n_sources != 2 && n_sources != 3)
+++		return dev_err_probe(dev, -EINVAL,
+++				     "invalid sources-per-sensor %u\n", n_sources);
+++
++ 	di.info = qcom_smem_get(QCOM_SMEM_HOST_ANY, SMEM_SENSOR, &size);
++ 	if (PTR_ERR(di.info) == -ENOENT) {
++-		ret = qcom_smem_alloc(QCOM_SMEM_HOST_ANY, SMEM_SENSOR, info_size(3));
+++		ret = qcom_smem_alloc(QCOM_SMEM_HOST_ANY, SMEM_SENSOR,
+++				      info_size(n_sources ?: 3));
++ 		if (ret && ret != -EEXIST)
++ 			return dev_err_probe(dev, ret, "failed to allocate SMEM item\n");
++ 
++@@ -338,9 +345,11 @@ static int oneplus_sensor_devinfo_probe(struct platform_device *pdev)
++ 	if (IS_ERR(di.info))
++ 		return dev_err_probe(dev, PTR_ERR(di.info), "failed to get SMEM item\n");
++ 
++-	if (size == info_size(3))
+++	if (n_sources && size >= info_size(n_sources))
+++		di.n_sources = n_sources;
+++	else if (!n_sources && size == info_size(3))
++ 		di.n_sources = 3;
++-	else if (size == info_size(2))
+++	else if (!n_sources && size == info_size(2))
++ 		di.n_sources = 2;
++ 	else
++ 		return dev_err_probe(dev, -EINVAL, "unexpected SMEM item size %zu\n", size);
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0047-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-the.patch b/device/testing/linux-postmarketos-qcom-sm8250/0047-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-the.patch
+new file mode 100644
+index 0000000000..1ffc1a4860
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0047-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-the.patch
+@@ -0,0 +1,40 @@
++From de476cdaaebe1aab9ec1100b4efa14f4c1902e3d Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 8 Nov 2026 22:58:11 +0100
++Subject: [PATCH 47/47] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Fix
++ the magnetometer
++
++Use the 2 chips per sensor layout the SLPI firmware reads, so that it
++finds the MMC5603 magnetometer, and use the mounting orientation of the
++vendor device tree for it.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 4 +++-
++ 1 file changed, 3 insertions(+), 1 deletion(-)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 10b1e2b4b..81263864f 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -389,6 +389,8 @@ vreg_cam_tele_avdd: regulator-cam-tele-avdd {
++ 
++ 	sensor-devinfo {
++ 		compatible = "oneplus,sensor-devinfo";
+++		/* The SLPI firmware reads the layout of older OxygenOS */
+++		oneplus,sources-per-sensor = <2>;
++ 
++ 		/* LSM6DSM */
++ 		gsensor-0 {
++@@ -414,7 +416,7 @@ msensor-1 {
++ 			sensor-type = <2>;
++ 			sensor-index = <1>;
++ 			sensor-name = <0x02>;
++-			sensor-direction = <0>;
+++			sensor-direction = <4>;
++ 			parameter-number = <18>;
++ 			soft-mag-parameter = <0x2703 0 0x188 1 0x144 0 0x123 1 0x26db
++ 					      0 0x1df 0 0x6f 0 0x217 1 0x2b3e 0>;
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 8bd6bdf9d5..26321fc5b3 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=54
++pkgrel=55
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -84,6 +84,8 @@ source="
+ 	0043-media-i2c-Add-Sony-IMX586-image-sensor-driver.patch
+ 	0044-media-i2c-Add-GalaxyCore-GC5035-image-sensor-driver.patch
+ 	0045-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-rem.patch
++	0046-soc-qcom-oneplus-sensor-devinfo-Let-the-device-tree-.patch
++	0047-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-the.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -175,4 +177,6 @@ eafca95647dad276328b669487139c8bd4dcecc7a021123cc27502830d3953c94f1344528a854934
+ 9e45ae70dfe0f908ef2c1cbd18d1dd584eef35ebe395d8786b22becc16be8b1b42cb3bcb83d0cbb2795cc68670bb5b61652ae2e39cc0bf0d416b6a96f6c9bae0  0043-media-i2c-Add-Sony-IMX586-image-sensor-driver.patch
+ a7586c4071f3a73d40df2bdf7a134c1a1a0b94ac0606a2040c241765acea304ec39a556a827753468d25bb9f83135366c39341e38fe1aa7cc083dd24dde414cf  0044-media-i2c-Add-GalaxyCore-GC5035-image-sensor-driver.patch
+ ca0d56c0df8e7dfcd84ca0746cf1ba63ece7163062cceb92033db687b9a02dfc9483cffe24745e9f301286a243e7e832a73add565f249d4b193cdde588d8d969  0045-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-rem.patch
++9c1922b5506c7b69be2643d5c8c8b41176c2d10dda1e7f09136d906dbcbd4aa3dc43a0634c48396cf1fdd362c97cfa144ee2082df70fe9856b4fffa854c12de0  0046-soc-qcom-oneplus-sensor-devinfo-Let-the-device-tree-.patch
++9201d09fd53a4c8938c5d7eb6eddb54e20b7c233554d90756faa922d98945bb0f2c6ceec308d8dbbef9d889002b610691a87f6754477c6d82e46d5304f69c642  0047-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-the.patch
+ "
+-- 
+2.43.0
+

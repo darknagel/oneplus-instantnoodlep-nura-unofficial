@@ -1,0 +1,40 @@
+From de476cdaaebe1aab9ec1100b4efa14f4c1902e3d Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 22:58:11 +0100
+Subject: [PATCH 47/47] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Fix
+ the magnetometer
+
+Use the 2 chips per sensor layout the SLPI firmware reads, so that it
+finds the MMC5603 magnetometer, and use the mounting orientation of the
+vendor device tree for it.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 10b1e2b4b..81263864f 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -389,6 +389,8 @@ vreg_cam_tele_avdd: regulator-cam-tele-avdd {
+ 
+ 	sensor-devinfo {
+ 		compatible = "oneplus,sensor-devinfo";
++		/* The SLPI firmware reads the layout of older OxygenOS */
++		oneplus,sources-per-sensor = <2>;
+ 
+ 		/* LSM6DSM */
+ 		gsensor-0 {
+@@ -414,7 +416,7 @@ msensor-1 {
+ 			sensor-type = <2>;
+ 			sensor-index = <1>;
+ 			sensor-name = <0x02>;
+-			sensor-direction = <0>;
++			sensor-direction = <4>;
+ 			parameter-number = <18>;
+ 			soft-mag-parameter = <0x2703 0 0x188 1 0x144 0 0x123 1 0x26db
+ 					      0 0x1df 0 0x6f 0 0x217 1 0x2b3e 0>;
+-- 
+2.43.0
+
