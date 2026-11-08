@@ -20,7 +20,7 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 | NFC | reading tags works |
 | Main, ultrawide, telephoto and front camera, colour filter camera | works, autofocus on main, ultrawide and telephoto |
 | Accelerometer, light, proximity, gyroscope | works, sensor files included since v2026.11.08, see [Sensors](#sensors) |
-| Magnetometer | works in your own build with kernel 0046–0047 (`ssccli --sensor magnetometer`), not in the image yet; no compass heading yet |
+| Magnetometer and compass | works in your own build with kernel 0046–0047 and the [compass fix](#compass); not in the image yet |
 | Calls, OIS | not done |
 
 Tested on one IN2023 (EU) with the Samsung AMS678UW01 panel. With another panel the screen
@@ -119,6 +119,25 @@ If the sensor DSP crashes 3 times within 60 seconds, `slpi-guard` stops it inste
 letting the kernel restart it forever, which used to break most of the phone
 ([#1](../../issues/1)). The sensors are then off until the next reboot,
 `journalctl -u slpi-guard` shows if it stepped in.
+
+#### Compass
+
+The magnetometer needs kernel patches 0046–0047, which are not in an image yet. The compass
+heading (`monitor-sensor --compass`) also needs the gyro calibration in the sensor DSP, and
+OnePlus switches off the software motion detector that it depends on
+(`kona_amd_sw_disabled.json`). `setup-sensors` keeps it on. On v2026.11.08, as root:
+
+```sh
+C=/usr/share/qcom/sm8250/OnePlus/instantnoodlep/sensors/config
+rm $C/kona_amd_sw_disabled.json
+printf '{"config":{"hw_platform":["MTP"],"soc_id":["356"]},"sns_amd":{"owner":"sns_amd","enabled":{"ver":"0","type":"int","data":"1"}}}
+' > $C/mainline_amd_sw_enabled.json
+sed -i 's/"enabled":{"type":"int","ver":"0","data":"0"}/"enabled":{"type":"int","ver":"0","data":"1"}/' /var/lib/hexagonrpcd/sensors-registry/registry/sns_amd
+reboot
+```
+
+The heading becomes accurate after the calibration has seen the phone moved around (a
+figure eight).
 
 **Older images or your own build** need the files from your own phone:
 
