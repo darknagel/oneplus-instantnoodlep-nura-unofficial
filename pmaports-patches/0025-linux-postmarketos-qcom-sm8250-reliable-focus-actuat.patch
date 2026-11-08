@@ -1,0 +1,133 @@
+From 6d6485a46a7660855b8a7f3b12bec8280475d3ca Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 00:21:43 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: reliable focus actuators on
+ the OnePlus 8 Pro
+
+The AK7377 actuators of the main and ultrawide camera could fail at power up, and the ultrawide lens was then disabled until the next boot.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ...ia-i2c-ak7375-Make-power-up-reliable.patch | 82 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  4 +-
+ 2 files changed, 85 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0048-media-i2c-ak7375-Make-power-up-reliable.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0048-media-i2c-ak7375-Make-power-up-reliable.patch b/device/testing/linux-postmarketos-qcom-sm8250/0048-media-i2c-ak7375-Make-power-up-reliable.patch
+new file mode 100644
+index 0000000000..111bd87867
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0048-media-i2c-ak7375-Make-power-up-reliable.patch
+@@ -0,0 +1,82 @@
++From 71537314f2b609d295f84c562c5eccab379a4941 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 9 Nov 2026 00:21:22 +0100
++Subject: [PATCH] media: i2c: ak7375: Make power up reliable
++
++The AK7377 focus actuators of the OnePlus 8 Pro sit on the camera CCI
++together with the image sensors. Two problems show up there:
++
++- The first transfer after the I/O supply comes up can time out. The
++  resume then fails, runtime PM keeps the error and every later open of
++  the subdev fails with -EINVAL, so libcamera disables the lens.
++- The first position write right after the standby release is NACKed
++  now and then.
++
++Retry the standby release for up to about 50 ms, switch the supplies off
++again when it still fails so runtime PM does not leave them on, and wait
++one control delay before the first position write.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ drivers/media/i2c/ak7375.c | 27 ++++++++++++++++++++++++---
++ 1 file changed, 24 insertions(+), 3 deletions(-)
++
++diff --git a/drivers/media/i2c/ak7375.c b/drivers/media/i2c/ak7375.c
++index 9a2432cea..d61cb8ab2 100644
++--- a/drivers/media/i2c/ak7375.c
+++++ b/drivers/media/i2c/ak7375.c
++@@ -10,6 +10,9 @@
++ #include <media/v4l2-ctrls.h>
++ #include <media/v4l2-device.h>
++ 
+++#define AK7375_RESUME_RETRIES		20
+++#define AK7375_RESUME_RETRY_US		2000
+++
++ struct ak73xx_chipdef {
++ 	u8 reg_position;
++ 	u8 reg_cont;
++@@ -292,7 +295,7 @@ static int __maybe_unused ak7375_vcm_resume(struct device *dev)
++ 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++ 	struct ak7375_device *ak7375_dev = sd_to_ak7375_vcm(sd);
++ 	const struct ak73xx_chipdef *cdef = ak7375_dev->cdef;
++-	int ret, val;
+++	int ret, val, retries;
++ 
++ 	if (ak7375_dev->active)
++ 		return 0;
++@@ -305,12 +308,30 @@ static int __maybe_unused ak7375_vcm_resume(struct device *dev)
++ 	/* Wait for vcm to become ready */
++ 	usleep_range(cdef->power_delay_us, cdef->power_delay_us + 500);
++ 
++-	ret = ak7375_i2c_write(ak7375_dev, cdef->reg_cont,
++-			       cdef->mode_active, 1);
+++	/*
+++	 * The first transfer after the bus supply comes up can time out
+++	 * (seen with AK7377 modules on the CCI of SM8250), so retry the
+++	 * first command for a while before giving up.
+++	 */
+++	for (retries = 0; retries < AK7375_RESUME_RETRIES; retries++) {
+++		ret = ak7375_i2c_write(ak7375_dev, cdef->reg_cont,
+++				       cdef->mode_active, 1);
+++		if (!ret)
+++			break;
+++		usleep_range(AK7375_RESUME_RETRY_US,
+++			     AK7375_RESUME_RETRY_US + 500);
+++	}
++ 	if (ret) {
++ 		dev_err(dev, "%s I2C failure: %d\n", __func__, ret);
+++		regulator_bulk_disable(ARRAY_SIZE(ak7375_supply_names),
+++				       ak7375_dev->supplies);
++ 		return ret;
++ 	}
+++	if (retries)
+++		dev_dbg(dev, "ready after %d retries\n", retries);
+++
+++	/* The first position write right after leaving standby can be NACKed */
+++	usleep_range(cdef->ctrl_delay_us, cdef->ctrl_delay_us + 10);
++ 
++ 	for (val = ak7375_dev->focus->val % cdef->ctrl_steps;
++ 	     val <= ak7375_dev->focus->val;
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 26321fc5b3..67be5174e9 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=55
++pkgrel=56
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -86,6 +86,7 @@ source="
+ 	0045-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-rem.patch
+ 	0046-soc-qcom-oneplus-sensor-devinfo-Let-the-device-tree-.patch
+ 	0047-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-the.patch
++	0048-media-i2c-ak7375-Make-power-up-reliable.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -179,4 +180,5 @@ a7586c4071f3a73d40df2bdf7a134c1a1a0b94ac0606a2040c241765acea304ec39a556a82775346
+ ca0d56c0df8e7dfcd84ca0746cf1ba63ece7163062cceb92033db687b9a02dfc9483cffe24745e9f301286a243e7e832a73add565f249d4b193cdde588d8d969  0045-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-rem.patch
+ 9c1922b5506c7b69be2643d5c8c8b41176c2d10dda1e7f09136d906dbcbd4aa3dc43a0634c48396cf1fdd362c97cfa144ee2082df70fe9856b4fffa854c12de0  0046-soc-qcom-oneplus-sensor-devinfo-Let-the-device-tree-.patch
+ 9201d09fd53a4c8938c5d7eb6eddb54e20b7c233554d90756faa922d98945bb0f2c6ceec308d8dbbef9d889002b610691a87f6754477c6d82e46d5304f69c642  0047-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-the.patch
++8695f67e5f3de57fae521b0eb625832f4c78917561952f42191ba1a36513546cc0084c443fc536df1807f07c2e45c5d15ad15cc44c740155afe607925a984fb4  0048-media-i2c-ak7375-Make-power-up-reliable.patch
+ "
+-- 
+2.43.0
+

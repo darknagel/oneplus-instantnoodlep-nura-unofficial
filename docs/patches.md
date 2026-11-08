@@ -27,6 +27,7 @@
 | Colour filter camera GalaxyCore GC5035 (new driver, 2592×1944, also sees near infrared) | works | kernel 0044, 0045, pmaports 0022, libcamera 0006 |
 | Autofocus on main and ultrawide camera (AK7377 actuators with the AK7375 driver) | works, see known issues | kernel 0045, pmaports 0023, libcamera 0007 |
 | Magnetometer MMC5603: the SLPI firmware reads SMEM item 130 with 2 chips per sensor type, the driver wrote 3 | works | kernel 0046–0047, pmaports 0024 |
+| Focus actuators: the first CCI transfer after power up can time out, which left the ultrawide lens disabled until the next boot, and the first position write after standby release was sometimes NACKed | works | kernel 0048, pmaports 0025 |
 | Compass heading: rotv needs fmv, which needs mag_cal and gyro_cal, which need the software motion detector that OnePlus switches off on SM8250 (`kona_amd_sw_disabled.json`) | works | `sensors/setup-sensors.sh` |
 | OIS, colour tuning of the front camera, calls | not done | – |
 
@@ -67,7 +68,8 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   patches (kernel 0016–0031 without 0027, partly debug quality, see
   [`modem/`](../modem/)), 0019 fixes ModemManager for this modem, 0020 keeps the
   modem's data channels, 0021 fixes NFC, 0022 adds the C-PHY series and the remaining
-  cameras, 0023 adds them to libcamera.
+  cameras, 0023 adds them to libcamera, 0024 fixes the magnetometer, 0025 makes the
+  focus actuators reliable.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `docs/` – this file and details moved out of the README.

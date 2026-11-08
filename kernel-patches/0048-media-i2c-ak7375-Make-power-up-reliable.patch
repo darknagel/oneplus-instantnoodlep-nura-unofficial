@@ -1,0 +1,82 @@
+From 71537314f2b609d295f84c562c5eccab379a4941 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 00:21:22 +0100
+Subject: [PATCH] media: i2c: ak7375: Make power up reliable
+
+The AK7377 focus actuators of the OnePlus 8 Pro sit on the camera CCI
+together with the image sensors. Two problems show up there:
+
+- The first transfer after the I/O supply comes up can time out. The
+  resume then fails, runtime PM keeps the error and every later open of
+  the subdev fails with -EINVAL, so libcamera disables the lens.
+- The first position write right after the standby release is NACKed
+  now and then.
+
+Retry the standby release for up to about 50 ms, switch the supplies off
+again when it still fails so runtime PM does not leave them on, and wait
+one control delay before the first position write.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/media/i2c/ak7375.c | 27 ++++++++++++++++++++++++---
+ 1 file changed, 24 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/i2c/ak7375.c b/drivers/media/i2c/ak7375.c
+index 9a2432cea..d61cb8ab2 100644
+--- a/drivers/media/i2c/ak7375.c
++++ b/drivers/media/i2c/ak7375.c
+@@ -10,6 +10,9 @@
+ #include <media/v4l2-ctrls.h>
+ #include <media/v4l2-device.h>
+ 
++#define AK7375_RESUME_RETRIES		20
++#define AK7375_RESUME_RETRY_US		2000
++
+ struct ak73xx_chipdef {
+ 	u8 reg_position;
+ 	u8 reg_cont;
+@@ -292,7 +295,7 @@ static int __maybe_unused ak7375_vcm_resume(struct device *dev)
+ 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+ 	struct ak7375_device *ak7375_dev = sd_to_ak7375_vcm(sd);
+ 	const struct ak73xx_chipdef *cdef = ak7375_dev->cdef;
+-	int ret, val;
++	int ret, val, retries;
+ 
+ 	if (ak7375_dev->active)
+ 		return 0;
+@@ -305,12 +308,30 @@ static int __maybe_unused ak7375_vcm_resume(struct device *dev)
+ 	/* Wait for vcm to become ready */
+ 	usleep_range(cdef->power_delay_us, cdef->power_delay_us + 500);
+ 
+-	ret = ak7375_i2c_write(ak7375_dev, cdef->reg_cont,
+-			       cdef->mode_active, 1);
++	/*
++	 * The first transfer after the bus supply comes up can time out
++	 * (seen with AK7377 modules on the CCI of SM8250), so retry the
++	 * first command for a while before giving up.
++	 */
++	for (retries = 0; retries < AK7375_RESUME_RETRIES; retries++) {
++		ret = ak7375_i2c_write(ak7375_dev, cdef->reg_cont,
++				       cdef->mode_active, 1);
++		if (!ret)
++			break;
++		usleep_range(AK7375_RESUME_RETRY_US,
++			     AK7375_RESUME_RETRY_US + 500);
++	}
+ 	if (ret) {
+ 		dev_err(dev, "%s I2C failure: %d\n", __func__, ret);
++		regulator_bulk_disable(ARRAY_SIZE(ak7375_supply_names),
++				       ak7375_dev->supplies);
+ 		return ret;
+ 	}
++	if (retries)
++		dev_dbg(dev, "ready after %d retries\n", retries);
++
++	/* The first position write right after leaving standby can be NACKed */
++	usleep_range(cdef->ctrl_delay_us, cdef->ctrl_delay_us + 10);
+ 
+ 	for (val = ak7375_dev->focus->val % cdef->ctrl_steps;
+ 	     val <= ak7375_dev->focus->val;
+-- 
+2.43.0
+

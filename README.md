@@ -218,6 +218,9 @@ Using the phone as a small server (screen off, charge limit, sleep):
   `GSK_RENDERER=cairo snapshot`.
 - The front camera is too dark and occasionally fails at boot. All cameras are then missing:
   `echo 23-0010 > /sys/bus/i2c/drivers/imx471/bind`
+- Ultrawide autofocus sometimes failed at boot and then stayed off until the next reboot
+  (`Lens initialisation failed` in libcamera). Fixed by kernel patch 0048, which is not in an
+  image yet.
 - Main and ultrawide camera: one mode each (4000x3000 at 30 fps) and contrast autofocus only,
   which takes about 3 seconds and is not always right. Bright areas clip.
 - After testing with `cam` or `media-ctl`, run `media-ctl -d /dev/media0 -r` (`apk add v4l-utils`),
