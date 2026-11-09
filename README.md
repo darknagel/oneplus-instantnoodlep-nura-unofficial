@@ -243,8 +243,6 @@ Using the phone as a small server (screen off, charge limit, sleep):
   Build iio-sensor-proxy 3.9 with the patch and `-Dssc-support=enabled`.
 - Under Plasma Mobile the keyboard did not always open in the SIM PIN popup. Enter the PIN
   in the settings or with `mmcli`.
-- Under Plasma Mobile, Snapshot crashes with the front camera. Start it with
-  `GSK_RENDERER=cairo snapshot`.
 - The front camera is too dark.
 - At some boots the front camera failed and all cameras were missing. Fixed by kernel
   patches 0050–0051, which are not in an image yet. Until then:
