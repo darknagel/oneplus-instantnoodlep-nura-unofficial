@@ -1,0 +1,172 @@
+From 2baddda90e9dfa39a74c2fdf511c35ca58b1c0d3 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 20:29:16 +0100
+Subject: [PATCH 63/63] media: i2c: lc898128: Start only once the camera stays
+ on
+
+Applications and udev power the image sensor up for a moment just to
+list the cameras, and every time the servo engaged and released the
+lens audibly. Start the servo only after the sensor has been powered
+for 1.5 seconds.
+
+Also drop DL_FLAG_RPM_ACTIVE: when the sensor was powered while the
+driver probed, the supplier count never came back down and the OIS
+stayed on with the camera off.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/media/i2c/lc898128.c | 68 ++++++++++++++++++++++++++----------
+ 1 file changed, 50 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/media/i2c/lc898128.c b/drivers/media/i2c/lc898128.c
+index a09957391..a2af6a55c 100644
+--- a/drivers/media/i2c/lc898128.c
++++ b/drivers/media/i2c/lc898128.c
+@@ -7,16 +7,22 @@
+  * so the driver only powers it up and sends the start commands. It follows
+  * the image sensor named by "onnn,camera" through a runtime PM device link:
+  * stabilisation runs whenever the sensor is powered.
++ *
++ * Starting the servo moves the lens audibly, and applications power the
++ * sensor up briefly just to list the cameras. The servo therefore starts
++ * only once the sensor has stayed powered for a while.
+  */
+ 
+ #include <linux/delay.h>
+ #include <linux/device.h>
++#include <linux/devm-helpers.h>
+ #include <linux/i2c.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/unaligned.h>
++#include <linux/workqueue.h>
+ 
+ #define LC898128_REG_FW_VERSION		0x8000
+ #define LC898128_CMD_SERVO		0xf010
+@@ -26,6 +32,7 @@
+ #define LC898128_CMD_GYRO_INIT		0xf015
+ 
+ #define LC898128_READY_RETRIES		10
++#define LC898128_START_DELAY_MS		1500
+ 
+ static bool enable = true;
+ module_param(enable, bool, 0644);
+@@ -40,6 +47,8 @@ struct lc898128 {
+ 	struct i2c_client *client;
+ 	struct regulator_bulk_data supplies[ARRAY_SIZE(lc898128_supply_names)];
+ 	struct device_link *link;
++	struct delayed_work start_work;
++	bool started;
+ 	u32 gyro;
+ };
+ 
+@@ -133,27 +142,36 @@ static int lc898128_start(struct lc898128 *ois)
+ 	return 0;
+ }
+ 
+-static int lc898128_runtime_resume(struct device *dev)
++static void lc898128_start_work(struct work_struct *work)
+ {
+-	struct lc898128 *ois = dev_get_drvdata(dev);
++	struct lc898128 *ois = container_of(to_delayed_work(work),
++					    struct lc898128, start_work);
+ 	u32 version;
+ 	int ret;
+ 
+-	ret = regulator_bulk_enable(ARRAY_SIZE(ois->supplies), ois->supplies);
+-	if (ret)
+-		return ret;
+-
+-	usleep_range(5000, 6000);
+-
+ 	ret = lc898128_wait_ready(ois, &version);
+ 	if (!ret)
+ 		ret = lc898128_start(ois);
+ 	if (ret) {
+-		dev_err(dev, "failed to start: %d\n", ret);
+-		regulator_bulk_disable(ARRAY_SIZE(ois->supplies), ois->supplies);
+-		return ret;
++		dev_err(&ois->client->dev, "failed to start: %d\n", ret);
++		return;
+ 	}
+ 
++	ois->started = true;
++}
++
++static int lc898128_runtime_resume(struct device *dev)
++{
++	struct lc898128 *ois = dev_get_drvdata(dev);
++	int ret;
++
++	ret = regulator_bulk_enable(ARRAY_SIZE(ois->supplies), ois->supplies);
++	if (ret)
++		return ret;
++
++	schedule_delayed_work(&ois->start_work,
++			      msecs_to_jiffies(LC898128_START_DELAY_MS));
++
+ 	return 0;
+ }
+ 
+@@ -161,9 +179,14 @@ static int lc898128_runtime_suspend(struct device *dev)
+ {
+ 	struct lc898128 *ois = dev_get_drvdata(dev);
+ 
++	cancel_delayed_work_sync(&ois->start_work);
++
+ 	/* Let the lens settle before the power goes */
+-	lc898128_write(ois, LC898128_CMD_OIS_ENABLE, 0);
+-	lc898128_write(ois, LC898128_CMD_SERVO, LC898128_SERVO_OFF);
++	if (ois->started) {
++		lc898128_write(ois, LC898128_CMD_OIS_ENABLE, 0);
++		lc898128_write(ois, LC898128_CMD_SERVO, LC898128_SERVO_OFF);
++		ois->started = false;
++	}
+ 	regulator_bulk_disable(ARRAY_SIZE(ois->supplies), ois->supplies);
+ 
+ 	return 0;
+@@ -175,7 +198,7 @@ static int lc898128_probe(struct i2c_client *client)
+ 	struct i2c_client *sensor;
+ 	struct device_node *np;
+ 	struct lc898128 *ois;
+-	u32 flags, version;
++	u32 version;
+ 	unsigned int i;
+ 	int ret;
+ 
+@@ -220,6 +243,13 @@ static int lc898128_probe(struct i2c_client *client)
+ 		return dev_err_probe(dev, ret, "failed to read the version\n");
+ 	}
+ 
++	ret = devm_delayed_work_autocancel(dev, &ois->start_work,
++					   lc898128_start_work);
++	if (ret) {
++		put_device(&sensor->dev);
++		return ret;
++	}
++
+ 	pm_runtime_set_suspended(dev);
+ 	ret = devm_pm_runtime_enable(dev);
+ 	if (ret) {
+@@ -227,10 +257,12 @@ static int lc898128_probe(struct i2c_client *client)
+ 		return ret;
+ 	}
+ 
+-	flags = DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME;
+-	if (pm_runtime_active(&sensor->dev))
+-		flags |= DL_FLAG_RPM_ACTIVE;
+-	ois->link = device_link_add(&sensor->dev, dev, flags);
++	/*
++	 * No DL_FLAG_RPM_ACTIVE: if the sensor is powered right now, the OIS
++	 * only joins from its next power up, but the counts stay balanced.
++	 */
++	ois->link = device_link_add(&sensor->dev, dev,
++				    DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
+ 	put_device(&sensor->dev);
+ 	if (!ois->link)
+ 		return dev_err_probe(dev, -EINVAL, "failed to link to the camera\n");
+-- 
+2.43.0
+

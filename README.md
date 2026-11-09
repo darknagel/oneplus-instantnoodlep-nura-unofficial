@@ -128,6 +128,13 @@ CDSP; use the [firmware setup below](#video) on older images and reboot.
 The copies live in `/lib/firmware/updates/postmarketos`, overriding the packaged firmware
 without replacing package-owned files. See [audio testing and limits](docs/audio.md).
 
+SLPI builds of the same version read the sensor list in shared memory (SMEM item 130) in
+different layouts: older ones with 2 chips per sensor type, newer ones with 3. Kernel patches
+0061–0062 take the layout from the list itself, so the phone's own SLPI firmware finds the
+magnetometer. Without them, as in v2026.11.08 and older images, the phone's own SLPI
+firmware loses the magnetometer and compass; use the firmware service there only if the
+audio DSP does not start.
+
 If the sensor DSP crashes 3 times within 60 seconds, `slpi-guard` stops it instead of
 letting the kernel restart it forever, which used to break most of the phone
 ([#1](../../issues/1)). The sensors are then off until the next reboot,

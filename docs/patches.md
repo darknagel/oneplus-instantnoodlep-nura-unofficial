@@ -28,6 +28,7 @@
 | Colour filter camera GalaxyCore GC5035 (new driver, 2592×1944, also sees near infrared) | works | kernel 0044, 0045, pmaports 0022, libcamera 0006 |
 | Autofocus on main and ultrawide camera (AK7377 actuators with the AK7375 driver) | works, see known issues | kernel 0045, pmaports 0023, libcamera 0007 |
 | Magnetometer MMC5603: the SLPI firmware reads SMEM item 130 with 2 chips per sensor type, the driver wrote 3 | works | kernel 0046–0047, pmaports 0024 |
+| SMEM item 130 layout per SLPI build: same version string, but older builds read 2 chips per sensor type (stride 0x174, algorithms at 0x1000), newer ones 3 (0x22c, 0x17e8). The phone now runs its own SLPI, so the driver keeps the layout of an item the bootloader created and otherwise creates the 3-chip one | works | kernel 0061–0062, pmaports 0031 |
 | Focus actuators: the first CCI transfer after power up can time out, which left the ultrawide lens disabled until the next boot, and the first position write after standby release was sometimes NACKed | works | kernel 0048, pmaports 0025 |
 | Front camera missing at some boots: the telephoto actuator used the camera I2C bus without the 1.8 V pull-up supply (L7F), the CCI timed out and reset both masters during the front camera probe | works | kernel 0050–0051, pmaports 0027 |
 | Compass heading: rotv needs fmv, which needs mag_cal and gyro_cal, which need the software motion detector that OnePlus switches off on SM8250 (`kona_amd_sw_disabled.json`) | works | `sensors/setup-sensors.sh` |
@@ -82,7 +83,8 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   cameras, 0023 adds them to libcamera, 0024 fixes the magnetometer, 0025 makes the
   focus actuators reliable, 0026 adds the 4684-byte sensor layout, 0027 powers the
   telephoto actuator bus, 0028 adds the reboot modes, 0029 adds the main camera
-  OIS, and 0030 fixes USB-C audio detection.
+  OIS, 0030 fixes USB-C audio detection, 0031 takes the sensor layout from SMEM and
+  starts the OIS only once the camera stays on.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `firmware/` – boot service that copies SLPI, Venus and CDSP firmware from your own phone.

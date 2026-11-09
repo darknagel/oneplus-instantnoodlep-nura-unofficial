@@ -1,0 +1,84 @@
+From 66c99d9b3e9e0e24fbcf7226a23f9e373b8805f9 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 20:29:16 +0100
+Subject: [PATCH 61/63] soc: qcom: oneplus-sensor-devinfo: Take the layout from
+ the item size
+
+SLPI builds of OxygenOS read SMEM item 130 in different layouts, even
+with the same version string (SLPI.HY.3.0-00262): older ones with 2
+chips per sensor type at a stride of 0x174 and the algorithm records at
+0x1000, newer ones with 3 chips at 0x22c and 0x17e8. Older bootloaders
+create the item themselves in the layout of their firmware, newer ones
+leave it to the kernel.
+
+With each phone running the SLPI firmware from its own modem partition,
+the layout therefore follows the item: keep the size of an item the
+bootloader created, and create a missing one in the layout named by
+oneplus,sources-per-sensor, by default the newer 3-chip one.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../soc/qcom/oneplus,sensor-devinfo.yaml      |  7 +++----
+ drivers/soc/qcom/oneplus-sensor-devinfo.c     | 19 ++++++++++---------
+ 2 files changed, 13 insertions(+), 13 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml b/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
+index 6a1c739a4..520f1ef7d 100755
+--- a/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
++++ b/Documentation/devicetree/bindings/soc/qcom/oneplus,sensor-devinfo.yaml
+@@ -23,10 +23,9 @@ properties:
+     $ref: /schemas/types.yaml#/definitions/uint32
+     enum: [2, 3]
+     description:
+-      Number of alternative chips per sensor type in the layout of SMEM item
+-      130. Older firmware always reads 2, newer firmware 3, independent of
+-      the size of the item. Without this property, the layout follows the
+-      size of the item.
++      Number of alternative chips per sensor type when the kernel creates
++      SMEM item 130. Older firmware reads 2, newer firmware 3. An item that
++      the bootloader created keeps its own layout. Defaults to 3.
+ 
+ patternProperties:
+   "^(gsensor|msensor|lsensor|lrsensor|psensor|ssensor|sdsensor|cctsensor|cctrsensor)-[0-9]$":
+diff --git a/drivers/soc/qcom/oneplus-sensor-devinfo.c b/drivers/soc/qcom/oneplus-sensor-devinfo.c
+index e81588fc3..e72a85273 100755
+--- a/drivers/soc/qcom/oneplus-sensor-devinfo.c
++++ b/drivers/soc/qcom/oneplus-sensor-devinfo.c
+@@ -329,7 +329,11 @@ static int oneplus_sensor_devinfo_probe(struct platform_device *pdev)
+ 	u32 type, n_sources = 0;
+ 	int ret;
+ 
+-	/* The firmware reads a fixed layout, whatever the size of the item */
++	/*
++	 * Older bootloaders create the item themselves, in the layout their
++	 * firmware reads. Otherwise create it, by default in the layout of
++	 * newer firmware. Either way the size tells the layout.
++	 */
+ 	if (!of_property_read_u32(dev->of_node, "oneplus,sources-per-sensor", &n_sources) &&
+ 	    n_sources != 2 && n_sources != 3)
+ 		return dev_err_probe(dev, -EINVAL,
+@@ -348,16 +352,13 @@ static int oneplus_sensor_devinfo_probe(struct platform_device *pdev)
+ 		return dev_err_probe(dev, PTR_ERR(di.info), "failed to get SMEM item\n");
+ 
+ 	di.n_algorithms = SENSOR_ALGO_NUM;
+-	if ((!n_sources || n_sources == 2) &&
+-	    size == info_size(2, SENSOR_ALGO_NUM_LEGACY)) {
+-		di.n_sources = 2;
+-		di.n_algorithms = SENSOR_ALGO_NUM_LEGACY;
+-	} else if (n_sources && size >= info_size(n_sources, SENSOR_ALGO_NUM)) {
+-		di.n_sources = n_sources;
+-	} else if (!n_sources && size == info_size(3, SENSOR_ALGO_NUM)) {
++	if (size == info_size(3, SENSOR_ALGO_NUM)) {
+ 		di.n_sources = 3;
+-	} else if (!n_sources && size == info_size(2, SENSOR_ALGO_NUM)) {
++	} else if (size == info_size(2, SENSOR_ALGO_NUM)) {
+ 		di.n_sources = 2;
++	} else if (size == info_size(2, SENSOR_ALGO_NUM_LEGACY)) {
++		di.n_sources = 2;
++		di.n_algorithms = SENSOR_ALGO_NUM_LEGACY;
+ 	} else {
+ 		return dev_err_probe(dev, -EINVAL, "unexpected SMEM item size %zu\n", size);
+ 	}
+-- 
+2.43.0
+
