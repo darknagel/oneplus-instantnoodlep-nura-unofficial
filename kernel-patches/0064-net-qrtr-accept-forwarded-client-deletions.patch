@@ -1,0 +1,89 @@
+From 9142339f23682a6d8150208a2ff3449bd929b34a Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 9 Nov 2026 19:24:04 +0000
+Subject: [PATCH] net: qrtr: accept forwarded client deletions on the same
+ endpoint
+
+On the OnePlus 8 Pro, the modem forwards DEL_CLIENT for QRTR node 3
+from node 2 through the same MHI endpoint. The sender/client node
+equality check rejects these with -EINVAL, leaving local servers
+uninformed of client shutdowns and logging repeated errors.
+
+Allow forwarded notifications from the control port when both remote
+nodes resolve to the same endpoint, keeping the checks against local
+node, local port, and cross-endpoint deletions. Compare the route entries
+while holding qrtr_nodes_lock so removal cannot race with the comparison.
+
+Tested on an IN2023: all 1,122 forwarded startup deletions returned zero,
+and QRTR_TUN tests verified v1/v2 forwarding, ordinary local/remote
+deletion, and rejection of six invalid sender/target combinations.
+---
+ net/qrtr/af_qrtr.c | 15 +++++++++++++++
+ net/qrtr/ns.c      | 11 +++++++++--
+ net/qrtr/qrtr.h    |  2 ++
+ 3 files changed, 26 insertions(+), 2 deletions(-)
+
+diff --git a/net/qrtr/af_qrtr.c b/net/qrtr/af_qrtr.c
+index a30fa56e6..16b3932bf 100644
+--- a/net/qrtr/af_qrtr.c
++++ b/net/qrtr/af_qrtr.c
+@@ -401,6 +401,21 @@ static struct qrtr_node *qrtr_node_lookup(unsigned int nid)
+ 	return node;
+ }
+ 
++/* Compare routes under the lock that protects their removal. */
++bool qrtr_nodes_share_endpoint(unsigned int first, unsigned int second)
++{
++	struct qrtr_node *node;
++	unsigned long flags;
++	bool same;
++
++	spin_lock_irqsave(&qrtr_nodes_lock, flags);
++	node = radix_tree_lookup(&qrtr_nodes, first);
++	same = node && node == radix_tree_lookup(&qrtr_nodes, second);
++	spin_unlock_irqrestore(&qrtr_nodes_lock, flags);
++
++	return same;
++}
++
+ /* Assign node id to node.
+  *
+  * This is mostly useful for automatic node id assignment, based on
+diff --git a/net/qrtr/ns.c b/net/qrtr/ns.c
+index c5e7e01db..596c9c48b 100644
+--- a/net/qrtr/ns.c
++++ b/net/qrtr/ns.c
+@@ -440,8 +440,15 @@ static int ctrl_cmd_del_client(struct sockaddr_qrtr *from,
+ 	iv.iov_base = &pkt;
+ 	iv.iov_len = sizeof(pkt);
+ 
+-	/* Don't accept spoofed messages */
+-	if (from->sq_node != node_id)
++	/* A remote router can forward DEL_CLIENT for a node behind it.
++	 * Only accept forwarding between known nodes on the same endpoint;
++	 * neither local clients nor clients on another endpoint may be removed.
++	 */
++	if (from->sq_node != node_id &&
++	    (from->sq_node == qrtr_ns.local_node ||
++	     node_id == qrtr_ns.local_node ||
++	     from->sq_port != QRTR_PORT_CTRL ||
++	     !qrtr_nodes_share_endpoint(from->sq_node, node_id)))
+ 		return -EINVAL;
+ 
+ 	/* Local DEL_CLIENT messages comes from the port being closed */
+diff --git a/net/qrtr/qrtr.h b/net/qrtr/qrtr.h
+index 3f2d28696..c0c6d1742 100644
+--- a/net/qrtr/qrtr.h
++++ b/net/qrtr/qrtr.h
+@@ -29,6 +29,8 @@ void qrtr_endpoint_unregister(struct qrtr_endpoint *ep);
+ 
+ int qrtr_endpoint_post(struct qrtr_endpoint *ep, const void *data, size_t len);
+ 
++bool qrtr_nodes_share_endpoint(unsigned int first, unsigned int second);
++
+ int qrtr_ns_init(void);
+ 
+ void qrtr_ns_remove(void);
+-- 
+2.56.0
+

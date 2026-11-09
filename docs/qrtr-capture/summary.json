@@ -1,0 +1,61 @@
+{
+  "before": {
+    "kernel": "7.2.0-nura-ois1",
+    "capture_buffer": "# entries-in-buffer/entries-written: 11227/11227   #P:8",
+    "counts": [
+      {
+        "sender_node": 1,
+        "client_node": 1,
+        "return_code": 0,
+        "count": 1164
+      },
+      {
+        "sender_node": 2,
+        "client_node": 3,
+        "return_code": -22,
+        "count": 1122
+      }
+    ],
+    "forwarded_first_s": 9.935885,
+    "forwarded_last_s": 64.05536,
+    "printed_packet_warnings": 100,
+    "negative_results": 1122
+  },
+  "after": {
+    "kernel": "7.2.0-nura-qrtr1",
+    "capture_buffer": "# entries-in-buffer/entries-written: 11350/11350   #P:8",
+    "counts": [
+      {
+        "sender_node": 1,
+        "client_node": 1,
+        "return_code": 0,
+        "count": 1166
+      },
+      {
+        "sender_node": 2,
+        "client_node": 3,
+        "return_code": 0,
+        "count": 1122
+      }
+    ],
+    "forwarded_first_s": 9.924989,
+    "forwarded_last_s": 63.993776,
+    "printed_packet_warnings": 0,
+    "negative_results": 0
+  },
+  "clean_boot": {
+    "kernel": "7.2.0-nura-qrtr1",
+    "uptime_at_log_s": 114.9,
+    "qrtr_packet_warnings": 0,
+    "instrumented": false,
+    "sensor_readings": 93,
+    "silent_audio_playback": "passed",
+    "dsp_states": {
+      "slpi": "running",
+      "cdsp": "running",
+      "adsp": "running"
+    },
+    "modem": "sim-missing",
+    "ois_driver": "unloaded and blacklisted"
+  }
+}

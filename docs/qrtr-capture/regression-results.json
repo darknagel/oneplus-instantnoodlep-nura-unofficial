@@ -1,0 +1,108 @@
+[
+  {
+    "name": "forwarded_same_endpoint_v3",
+    "target": [
+      60001,
+      102
+    ],
+    "notified": true,
+    "still_registered": false,
+    "passed": true
+  },
+  {
+    "name": "forwarded_same_endpoint_v1",
+    "target": [
+      60001,
+      102
+    ],
+    "notified": true,
+    "still_registered": false,
+    "passed": true
+  },
+  {
+    "name": "cross_endpoint_rejected",
+    "target": [
+      60002,
+      103
+    ],
+    "notified": false,
+    "still_registered": true,
+    "passed": true
+  },
+  {
+    "name": "remote_cannot_remove_local_client",
+    "target": [
+      1,
+      16413
+    ],
+    "notified": false,
+    "still_registered": true,
+    "passed": true
+  },
+  {
+    "name": "local_cannot_remove_another_local_port",
+    "target": [
+      1,
+      16413
+    ],
+    "notified": false,
+    "still_registered": true,
+    "passed": true
+  },
+  {
+    "name": "local_cannot_remove_remote_client",
+    "target": [
+      60001,
+      102
+    ],
+    "notified": false,
+    "still_registered": true,
+    "passed": true
+  },
+  {
+    "name": "forwarder_must_use_control_port",
+    "target": [
+      60001,
+      102
+    ],
+    "notified": false,
+    "still_registered": true,
+    "passed": true
+  },
+  {
+    "name": "unmapped_forwarded_node_rejected",
+    "target": [
+      60003,
+      104
+    ],
+    "notified": false,
+    "still_registered": false,
+    "passed": true
+  },
+  {
+    "name": "direct_remote_deletion",
+    "target": [
+      60002,
+      103
+    ],
+    "notified": true,
+    "still_registered": false,
+    "passed": true
+  },
+  {
+    "name": "normal_local_close",
+    "target": [
+      1,
+      16416
+    ],
+    "notified": true,
+    "still_registered": false,
+    "passed": true
+  },
+  {
+    "baseline": false,
+    "passed": 10,
+    "total": 10,
+    "cleanup": "no synthetic services remain"
+  }
+]
