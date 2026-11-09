@@ -21,6 +21,7 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 | Main, ultrawide, telephoto and front camera, colour filter camera | works, autofocus on main, ultrawide and telephoto |
 | Accelerometer, light, proximity, gyroscope | works, sensor files included since v2026.11.08, see [Sensors](#sensors) |
 | Magnetometer and compass | works in your own build with kernel 0046–0047 and the [compass fix](#compass); not in the image yet |
+| Video decoding and encoding in hardware (Venus: H.264, HEVC, VP9 and more) | works in your own build with [`firmware/`](firmware/); not in the image yet, see [Video](#video) |
 | Calls, OIS | not done |
 
 Tested on one IN2023 (EU) with the Samsung AMS678UW01 panel. With another panel the screen
@@ -173,6 +174,26 @@ Already on Linux? Get `vendor.img` and `odm.img` from a full OxygenOS update (no
 The DSP libraries come from your phone's `dsp_a` partition, so they match the OxygenOS
 version you had. If that version differs from the one above, the sensor DSP may crash.
 
+### Video
+
+The video codec (Venus) decodes H.264, HEVC, VP8, VP9 and more and encodes H.264 and HEVC,
+which saves a lot of CPU and battery. It needs firmware signed for this phone, which is on
+your phone's `modem_a` partition but may not be passed on. Images after v2026.11.08 copy it
+at first boot. On older images, as root:
+
+```sh
+apk add pil-squasher
+wget -O /usr/local/bin/dsp-firmware https://raw.githubusercontent.com/darknagel/oneplus-instantnoodlep-nura-unofficial/main/firmware/dsp-firmware.sh
+wget -O /etc/systemd/system/dsp-firmware.service https://raw.githubusercontent.com/darknagel/oneplus-instantnoodlep-nura-unofficial/main/firmware/dsp-firmware.service
+chmod 755 /usr/local/bin/dsp-firmware
+systemctl enable dsp-firmware
+reboot
+```
+
+This also starts the compute DSP (CDSP). Check with `ls /sys/class/video4linux/*/name | xargs grep venus`.
+Players use it through V4L2, for example `mpv --hwdec=v4l2m2m-copy VIDEO` or
+`ffmpeg -c:v h264_v4l2m2m -i VIDEO ...`, and GStreamer through `v4l2h264dec`.
+
 ### NFC
 
 ```sh
@@ -255,8 +276,8 @@ pmbootstrap flasher flash_kernel
 ```
 
 The pmaports patches already contain the kernel and libcamera patches. Your own image also
-needs the services from [`modem/`](modem/) and the script from [`sensors/`](sensors/), which
-the prebuilt image already has. Repository layout and how to change the kernel:
+needs the services from [`modem/`](modem/) and [`firmware/`](firmware/) (with `pil-squasher`) and the
+script from [`sensors/`](sensors/), which the prebuilt image already has (`firmware/` from the next image). Repository layout and how to change the kernel:
 [`docs/patches.md`](docs/patches.md).
 
 ## License

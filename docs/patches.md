@@ -30,6 +30,7 @@
 | Focus actuators: the first CCI transfer after power up can time out, which left the ultrawide lens disabled until the next boot, and the first position write after standby release was sometimes NACKed | works | kernel 0048, pmaports 0025 |
 | Front camera missing at some boots: the telephoto actuator used the camera I2C bus without the 1.8 V pull-up supply (L7F), the CCI timed out and reset both masters during the front camera probe | works | kernel 0050–0051, pmaports 0027 |
 | Compass heading: rotv needs fmv, which needs mag_cal and gyro_cal, which need the software motion detector that OnePlus switches off on SM8250 (`kona_amd_sw_disabled.json`) | works | `sensors/setup-sensors.sh` |
+| Video codec Venus and compute DSP: firmware from the phone's `modem_a` (split `.mdt`, joined with pil-squasher), no kernel change | works | `firmware/dsp-firmware.sh` |
 | OIS, colour tuning of the front camera, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
@@ -79,6 +80,7 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   telephoto actuator bus.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
+- `firmware/` – boot service that copies the Venus and CDSP firmware from your own phone.
 - `docs/` – this file and details moved out of the README.
 - `hexagonrpc-patches/` – against https://github.com/linux-msm/hexagonrpc tag `v0.5.0`.
   Adds a writable sensor registry (`-w DIR`), needed by the OnePlus sensor DSP.
