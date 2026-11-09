@@ -1,0 +1,123 @@
+From 09b098f69a0574bf5152dfcf6028c22abf5d4540 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 18:06:49 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: power the telephoto actuator
+ bus on the OnePlus 8 Pro
+
+The telephoto focus actuator talked to the camera I2C bus without its 1.8 V pull-up supply. The CCI then timed out and reset both masters, which made the front camera fail to probe at some boots.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ...ia-i2c-lc898217xc-Add-the-I-O-supply.patch | 32 +++++++++++++++++++
+ ...m8250-oneplus-instantnoodlep-Power-t.patch | 30 +++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  6 +++-
+ 3 files changed, 67 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0050-media-i2c-lc898217xc-Add-the-I-O-supply.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0051-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Power-t.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0050-media-i2c-lc898217xc-Add-the-I-O-supply.patch b/device/testing/linux-postmarketos-qcom-sm8250/0050-media-i2c-lc898217xc-Add-the-I-O-supply.patch
+new file mode 100644
+index 0000000000..3f5073f4c5
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0050-media-i2c-lc898217xc-Add-the-I-O-supply.patch
+@@ -0,0 +1,32 @@
++From 8bc655c5bb1c767a76c5e5305694adce50732004 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 9 Nov 2026 18:02:45 +0100
++Subject: [PATCH 50/51] media: i2c: lc898217xc: Add the I/O supply
++
++The I2C bus of the actuator can be powered by a separate rail, as on the
++OnePlus 8 Pro, where the camera I2C pull-ups hang on the 1.8 V camera I/O
++supply. Without it, setting the focus while no sensor holds that rail on
++times out, and the CCI controller resets both of its masters.
++
++Add an optional "vio" supply.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ drivers/media/i2c/lc898217xc.c | 1 +
++ 1 file changed, 1 insertion(+)
++
++diff --git a/drivers/media/i2c/lc898217xc.c b/drivers/media/i2c/lc898217xc.c
++index 03e07a173..9667319a1 100644
++--- a/drivers/media/i2c/lc898217xc.c
+++++ b/drivers/media/i2c/lc898217xc.c
++@@ -25,6 +25,7 @@
++ static const char *const lc898217xc_supply_names[] = {
++ 	"vdd",
++ 	"vana",
+++	"vio",
++ };
++ 
++ struct lc898217xc {
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0051-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Power-t.patch b/device/testing/linux-postmarketos-qcom-sm8250/0051-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Power-t.patch
+new file mode 100644
+index 0000000000..77c3e6fae0
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0051-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Power-t.patch
+@@ -0,0 +1,30 @@
++From 299a10a41dcb8560136c29d747fb054d7fc40cf2 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 9 Nov 2026 18:02:46 +0100
++Subject: [PATCH 51/51] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Power
++ the telephoto actuator bus
++
++The camera I2C pull-ups are on L7F. Give the telephoto focus actuator
++that supply, like the other actuators, so it does not talk to an
++unpowered bus and make the CCI reset the front camera's master at boot.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 1 +
++ 1 file changed, 1 insertion(+)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 81263864f..538d1049c 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -1120,6 +1120,7 @@ cam_tele_af: lens@74 {
++ 
++ 		vdd-supply = <&vreg_cam_tele_vaf>;
++ 		vana-supply = <&vreg_l6f_2p8>;
+++		vio-supply = <&vreg_l7f_1p8>;
++ 	};
++ };
++ 
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index d05d75ed0a..c9a73fe733 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=57
++pkgrel=58
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -88,6 +88,8 @@ source="
+ 	0047-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-the.patch
+ 	0048-media-i2c-ak7375-Make-power-up-reliable.patch
+ 	0049-soc-qcom-oneplus-sensor-devinfo-support-legacy-layout.patch
++	0050-media-i2c-lc898217xc-Add-the-I-O-supply.patch
++	0051-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Power-t.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -183,4 +185,6 @@ ca0d56c0df8e7dfcd84ca0746cf1ba63ece7163062cceb92033db687b9a02dfc9483cffe24745e9f
+ 9201d09fd53a4c8938c5d7eb6eddb54e20b7c233554d90756faa922d98945bb0f2c6ceec308d8dbbef9d889002b610691a87f6754477c6d82e46d5304f69c642  0047-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-the.patch
+ 8695f67e5f3de57fae521b0eb625832f4c78917561952f42191ba1a36513546cc0084c443fc536df1807f07c2e45c5d15ad15cc44c740155afe607925a984fb4  0048-media-i2c-ak7375-Make-power-up-reliable.patch
+ 6a18934d04e7997d929bf3d470876a8fd6a19a37e6e24dc434367e9f2c4ade4e68f3af3b4b1c452e5d1de4354596cdfb2784d6a149c977140c387565ab348051  0049-soc-qcom-oneplus-sensor-devinfo-support-legacy-layout.patch
++b7078fecbda54dce95d47fa5e992be04968a5ff3eaad2d8fb6ec1e53cde614a106907219098a82012f59f71cea8cbe762fc30421d29f55aef714833eb0173e9b  0050-media-i2c-lc898217xc-Add-the-I-O-supply.patch
++ef99f452cc8848a6ecf4a142b6f86aa62ab3fc7113a74b9381fb2f48edda8132f085956315419917d4fdf02d34717762cd55e276d72aec8105c2155ab98d5be4  0051-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Power-t.patch
+ "
+-- 
+2.43.0
+

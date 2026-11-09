@@ -1,0 +1,32 @@
+From 8bc655c5bb1c767a76c5e5305694adce50732004 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 18:02:45 +0100
+Subject: [PATCH 50/51] media: i2c: lc898217xc: Add the I/O supply
+
+The I2C bus of the actuator can be powered by a separate rail, as on the
+OnePlus 8 Pro, where the camera I2C pull-ups hang on the 1.8 V camera I/O
+supply. Without it, setting the focus while no sensor holds that rail on
+times out, and the CCI controller resets both of its masters.
+
+Add an optional "vio" supply.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/media/i2c/lc898217xc.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/media/i2c/lc898217xc.c b/drivers/media/i2c/lc898217xc.c
+index 03e07a173..9667319a1 100644
+--- a/drivers/media/i2c/lc898217xc.c
++++ b/drivers/media/i2c/lc898217xc.c
+@@ -25,6 +25,7 @@
+ static const char *const lc898217xc_supply_names[] = {
+ 	"vdd",
+ 	"vana",
++	"vio",
+ };
+ 
+ struct lc898217xc {
+-- 
+2.43.0
+

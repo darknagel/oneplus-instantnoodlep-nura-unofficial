@@ -220,7 +220,9 @@ Using the phone as a small server (screen off, charge limit, sleep):
   in the settings or with `mmcli`.
 - Under Plasma Mobile, Snapshot crashes with the front camera. Start it with
   `GSK_RENDERER=cairo snapshot`.
-- The front camera is too dark and occasionally fails at boot. All cameras are then missing:
+- The front camera is too dark.
+- At some boots the front camera failed and all cameras were missing. Fixed by kernel
+  patches 0050–0051, which are not in an image yet. Until then:
   `echo 23-0010 > /sys/bus/i2c/drivers/imx471/bind`
 - Ultrawide autofocus sometimes failed at boot and then stayed off until the next reboot
   (`Lens initialisation failed` in libcamera). Fixed by kernel patch 0048, which is not in an
