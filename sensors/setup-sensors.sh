@@ -3,7 +3,7 @@
 # (with compass) sensors of the OnePlus 8 Pro.
 # Run as root on the phone. The sensor DSP needs OnePlus' own files, which may
 # not be redistributed, so they come from your own phone:
-#  - the DSP libraries from the dsp_a partition,
+#  - the DSP libraries from the dsp partition of the active slot,
 #  - the sensor configuration from Android, which you saved before flashing
 #    (see the README): vendor/ holds /vendor/etc/sensors, odm/ /odm/etc/sensor.
 # Usage: setup-sensors.sh DIR
@@ -21,9 +21,15 @@ command -v sscregistrygen >/dev/null || { echo "sscregistrygen is missing"; exit
 
 mkdir -p $F/dsp/sdsp $F/sensors/config $F/sensors/persist/registry $F/socinfo
 
+SLOT=a
+for arg in $(cat /proc/cmdline); do
+	case "$arg" in androidboot.slot_suffix=_b) SLOT=b ;; esac
+done
 MNT=$(mktemp -d)
-mount -o ro /dev/disk/by-partlabel/dsp_a "$MNT"
+mount -o ro /dev/disk/by-partlabel/dsp_$SLOT "$MNT"
+rm -f $F/dsp/sdsp/* $F/dsp/sdsp/.from-dsp_*
 cp "$MNT"/sdsp/* $F/dsp/sdsp/
+touch $F/dsp/sdsp/.from-dsp_$SLOT
 umount "$MNT"
 rmdir "$MNT"
 

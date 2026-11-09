@@ -5,22 +5,26 @@
 #
 # Everything proprietary or device specific comes from this phone's own
 # partitions and stays on the phone:
-#  - the modem firmware from the modem_a partition. It must be the same
-#    version as the RF configuration the modem reads from modem_a at run
-#    time; a different firmware version (e.g. firmware-oneplus-instantnoodlep-
+#  - the modem firmware from the modem partition of the slot the bootloader
+#    started (modem_a on a normal install). It must be the same version as
+#    the RF configuration the modem reads from that partition at run time; a different firmware version (e.g. firmware-oneplus-instantnoodlep-
 #    modem) leaves the RF unconfigured and the modem stays offline.
 #  - the modem's file system (EFS), the OnePlus NV backup and the DDR
 #    training data from mdm1m9kefs1/2, mdm1oemnvbktmp and mdmddr.
 set -e
 cd "$(dirname "$0")"
 FW=/lib/firmware/postmarketos/qcom/sdx55m
-MNT=/run/sdx55-modem_a
 P=/dev/disk/by-partlabel
+SLOT=a
+for arg in $(cat /proc/cmdline); do
+	case "$arg" in androidboot.slot_suffix=_b) SLOT=b ;; esac
+done
+MNT=/run/sdx55-modem_$SLOT
 
 command -v python3 >/dev/null || apk add python3
 
 mkdir -p $FW $MNT
-mountpoint -q $MNT || mount -o ro $P/modem_a $MNT
+mountpoint -q $MNT || mount -o ro $P/modem_$SLOT $MNT
 for f in $MNT/image/sdx55m/*; do
 	case ${f##*/} in efs*|mdmddr.mbn) continue ;; esac
 	install -m 600 "$f" $FW/

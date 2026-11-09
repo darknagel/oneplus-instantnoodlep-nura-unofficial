@@ -1,13 +1,22 @@
 #!/usr/bin/env python3
 # Run as root. Minimal TFTP-over-QRTR server for the SDX55 remote file system
-# (what tftp_server does on Android). Read-only files come from the modem_a
-# partition and /lib/firmware, /readwrite is kept in /var/lib/sdx55-rfs.
+# (what tftp_server does on Android). Read-only files come from the modem
+# partition of the active slot and /lib/firmware, /readwrite is kept in /var/lib/sdx55-rfs.
 import os, socket, struct, subprocess, sys, threading, time
 
 AF_QIPCRTR = 42
 SERVICE = 4096
 INSTANCE = int(sys.argv[1]) if len(sys.argv) > 1 else 3
-MNT = '/run/sdx55-modem_a'
+def android_slot():
+    """The slot the bootloader started; all firmware services read the same one"""
+    for arg in open('/proc/cmdline').read().split():
+        if arg in ('androidboot.slot_suffix=_a', 'androidboot.slot_suffix=_b'):
+            return arg[-1]
+    return 'a'
+
+
+SLOT = android_slot()
+MNT = '/run/sdx55-modem_' + SLOT
 RW = '/var/lib/sdx55-rfs/readwrite'
 
 RRQ, WRQ, DATA, ACK, ERROR, OACK = 1, 2, 3, 4, 5, 6
@@ -26,11 +35,11 @@ def log(msg):
 os.makedirs(MNT, exist_ok=True)
 os.makedirs(RW, exist_ok=True)
 if not os.path.ismount(MNT):
-    subprocess.call(['mount', '-o', 'ro', '/dev/disk/by-partlabel/modem_a', MNT])
+    subprocess.call(['mount', '-o', 'ro', '/dev/disk/by-partlabel/modem_' + SLOT, MNT])
 
 RO_PREFIXES = ('/readonly/firmware/image/', '/readonly/vendor/firmware_mnt/image/',
                '/readonly/vendor/firmware/', '/readonly/firmware/')
-# Files in OVR replace those on modem_a (debug: e.g. a changed mbn_hw.dig)
+# Files in OVR replace those on the modem partition (debug: e.g. a changed mbn_hw.dig)
 OVR = '/var/lib/sdx55-rfs/override'
 RO_DIRS = (OVR, MNT + '/image/sdx55', MNT + '/image', MNT, '/lib/firmware/qcom/sdx55m')
 

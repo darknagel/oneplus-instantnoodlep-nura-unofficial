@@ -41,7 +41,8 @@ with the country code (`+49...`).
 
 ## Facts
 
-- The modem firmware **must come from your own `modem_a` partition** –
+- The modem firmware **must come from your own modem partition** of the slot the
+  bootloader started (`modem_a` on a normal install) –
   `install.sh` copies it. The firmware package of the distribution is a
   different version; with it the modem stays offline.
 - Modem data (EFS, NV, DDR) is copied from your own partitions too. It

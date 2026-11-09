@@ -176,7 +176,8 @@ figure eight).
    scp -r vendor odm root@172.16.42.1:/root/android-sensors/
    ```
 
-3. On the phone. The script also copies the DSP files from the `dsp_a` partition.
+3. On the phone. The script also copies the DSP files from the `dsp_a` partition (`dsp_b` if
+   the phone started slot b).
 
    ```sh
    setup-sensors /root/android-sensors
@@ -186,8 +187,8 @@ figure eight).
 4. Check: `ssccli --sensor accelerometer --timeout 3`
 
 Already on Linux? Get `vendor.img` and `odm.img` from a full OxygenOS update (not tested).
-The DSP libraries come from your phone's `dsp_a` partition, so they match the OxygenOS
-version you had. If that version differs from the one above, the sensor DSP may crash.
+The DSP libraries come from your phone's own `dsp` partition, so they match the OxygenOS
+version you had. The `firmware/` service does the same at boot.
 
 ### Video
 
@@ -205,8 +206,10 @@ systemctl enable dsp-firmware
 reboot
 ```
 
-This also installs the matching sensor-DSP firmware (SLPI) and starts the compute DSP
-(CDSP). Existing local overrides are kept; rerunning the service does not replace them.
+This also installs the matching sensor-DSP firmware (SLPI), replaces the sensor-DSP
+libraries with the ones from your phone's own `dsp` partition, and starts the compute DSP
+(CDSP). All copies come from the slot the bootloader started (normally a). Existing local
+overrides are kept; rerunning the service does not replace them.
 Check with `ls /sys/class/video4linux/*/name | xargs grep venus`.
 Players use it through V4L2, for example `mpv --hwdec=v4l2m2m-copy VIDEO` or
 `ffmpeg -c:v h264_v4l2m2m -i VIDEO ...`, and GStreamer through `v4l2h264dec`.
