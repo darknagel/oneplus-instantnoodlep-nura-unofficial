@@ -115,6 +115,10 @@ the sensor configuration from OxygenOS (SLPI firmware `SLPI.HY.3.0-00262`). Thes
 proprietary OnePlus/Qualcomm files. The sensors work right after flashing, check with
 `monitor-sensor`.
 
+Some bootloaders expose a 4684-byte sensor-information item and need kernel patch 0049,
+which is not in v2026.11.08. Without it, the kernel reports
+`unexpected SMEM item size 4684` and the accelerometer is unavailable.
+
 If the sensor DSP crashes 3 times within 60 seconds, `slpi-guard` stops it instead of
 letting the kernel restart it forever, which used to break most of the phone
 ([#1](../../issues/1)). The sensors are then off until the next reboot,

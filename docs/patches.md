@@ -8,7 +8,7 @@
 | GPU (Adreno 650, Mesa freedreno), Phosh accelerated | works | kernel 0004, pmaports 0001 |
 | Speakers + 3 microphones (VA macro, mic bias as in vendor DT) | works | kernel 0005, pmaports 0002, 0007 |
 | A/B boot counter (qbootctl marks boot successful) | works | pmaports 0003 |
-| Accelerometer, light, proximity via SLPI (SMEM item 130 filled by new driver) | works, needs the stock sensor files | kernel 0006–0008, pmaports 0004–0006, hexagonrpc 0001–0005 |
+| Accelerometer, light, proximity via SLPI (SMEM item 130 filled by new driver) | works, needs the stock sensor files | kernel 0006–0008, 0049, pmaports 0004–0006, 0026, hexagonrpc 0001–0005 |
 | Telephoto camera Samsung S5K3M5 via CAMSS + libcamera (4208×3120 @ 30, 2104×1184 @ 60, AGC, green tint) | works | kernel 0009–0010, pmaports 0008–0009, libcamera 0001 |
 | Front camera Sony IMX471 (new driver, 4656×3496 @ 30, 2328×1748 @ 60) | works, see known issues | kernel 0011–0012, pmaports 0010–0011, libcamera 0002 |
 | Full resolution capture on SM8250 CAMSS (camera NoC clock was never set) | fixed | kernel 0013, pmaports 0012 |
@@ -35,6 +35,11 @@ Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 
 `camnoc_axi_src` clock was never scaled, so full resolution RDI capture never completed a
 frame, while binned modes with shorter lines still worked. Other SM8250 devices using CAMSS
 should be affected too.
+
+Kernel patch 0049 accepts the 4684-byte sensor-information layout found on an IN2023
+OnePlus 8 Pro: two hardware sources per sensor and seven algorithm records. It bounds
+virtual-sensor writes to those seven records and preserves the existing layout rules.
+Without it, the sensor device-info driver fails to bind with `-EINVAL`.
 
 The telephoto module has two chips next to the sensor: an LC898128 at 0x24, which only
 drives the optical image stabilisation, and the LC898217XC at 0x74 that moves the lens.
