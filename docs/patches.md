@@ -33,7 +33,8 @@
 | Video codec Venus and compute DSP: firmware from the phone's `modem_a` (split `.mdt`, joined with pil-squasher), no kernel change | works | `firmware/dsp-firmware.sh` |
 | Automatic screen rotation: iio-sensor-proxy 3.9 opens the SSC sensors synchronously at startup; a claim in that window (KWin, Phosh) is stored but the sensor is never started | works | iio-sensor-proxy 0001 |
 | Reboot modes: `reboot bootloader` / `reboot recovery`; the unused PM8009 PON registered a second `qcom-pon` reboot mode (-EEXIST warning at boot) | works | kernel 0052, pmaports 0028 |
-| OIS, colour tuning of the front camera, calls | not done | – |
+| OIS of the main camera: onsemi LC898128 at 0x24, runs from its own firmware and reads the module gyroscope itself; new driver starts it whenever the sensor is powered, PM8009 L5 added for its supply | works | kernel 0053–0054, pmaports 0029 |
+| OIS of the telephoto camera (second LC898128, gets the gyroscope data from the main one), colour tuning of the front camera, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
 `camnoc_axi_src` clock was never scaled, so full resolution RDI capture never completed a
@@ -79,7 +80,7 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   modem's data channels, 0021 fixes NFC, 0022 adds the C-PHY series and the remaining
   cameras, 0023 adds them to libcamera, 0024 fixes the magnetometer, 0025 makes the
   focus actuators reliable, 0026 adds the 4684-byte sensor layout, 0027 powers the
-  telephoto actuator bus, 0028 adds the reboot modes.
+  telephoto actuator bus, 0028 adds the reboot modes, 0029 the main camera OIS.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `firmware/` – boot service that copies the Venus and CDSP firmware from your own phone.
