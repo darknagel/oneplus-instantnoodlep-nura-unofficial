@@ -1,12 +1,10 @@
-From 5d046948a5d83f0ccfecad54cae0d697d325a5f2 Mon Sep 17 00:00:00 2001
+From 061a0579f7551273d52c7d6de44ec19a3f3b9477 Mon Sep 17 00:00:00 2001
 From: Roman Kuraev <naoru.desu@gmail.com>
-Date: Mon, 9 Nov 2026 18:19:32 +0000
+Date: Mon, 9 Nov 2026 18:47:02 +0000
 Subject: [PATCH] linux-postmarketos-qcom-sm8250: fix OnePlus USB-C audio
  detection
 
-Include the six audio patches and bump the kernel package to r60.
-Regenerate source checksums from the embedded patch files, including
-existing entries whose checksums no longer matched their contents.
+Include the six audio patches after the main camera OIS series and bump the kernel package to r61. Regenerate source checksums from the embedded patch files, including existing entries whose checksums no longer matched their contents.
 
 Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
 ---
@@ -18,18 +16,18 @@ Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
  ...m8250-oneplus-instantnoodlep-wire-US.patch |  99 +++++++++
  .../linux-postmarketos-qcom-sm8250/APKBUILD   |  82 ++++----
  7 files changed, 561 insertions(+), 35 deletions(-)
- create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0053-dt-bindings-sound-describe-WCD938x-USB-C-audio-routi.patch
- create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0054-ASoC-wcd-mbhc-keep-the-codec-powered-during-detectio.patch
- create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0055-ASoC-wcd938x-receive-USB-C-audio-accessory-events.patch
- create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0056-usb-typec-fsa4480-forward-accessory-events-to-the-co.patch
- create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0057-ASoC-lpass-rx-macro-sort-register-defaults.patch
- create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0058-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-wire-US.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0055-dt-bindings-sound-describe-WCD938x-USB-C-audio-routi.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0056-ASoC-wcd-mbhc-keep-the-codec-powered-during-detectio.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0057-ASoC-wcd938x-receive-USB-C-audio-accessory-events.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0058-usb-typec-fsa4480-forward-accessory-events-to-the-co.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0059-ASoC-lpass-rx-macro-sort-register-defaults.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0060-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-wire-US.patch
 
-diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0053-dt-bindings-sound-describe-WCD938x-USB-C-audio-routi.patch b/device/testing/linux-postmarketos-qcom-sm8250/0053-dt-bindings-sound-describe-WCD938x-USB-C-audio-routi.patch
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0055-dt-bindings-sound-describe-WCD938x-USB-C-audio-routi.patch b/device/testing/linux-postmarketos-qcom-sm8250/0055-dt-bindings-sound-describe-WCD938x-USB-C-audio-routi.patch
 new file mode 100644
 index 0000000..9145819
 --- /dev/null
-+++ b/device/testing/linux-postmarketos-qcom-sm8250/0053-dt-bindings-sound-describe-WCD938x-USB-C-audio-routi.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0055-dt-bindings-sound-describe-WCD938x-USB-C-audio-routi.patch
 @@ -0,0 +1,64 @@
 +From 4356e3ff615d4609058441bed7710d28b860036f Mon Sep 17 00:00:00 2001
 +From: Roman Kuraev <naoru.desu@gmail.com>
@@ -95,11 +93,11 @@ index 0000000..9145819
 +-- 
 +2.56.0
 +
-diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0054-ASoC-wcd-mbhc-keep-the-codec-powered-during-detectio.patch b/device/testing/linux-postmarketos-qcom-sm8250/0054-ASoC-wcd-mbhc-keep-the-codec-powered-during-detectio.patch
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0056-ASoC-wcd-mbhc-keep-the-codec-powered-during-detectio.patch b/device/testing/linux-postmarketos-qcom-sm8250/0056-ASoC-wcd-mbhc-keep-the-codec-powered-during-detectio.patch
 new file mode 100644
 index 0000000..41f278e
 --- /dev/null
-+++ b/device/testing/linux-postmarketos-qcom-sm8250/0054-ASoC-wcd-mbhc-keep-the-codec-powered-during-detectio.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0056-ASoC-wcd-mbhc-keep-the-codec-powered-during-detectio.patch
 @@ -0,0 +1,42 @@
 +From 7a1f18b7a7817b0c74d6a5bed1e5dfbee66f878f Mon Sep 17 00:00:00 2001
 +From: Roman Kuraev <naoru.desu@gmail.com>
@@ -143,11 +141,11 @@ index 0000000..41f278e
 +-- 
 +2.56.0
 +
-diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0055-ASoC-wcd938x-receive-USB-C-audio-accessory-events.patch b/device/testing/linux-postmarketos-qcom-sm8250/0055-ASoC-wcd938x-receive-USB-C-audio-accessory-events.patch
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0057-ASoC-wcd938x-receive-USB-C-audio-accessory-events.patch b/device/testing/linux-postmarketos-qcom-sm8250/0057-ASoC-wcd938x-receive-USB-C-audio-accessory-events.patch
 new file mode 100644
 index 0000000..297cd56
 --- /dev/null
-+++ b/device/testing/linux-postmarketos-qcom-sm8250/0055-ASoC-wcd938x-receive-USB-C-audio-accessory-events.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0057-ASoC-wcd938x-receive-USB-C-audio-accessory-events.patch
 @@ -0,0 +1,198 @@
 +From d45de81d0ae2d474ba3ba11f0dd1a3bd2c777366 Mon Sep 17 00:00:00 2001
 +From: Roman Kuraev <naoru.desu@gmail.com>
@@ -347,11 +345,11 @@ index 0000000..297cd56
 +-- 
 +2.56.0
 +
-diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0056-usb-typec-fsa4480-forward-accessory-events-to-the-co.patch b/device/testing/linux-postmarketos-qcom-sm8250/0056-usb-typec-fsa4480-forward-accessory-events-to-the-co.patch
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0058-usb-typec-fsa4480-forward-accessory-events-to-the-co.patch b/device/testing/linux-postmarketos-qcom-sm8250/0058-usb-typec-fsa4480-forward-accessory-events-to-the-co.patch
 new file mode 100644
 index 0000000..8241ac4
 --- /dev/null
-+++ b/device/testing/linux-postmarketos-qcom-sm8250/0056-usb-typec-fsa4480-forward-accessory-events-to-the-co.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0058-usb-typec-fsa4480-forward-accessory-events-to-the-co.patch
 @@ -0,0 +1,60 @@
 +From d7e675968080835f0b8f6b2785f1c3b6396cebcf Mon Sep 17 00:00:00 2001
 +From: Roman Kuraev <naoru.desu@gmail.com>
@@ -413,11 +411,11 @@ index 0000000..8241ac4
 +-- 
 +2.56.0
 +
-diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0057-ASoC-lpass-rx-macro-sort-register-defaults.patch b/device/testing/linux-postmarketos-qcom-sm8250/0057-ASoC-lpass-rx-macro-sort-register-defaults.patch
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0059-ASoC-lpass-rx-macro-sort-register-defaults.patch b/device/testing/linux-postmarketos-qcom-sm8250/0059-ASoC-lpass-rx-macro-sort-register-defaults.patch
 new file mode 100644
 index 0000000..b18641d
 --- /dev/null
-+++ b/device/testing/linux-postmarketos-qcom-sm8250/0057-ASoC-lpass-rx-macro-sort-register-defaults.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0059-ASoC-lpass-rx-macro-sort-register-defaults.patch
 @@ -0,0 +1,51 @@
 +From b815c1413be554ead9f0f3aa5933c744672022d8 Mon Sep 17 00:00:00 2001
 +From: Roman Kuraev <naoru.desu@gmail.com>
@@ -470,11 +468,11 @@ index 0000000..b18641d
 +-- 
 +2.56.0
 +
-diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0058-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-wire-US.patch b/device/testing/linux-postmarketos-qcom-sm8250/0058-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-wire-US.patch
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0060-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-wire-US.patch b/device/testing/linux-postmarketos-qcom-sm8250/0060-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-wire-US.patch
 new file mode 100644
 index 0000000..a02699f
 --- /dev/null
-+++ b/device/testing/linux-postmarketos-qcom-sm8250/0058-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-wire-US.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0060-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-wire-US.patch
 @@ -0,0 +1,99 @@
 +From f496339d7d6f52be4b6f493a6fd8d8799492078c Mon Sep 17 00:00:00 2001
 +From: Roman Kuraev <naoru.desu@gmail.com>
@@ -576,35 +574,35 @@ index 0000000..a02699f
 +2.56.0
 +
 diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
-index 4dd5160..c3c4333 100644
+index e546d38..67c8ab3 100644
 --- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
 +++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
 @@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
  _flavor="postmarketos-qcom-sm8250"
  pkgname=linux-$_flavor
  pkgver=7.2.0_git20261010
--pkgrel=59
-+pkgrel=60
+-pkgrel=60
++pkgrel=61
  pkgdesc="Mainline kernel fork for SM8250"
  arch="aarch64"
  _carch="arm64"
-@@ -91,6 +91,12 @@ source="
- 	0050-media-i2c-lc898217xc-Add-the-I-O-supply.patch
- 	0051-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Power-t.patch
+@@ -93,6 +93,12 @@ source="
  	0052-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
-+	0053-dt-bindings-sound-describe-WCD938x-USB-C-audio-routi.patch
-+	0054-ASoC-wcd-mbhc-keep-the-codec-powered-during-detectio.patch
-+	0055-ASoC-wcd938x-receive-USB-C-audio-accessory-events.patch
-+	0056-usb-typec-fsa4480-forward-accessory-events-to-the-co.patch
-+	0057-ASoC-lpass-rx-macro-sort-register-defaults.patch
-+	0058-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-wire-US.patch
+ 	0053-media-i2c-Add-a-driver-for-the-onsemi-LC898128-OIS-c.patch
+ 	0054-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
++	0055-dt-bindings-sound-describe-WCD938x-USB-C-audio-routi.patch
++	0056-ASoC-wcd-mbhc-keep-the-codec-powered-during-detectio.patch
++	0057-ASoC-wcd938x-receive-USB-C-audio-accessory-events.patch
++	0058-usb-typec-fsa4480-forward-accessory-events-to-the-co.patch
++	0059-ASoC-lpass-rx-macro-sort-register-defaults.patch
++	0060-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-wire-US.patch
  "
  builddir="$srcdir/linux-$_tag"
  
-@@ -138,37 +144,37 @@ package() {
+@@ -140,37 +146,37 @@ package() {
  sha512sums="
  05df1589411d2817fecc403402f1dea2c405c5de102bf92e23089e430fc2c623702bd778fbea5b87f70ea02e9eff7f02a7de292f895d47ff40ae88dafdfbab58  linux-postmarketos-qcom-sm8250-sm8250-7.2.0_git20261010.tar.gz
- e1ad7a53ab2a94374b832c835d297e8597566bb0415339c8f869b199988b47a37f29f75ead961eef05013017e112b6bbab1925d0ce900f2d71a9ede60e2c67ea  config-postmarketos-qcom-sm8250.aarch64
+ 114803ff975c4f9c18dd7e5c3b160ffa035495e1a1147e94adefc0ccb5ffb721a8029256aba95209f17810782201b8a815d20f6947a3067ace033893e31da1fd  config-postmarketos-qcom-sm8250.aarch64
 -83cb859ba62434fbdac0b8c1f8bda2b9766ea58a121b3e224fc46a94ad1610a86a3d529ad12343a31aba7058c710bdc89b08db5d4a26d484e5757ab5d8d73260  0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
 -1c955330b50679ab8f62664f7c8353b5d3967b8a9b6dd70cab4c35d9a940fe07ebb61da01360cb9877cccd27ff291d2a6069387e110538aa14aef88b31449042  0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
 -91f00b0b7c45df737f6f106b96a394d9f8bc884c0b4a379fa2cf429d99c3c9946d8f6832d6be16be61a3ff2274fe9cf60473ceb16ac02451d827693114acdf48  0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
@@ -669,7 +667,7 @@ index 4dd5160..c3c4333 100644
  8f2f514ef3066ecfb70e0e3567f69ebb44739b025594f643ab0447729b11c03721f7dfafae01c8823eb99363f5d96fe3550b382a1055a125fcd390db013770ec  0033-media-qcom-camss-csiphy-Introduce-PHY-configuration.patch
  b5190a1291728dd89e722af2226ba235f3f58a6fe6f5f5f038359ebc2f2c2ddac9d4c91fc5f4cc64595ef4717e065d39526de9d2b804f7ce5a8226dbc080c4d2  0034-media-qcom-camss-csiphy-3ph-Use-odd-bits-for-configu.patch
  291b5791c46bab9848b22a7f619153858933feac4715328eaa1ca6041d10588d2fc47ade392d4c1a118636235a7a8009997f55ceac6306ed89643ac8b7a30271  0035-media-qcom-camss-Prepare-CSID-for-C-PHY-support.patch
-@@ -178,10 +184,10 @@ b5190a1291728dd89e722af2226ba235f3f58a6fe6f5f5f038359ebc2f2c2ddac9d4c91fc5f4cc64
+@@ -180,10 +186,10 @@ b5190a1291728dd89e722af2226ba235f3f58a6fe6f5f5f038359ebc2f2c2ddac9d4c91fc5f4cc64
  87294ab2e987ba40b3cd9d3a0ca0b04ea6b1ef4b586e95264ebaf4ebfdd953c038797412ad4f070feae768e4f34e7e265421cf81483f9b5be08835fdc92c48a8  0039-media-qcom-camss-csiphy-3ph-Add-Gen2-v1.2.1-MIPI-CSI.patch
  6252f6da6d1b7682ffd19354bfc01908054e77b92b49fa5c98b14eb0bc4de6c7eea479471141068f40368053e87eb49d04fd091e8f87a37fdb810394effe7bab  0040-media-qcom-camss-Account-for-C-PHY-when-calculating-.patch
  eafca95647dad276328b669487139c8bd4dcecc7a021123cc27502830d3953c94f1344528a8549344894f0ca5682432f5dc5894c5b81e0d29a618245202474af  0041-media-qcom-camss-Enable-C-PHY-where-available.patch
@@ -684,16 +682,16 @@ index 4dd5160..c3c4333 100644
  9c1922b5506c7b69be2643d5c8c8b41176c2d10dda1e7f09136d906dbcbd4aa3dc43a0634c48396cf1fdd362c97cfa144ee2082df70fe9856b4fffa854c12de0  0046-soc-qcom-oneplus-sensor-devinfo-Let-the-device-tree-.patch
  9201d09fd53a4c8938c5d7eb6eddb54e20b7c233554d90756faa922d98945bb0f2c6ceec308d8dbbef9d889002b610691a87f6754477c6d82e46d5304f69c642  0047-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-the.patch
  8695f67e5f3de57fae521b0eb625832f4c78917561952f42191ba1a36513546cc0084c443fc536df1807f07c2e45c5d15ad15cc44c740155afe607925a984fb4  0048-media-i2c-ak7375-Make-power-up-reliable.patch
-@@ -189,4 +195,10 @@ ca0d56c0df8e7dfcd84ca0746cf1ba63ece7163062cceb92033db687b9a02dfc9483cffe24745e9f
- b7078fecbda54dce95d47fa5e992be04968a5ff3eaad2d8fb6ec1e53cde614a106907219098a82012f59f71cea8cbe762fc30421d29f55aef714833eb0173e9b  0050-media-i2c-lc898217xc-Add-the-I-O-supply.patch
- ef99f452cc8848a6ecf4a142b6f86aa62ab3fc7113a74b9381fb2f48edda8132f085956315419917d4fdf02d34717762cd55e276d72aec8105c2155ab98d5be4  0051-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Power-t.patch
+@@ -193,4 +199,10 @@ ef99f452cc8848a6ecf4a142b6f86aa62ab3fc7113a74b9381fb2f48edda8132f085956315419917
  a6d99005bb7d91bfb356a9552465aae8011c42879efba7617776e6a24024a5f5fc8d9018d764c38c156dcca1e89808cb29fe1927545daf3d0baf167a1e9e5fb2  0052-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
-+66c0e2e142d4ffe723c2884d98c96922fd6ff76038c11f2c1d85de199eec265cb13362480ddd8c5981484bf910548498681363c8864c5f79ca64050968d4810a  0053-dt-bindings-sound-describe-WCD938x-USB-C-audio-routi.patch
-+0a6e131972d0e20a2f23b1e942d33dd24b0fee30f996415ce9c66bee21f5ddab9600b555ade8b32a791ca3fc14be5ca8b52b1709adcc3f01fca062a7cb2437d5  0054-ASoC-wcd-mbhc-keep-the-codec-powered-during-detectio.patch
-+6137629c5cabf1af740f2067fa9f5011355d5efb1eccda8efd2192f3f207ad5fa00479be82e69225b95008860ff6413123f1d9887b8c76a25c00dc86f50440a2  0055-ASoC-wcd938x-receive-USB-C-audio-accessory-events.patch
-+ca46e11d72a4eea14368a3b0330277ffd99ca02b781c6e4e089ae8c02c230682063b08ff27ae20f3b2dd4e21c4cd7053919a013275f42a14a55c333017216e54  0056-usb-typec-fsa4480-forward-accessory-events-to-the-co.patch
-+859a270a4759fac648d89b4674fae9c8368455b3a119fc83a99358adef819f7fc573f37cd325ff5315e7beffb28ce36e8e8c9be9b81572053978b601eb3c9bf8  0057-ASoC-lpass-rx-macro-sort-register-defaults.patch
-+4357338f71901534dd196f83cf5988fbf87bbc2da32c642438754998d94ba728603467f85b9bcdeb38090e7304afa0555504c4cf9cb457fe09104d0431a06871  0058-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-wire-US.patch
+ c9488af7bf7212d68699b6b73f7e15f17b4b351147819b07ef88028145ca3d9d79b897a1886503abfbe6ddaf1a1cffbaed77f6eb6a36fb1e70fa5c797c30689c  0053-media-i2c-Add-a-driver-for-the-onsemi-LC898128-OIS-c.patch
+ 9ecc1d422678fec4981070bd5020c175abd883f0ab50ae911392480aed54cc9333c1b7392f5d5f204f78e888f44f648cd0a4edf17c3a0f0800ff103b26f50947  0054-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
++66c0e2e142d4ffe723c2884d98c96922fd6ff76038c11f2c1d85de199eec265cb13362480ddd8c5981484bf910548498681363c8864c5f79ca64050968d4810a  0055-dt-bindings-sound-describe-WCD938x-USB-C-audio-routi.patch
++0a6e131972d0e20a2f23b1e942d33dd24b0fee30f996415ce9c66bee21f5ddab9600b555ade8b32a791ca3fc14be5ca8b52b1709adcc3f01fca062a7cb2437d5  0056-ASoC-wcd-mbhc-keep-the-codec-powered-during-detectio.patch
++6137629c5cabf1af740f2067fa9f5011355d5efb1eccda8efd2192f3f207ad5fa00479be82e69225b95008860ff6413123f1d9887b8c76a25c00dc86f50440a2  0057-ASoC-wcd938x-receive-USB-C-audio-accessory-events.patch
++ca46e11d72a4eea14368a3b0330277ffd99ca02b781c6e4e089ae8c02c230682063b08ff27ae20f3b2dd4e21c4cd7053919a013275f42a14a55c333017216e54  0058-usb-typec-fsa4480-forward-accessory-events-to-the-co.patch
++859a270a4759fac648d89b4674fae9c8368455b3a119fc83a99358adef819f7fc573f37cd325ff5315e7beffb28ce36e8e8c9be9b81572053978b601eb3c9bf8  0059-ASoC-lpass-rx-macro-sort-register-defaults.patch
++4357338f71901534dd196f83cf5988fbf87bbc2da32c642438754998d94ba728603467f85b9bcdeb38090e7304afa0555504c4cf9cb457fe09104d0431a06871  0060-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-wire-US.patch
  "
 -- 
 2.54.0

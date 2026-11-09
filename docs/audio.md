@@ -6,7 +6,7 @@ The firmware service copies SLPI, Venus and CDSP from the active modem partition
 into `/lib/firmware/updates/postmarketos`, leaving the original partitions and
 packaged firmware unchanged.
 Use the [firmware setup instructions](../README.md#video) and reboot; the audio
-patches are included by pmaports patch 0029.
+patches are included by pmaports patch 0030.
 
 Runtime tests used `7.2.0-nura-codec2`: speakers, ordinary USB attachment, codec
 runtime suspend/resume, accelerometer streaming, CDSP startup and H.264

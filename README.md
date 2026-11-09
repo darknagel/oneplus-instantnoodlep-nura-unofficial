@@ -22,7 +22,8 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 | Accelerometer, light, proximity, gyroscope | works, sensor files included since v2026.11.08, see [Sensors](#sensors) |
 | Magnetometer and compass | works in your own build with kernel 0046–0047 and the [compass fix](#compass); not in the image yet |
 | Video decoding and encoding in hardware (Venus: H.264, HEVC, VP9 and more) | works in your own build with [`firmware/`](firmware/); not in the image yet, see [Video](#video) |
-| Calls, OIS | not done |
+| Optical image stabilisation (OIS), main camera | works in your own build with kernel 0053–0054; not in the image yet |
+| Calls, OIS of the telephoto camera | not done |
 
 Tested on one IN2023 (EU) with the Samsung AMS678UW01 panel. With another panel the screen
 may stay black, see [`docs/panel-log.md`](docs/panel-log.md). Technical details and patch
@@ -252,8 +253,6 @@ Using the phone as a small server (screen off, charge limit, sleep):
   Build iio-sensor-proxy 3.9 with the patch and `-Dssc-support=enabled`.
 - Under Plasma Mobile the keyboard did not always open in the SIM PIN popup. Enter the PIN
   in the settings or with `mmcli`.
-- Under Plasma Mobile, Snapshot crashes with the front camera. Start it with
-  `GSK_RENDERER=cairo snapshot`.
 - The front camera is too dark.
 - At some boots the front camera failed and all cameras were missing. Fixed by kernel
   patches 0050–0051, which are not in an image yet. Until then:
