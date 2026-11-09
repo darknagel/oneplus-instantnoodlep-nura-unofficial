@@ -1,30 +1,58 @@
 #!/bin/sh
-# Copy the video codec (Venus) and compute DSP (CDSP) firmware from this
-# phone's own modem_a partition. Runs at boot before udev loads the drivers
+# Copy the sensor DSP (SLPI), video codec (Venus) and compute DSP (CDSP)
+# firmware from this phone's active modem partition, before udev loads drivers
 # (dsp-firmware.service) and does nothing once the copies exist.
 #
-# Android keeps both split into .mdt/.bNN files; the kernel wants one .mbn,
-# which pil-squasher puts together. The files are signed for this phone and
-# OnePlus does not allow passing them on, so they are not in the image.
-FW=${DSP_FW:-/lib/firmware/postmarketos}
-[ -e $FW/venus.mbn ] && [ -e $FW/cdsp.mbn ] && exit 0
+# pil-squasher joins Android's .mdt/.bNN files without changing signed segments.
+# The updates directory overrides packaged SLPI firmware, which can be
+# incompatible with the shared-memory layout left by an older bootloader.
+# No proprietary firmware is distributed with this script.
+set -eu
+FW=${DSP_FW:-/lib/firmware/updates/postmarketos}
+[ -s "$FW/venus.mbn" ] && [ -s "$FW/cdsp.mbn" ] && [ -s "$FW/slpi.mbn" ] && exit 0
 
 # /dev/disk/by-partlabel does not exist yet this early
 part() {
 	for u in /sys/class/block/*/uevent; do
-		grep -qx "PARTNAME=$1" "$u" && echo /dev/$(sed -n 's/^DEVNAME=//p' "$u") && return
+		if grep -qx "PARTNAME=$1" "$u"; then
+			printf '/dev/%s\n' "$(sed -n 's/^DEVNAME=//p' "$u")"
+			return
+		fi
 	done
 	return 1
 }
 
-set -e
-mkdir -p $FW
-MNT=$(mktemp -d)
-mount -o ro "$(part modem_a)" $MNT
-trap 'umount $MNT; rmdir $MNT' EXIT
-for fw in venus cdsp; do
-	[ -e $FW/$fw.mbn ] && continue
-	pil-squasher $FW/$fw.mbn.tmp $MNT/image/$fw.mdt
-	mv $FW/$fw.mbn.tmp $FW/$fw.mbn
+slot=
+for arg in $(cat /proc/cmdline); do
+	case "$arg" in
+		androidboot.slot_suffix=_a) slot=a ;;
+		androidboot.slot_suffix=_b) slot=b ;;
+	esac
 done
-echo "dsp-firmware: copied the Venus and CDSP firmware from this phone"
+[ -n "$slot" ] || { echo "dsp-firmware: cannot determine the Android firmware slot" >&2; exit 1; }
+device=$(part "modem_$slot")
+
+mkdir -p "$FW"
+TMP=$(mktemp -d "$FW/.dsp-firmware.XXXXXX")
+MNT=$TMP/source
+mkdir "$MNT"
+mounted=false
+cleanup() {
+	if "$mounted"; then umount "$MNT" || return; fi
+	rmdir "$MNT"
+	rm -f "$TMP"/*.mbn
+	rmdir "$TMP"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+mount -t vfat -o ro,nosuid,nodev,noexec "$device" "$MNT"
+mounted=true
+for fw in slpi venus cdsp; do
+	[ -s "$FW/$fw.mbn" ] && continue
+	[ -s "$MNT/image/$fw.mdt" ]
+	pil-squasher "$TMP/$fw.mbn" "$MNT/image/$fw.mdt"
+	[ -s "$TMP/$fw.mbn" ]
+	chmod 644 "$TMP/$fw.mbn"
+	mv "$TMP/$fw.mbn" "$FW/$fw.mbn"
+	echo "dsp-firmware: copied $fw from modem_$slot"
+done

@@ -1,5 +1,5 @@
 [Unit]
-Description=Copy the Venus and CDSP firmware from this phone's partitions
+Description=Copy the SLPI, Venus and CDSP firmware from this phone's partitions
 DefaultDependencies=no
 After=systemd-remount-fs.service
 Before=systemd-udev-trigger.service

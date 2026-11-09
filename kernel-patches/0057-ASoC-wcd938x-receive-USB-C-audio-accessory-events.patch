@@ -1,0 +1,198 @@
+From d45de81d0ae2d474ba3ba11f0dd1a3bd2c777366 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 9 Nov 2026 18:17:12 +0000
+Subject: [PATCH] ASoC: wcd938x: receive USB-C audio accessory events
+
+Use Type-C audio accessory notifications for boards without a mechanical
+headset jack. Serialize notifications with jack initialization and
+teardown, and keep the codec powered while reporting plug and unplug
+events.
+
+Boards without mode-switch retain the existing jack-detection behavior.
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ sound/soc/codecs/Kconfig   |  2 +
+ sound/soc/codecs/wcd938x.c | 99 ++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 97 insertions(+), 4 deletions(-)
+
+diff --git a/sound/soc/codecs/Kconfig b/sound/soc/codecs/Kconfig
+index c19a0d572..a4a05cfcd 100644
+--- a/sound/soc/codecs/Kconfig
++++ b/sound/soc/codecs/Kconfig
+@@ -2480,12 +2480,14 @@ config SND_SOC_WCD938X
+ 	depends on SND_SOC_WCD938X_SDW
+ 	tristate
+ 	depends on SOUNDWIRE || !SOUNDWIRE
++	depends on TYPEC || !TYPEC
+ 	select SND_SOC_WCD_CLASSH
+ 	select SND_SOC_WCD_COMMON
+ 	select MULTIPLEXER
+ 
+ config SND_SOC_WCD938X_SDW
+ 	tristate "WCD9380/WCD9385 Codec - SDW"
++	depends on TYPEC || !TYPEC
+ 	select SND_SOC_WCD938X
+ 	select SND_SOC_WCD_MBHC
+ 	select REGMAP_IRQ
+diff --git a/sound/soc/codecs/wcd938x.c b/sound/soc/codecs/wcd938x.c
+index c69e18667..3697b33c8 100644
+--- a/sound/soc/codecs/wcd938x.c
++++ b/sound/soc/codecs/wcd938x.c
+@@ -20,6 +20,8 @@
+ #include <sound/soc-dapm.h>
+ #include <linux/mux/consumer.h>
+ #include <linux/regulator/consumer.h>
++#include <linux/usb/typec_mux.h>
++#include <linux/usb/typec_altmode.h>
+ 
+ #include "wcd-clsh-v2.h"
+ #include "wcd-common.h"
+@@ -151,6 +153,8 @@ struct wcd938x_priv {
+ 	struct device_node *rxnode, *txnode;
+ 	struct regmap *regmap;
+ 	struct mutex micb_lock;
++	struct mutex typec_lock;
++	unsigned long typec_mode;
+ 	/* mbhc module */
+ 	struct wcd_mbhc *wcd_mbhc;
+ 	struct wcd_mbhc_config mbhc_cfg;
+@@ -3135,6 +3139,9 @@ static void wcd938x_soc_codec_remove(struct snd_soc_component *component)
+ {
+ 	struct wcd938x_priv *wcd938x = snd_soc_component_get_drvdata(component);
+ 
++	mutex_lock(&wcd938x->typec_lock);
++	wcd938x->jack = NULL;
++	mutex_unlock(&wcd938x->typec_lock);
+ 	wcd938x_mbhc_deinit(component);
+ 
+ 	free_irq(wcd938x->aux_pdm_wd_int, wcd938x);
+@@ -3144,17 +3151,95 @@ static void wcd938x_soc_codec_remove(struct snd_soc_component *component)
+ 	wcd_clsh_ctrl_free(wcd938x->clsh_info);
+ }
+ 
++/* Serialize Type-C notifications with sound-card jack initialization. */
++static int wcd938x_typec_report(struct wcd938x_priv *wcd, bool plugged)
++{
++	struct device *dev = wcd->common.dev;
++	int ret;
++
++	/* The sound card may initialize the jack before runtime PM is enabled. */
++	ret = pm_runtime_get_sync(dev);
++	if (ret < 0 && ret != -EACCES) {
++		pm_runtime_put_noidle(dev);
++		return ret;
++	}
++
++	if (plugged)
++		ret = wcd_mbhc_typec_report_plug(wcd->wcd_mbhc);
++	else
++		ret = wcd_mbhc_typec_report_unplug(wcd->wcd_mbhc);
++
++	pm_runtime_put_autosuspend(dev);
++
++	return ret;
++}
++
++static int wcd938x_typec_mux_set(struct typec_mux_dev *mux,
++			       struct typec_mux_state *state)
++{
++	struct wcd938x_priv *wcd = typec_mux_get_drvdata(mux);
++	bool was_audio, is_audio;
++	int ret = 0;
++
++	mutex_lock(&wcd->typec_lock);
++	was_audio = wcd->typec_mode == TYPEC_MODE_AUDIO;
++	is_audio = !state->alt && state->mode == TYPEC_MODE_AUDIO;
++	if (wcd->jack && was_audio != is_audio)
++		ret = wcd938x_typec_report(wcd, is_audio);
++	if (!ret)
++		wcd->typec_mode = is_audio ? TYPEC_MODE_AUDIO : TYPEC_STATE_SAFE;
++	mutex_unlock(&wcd->typec_lock);
++
++	return ret;
++}
++
++static void wcd938x_typec_mux_unregister(void *data)
++{
++	typec_mux_unregister(data);
++}
++
++static int wcd938x_add_typec(struct wcd938x_priv *wcd, struct device *dev)
++{
++	struct typec_mux_desc desc = {
++		.drvdata = wcd,
++		.fwnode = dev_fwnode(dev),
++		.set = wcd938x_typec_mux_set,
++	};
++	struct typec_mux_dev *mux;
++
++	if (!wcd->mbhc_cfg.typec_analog_mux)
++		return 0;
++
++	mux = typec_mux_register(dev, &desc);
++	if (IS_ERR(mux))
++		return dev_err_probe(dev, PTR_ERR(mux), "failed to register Type-C mux\n");
++
++	return devm_add_action_or_reset(dev, wcd938x_typec_mux_unregister, mux);
++}
++
+ static int wcd938x_codec_set_jack(struct snd_soc_component *comp,
+ 				  struct snd_soc_jack *jack, void *data)
+ {
+ 	struct wcd938x_priv *wcd = dev_get_drvdata(comp->dev);
+ 
+-	if (jack)
+-		return wcd_mbhc_start(wcd->wcd_mbhc, &wcd->mbhc_cfg, jack);
+-	else
++	int ret = 0;
++
++	mutex_lock(&wcd->typec_lock);
++	if (jack) {
++		ret = wcd_mbhc_start(wcd->wcd_mbhc, &wcd->mbhc_cfg, jack);
++		if (!ret) {
++			wcd->jack = jack;
++			if (wcd->mbhc_cfg.typec_analog_mux &&
++			    wcd->typec_mode == TYPEC_MODE_AUDIO)
++				ret = wcd938x_typec_report(wcd, true);
++		}
++	} else {
++		wcd->jack = NULL;
+ 		wcd_mbhc_stop(wcd->wcd_mbhc);
++	}
++	mutex_unlock(&wcd->typec_lock);
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static const struct snd_soc_component_driver soc_codec_dev_wcd938x = {
+@@ -3249,6 +3334,7 @@ static int wcd938x_populate_dt_data(struct wcd938x_priv *wcd938x, struct device
+ 	cfg->hph_thr = 50;
+ 
+ 	wcd_dt_parse_mbhc_data(dev, cfg);
++	cfg->typec_analog_mux = device_property_read_bool(dev, "mode-switch");
+ 
+ 	return 0;
+ }
+@@ -3487,6 +3573,7 @@ static int wcd938x_probe(struct platform_device *pdev)
+ 
+ 	dev_set_drvdata(dev, wcd938x);
+ 	mutex_init(&wcd938x->micb_lock);
++	mutex_init(&wcd938x->typec_lock);
+ 	wcd938x->common.dev = dev;
+ 	wcd938x->common.max_bias = 4;
+ 
+@@ -3494,6 +3581,10 @@ static int wcd938x_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
++	ret = wcd938x_add_typec(wcd938x, dev);
++	if (ret)
++		return ret;
++
+ 	ret = wcd938x_add_slave_components(wcd938x, dev, &match);
+ 	if (ret)
+ 		return ret;
+-- 
+2.56.0
+

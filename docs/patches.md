@@ -7,6 +7,7 @@
 | Display (Samsung AMS678UW01, new panel driver, 1440×3168 @ 120 Hz) | works | kernel 0001–0003, pmaports 0001 |
 | GPU (Adreno 650, Mesa freedreno), Phosh accelerated | works | kernel 0004, pmaports 0001 |
 | Speakers + 3 microphones (VA macro, mic bias as in vendor DT) | works | kernel 0005, pmaports 0002, 0007 |
+| False headset detection with an ordinary USB cable, codec runtime-PM errors and unsorted RX register defaults | fixed on the test IN2023; analog USB-C headsets untested | kernel 0055–0060, pmaports 0030; [audio notes](audio.md) |
 | A/B boot counter (qbootctl marks boot successful) | works | pmaports 0003 |
 | Accelerometer, light, proximity via SLPI (SMEM item 130 filled by new driver) | works, needs the stock sensor files | kernel 0006–0008, 0049, pmaports 0004–0006, 0026, hexagonrpc 0001–0005 |
 | Telephoto camera Samsung S5K3M5 via CAMSS + libcamera (4208×3120 @ 30, 2104×1184 @ 60, AGC, green tint) | works | kernel 0009–0010, pmaports 0008–0009, libcamera 0001 |
@@ -30,7 +31,7 @@
 | Focus actuators: the first CCI transfer after power up can time out, which left the ultrawide lens disabled until the next boot, and the first position write after standby release was sometimes NACKed | works | kernel 0048, pmaports 0025 |
 | Front camera missing at some boots: the telephoto actuator used the camera I2C bus without the 1.8 V pull-up supply (L7F), the CCI timed out and reset both masters during the front camera probe | works | kernel 0050–0051, pmaports 0027 |
 | Compass heading: rotv needs fmv, which needs mag_cal and gyro_cal, which need the software motion detector that OnePlus switches off on SM8250 (`kona_amd_sw_disabled.json`) | works | `sensors/setup-sensors.sh` |
-| Video codec Venus and compute DSP: firmware from the phone's `modem_a` (split `.mdt`, joined with pil-squasher), no kernel change | works | `firmware/dsp-firmware.sh` |
+| SLPI, Venus and CDSP: firmware from the phone's active modem partition, joined with pil-squasher and stored as local overrides | DSP startup and H.264 encode/decode tested; CDSP compute workloads untested | `firmware/dsp-firmware.sh` |
 | Automatic screen rotation: iio-sensor-proxy 3.9 opens the SSC sensors synchronously at startup; a claim in that window (KWin, Phosh) is stored but the sensor is never started | works | iio-sensor-proxy 0001 |
 | Reboot modes: `reboot bootloader` / `reboot recovery`; the unused PM8009 PON registered a second `qcom-pon` reboot mode (-EEXIST warning at boot) | works | kernel 0052, pmaports 0028 |
 | OIS of the main camera: onsemi LC898128 at 0x24, runs from its own firmware and reads the module gyroscope itself; new driver starts it whenever the sensor is powered, PM8009 L5 added for its supply | works | kernel 0053–0054, pmaports 0029 |
@@ -80,10 +81,11 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   modem's data channels, 0021 fixes NFC, 0022 adds the C-PHY series and the remaining
   cameras, 0023 adds them to libcamera, 0024 fixes the magnetometer, 0025 makes the
   focus actuators reliable, 0026 adds the 4684-byte sensor layout, 0027 powers the
-  telephoto actuator bus, 0028 adds the reboot modes, 0029 the main camera OIS.
+  telephoto actuator bus, 0028 adds the reboot modes, 0029 adds the main camera
+  OIS, and 0030 fixes USB-C audio detection.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
-- `firmware/` – boot service that copies the Venus and CDSP firmware from your own phone.
+- `firmware/` – boot service that copies SLPI, Venus and CDSP firmware from your own phone.
 - `docs/` – this file and details moved out of the README.
 - `iio-sensor-proxy-patches/` – against https://gitlab.freedesktop.org/hadess/iio-sensor-proxy tag `3.9`.
 - `hexagonrpc-patches/` – against https://github.com/linux-msm/hexagonrpc tag `v0.5.0`.

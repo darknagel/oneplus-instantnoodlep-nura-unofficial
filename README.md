@@ -121,6 +121,13 @@ Some bootloaders expose a 4684-byte sensor-information item and need kernel patc
 which is not in v2026.11.08. Without it, the kernel reports
 `unexpected SMEM item size 4684` and the accelerometer is unavailable.
 
+On an IN2023 with older stock firmware, the packaged SLPI firmware also prevented the
+audio DSP from starting (`start timed out`, `-110`). The updated [`firmware/`](firmware/)
+service copies this phone's own SLPI firmware before drivers load, alongside Venus and
+CDSP; use the [firmware setup below](#video) on older images and reboot.
+The copies live in `/lib/firmware/updates/postmarketos`, overriding the packaged firmware
+without replacing package-owned files. See [audio testing and limits](docs/audio.md).
+
 If the sensor DSP crashes 3 times within 60 seconds, `slpi-guard` stops it instead of
 letting the kernel restart it forever, which used to break most of the phone
 ([#1](../../issues/1)). The sensors are then off until the next reboot,
@@ -179,8 +186,8 @@ version you had. If that version differs from the one above, the sensor DSP may 
 
 The video codec (Venus) decodes H.264, HEVC, VP8, VP9 and more and encodes H.264 and HEVC,
 which saves a lot of CPU and battery. It needs firmware signed for this phone, which is on
-your phone's `modem_a` partition but may not be passed on. Images after v2026.11.08 copy it
-at first boot. On older images, as root:
+your phone's active `modem_a` or `modem_b` partition but may not be passed on.
+Images after v2026.11.08 copy it at first boot. On older images, as root:
 
 ```sh
 apk add pil-squasher
@@ -191,7 +198,9 @@ systemctl enable dsp-firmware
 reboot
 ```
 
-This also starts the compute DSP (CDSP). Check with `ls /sys/class/video4linux/*/name | xargs grep venus`.
+This also installs the matching sensor-DSP firmware (SLPI) and starts the compute DSP
+(CDSP). Existing local overrides are kept; rerunning the service does not replace them.
+Check with `ls /sys/class/video4linux/*/name | xargs grep venus`.
 Players use it through V4L2, for example `mpv --hwdec=v4l2m2m-copy VIDEO` or
 `ffmpeg -c:v h264_v4l2m2m -i VIDEO ...`, and GStreamer through `v4l2h264dec`.
 

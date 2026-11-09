@@ -1,0 +1,60 @@
+From d7e675968080835f0b8f6b2785f1c3b6396cebcf Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 9 Nov 2026 18:17:12 +0000
+Subject: [PATCH] usb: typec: fsa4480: forward accessory events to the
+ codec
+
+Forward successful mode changes to the connected codec so its headset
+detection follows actual USB-C audio accessory attachment. Release the
+codec mux reference when the switch is removed.
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/usb/typec/mux/fsa4480.c | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/typec/mux/fsa4480.c b/drivers/usb/typec/mux/fsa4480.c
+index bea0c1dee..fe6af2746 100644
+--- a/drivers/usb/typec/mux/fsa4480.c
++++ b/drivers/usb/typec/mux/fsa4480.c
+@@ -57,6 +57,7 @@ struct fsa4480 {
+ 
+ 	struct typec_switch_dev *sw;
+ 	struct typec_mux_dev *mux;
++	struct typec_mux *codec;
+ 
+ 	struct regmap *regmap;
+ 
+@@ -185,7 +186,15 @@ static int fsa4480_mux_set(struct typec_mux_dev *mux, struct typec_mux_state *st
+ 
+ 	mutex_unlock(&fsa->lock);
+ 
+-	return ret;
++	if (ret)
++		return ret;
++
++	return typec_mux_set(fsa->codec, state);
++}
++
++static void fsa4480_codec_put(void *data)
++{
++	typec_mux_put(data);
+ }
+ 
+ enum {
+@@ -263,6 +272,13 @@ static int fsa4480_probe(struct i2c_client *client)
+ 	if (!fsa)
+ 		return -ENOMEM;
+ 
++	fsa->codec = fwnode_typec_mux_get(dev_fwnode(dev));
++	if (IS_ERR(fsa->codec))
++		return dev_err_probe(dev, PTR_ERR(fsa->codec), "failed to get codec mux\n");
++	ret = devm_add_action_or_reset(dev, fsa4480_codec_put, fsa->codec);
++	if (ret)
++		return ret;
++
+ 	fsa->client = client;
+ 	mutex_init(&fsa->lock);
+ 
+-- 
+2.56.0
+
