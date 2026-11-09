@@ -1,0 +1,42 @@
+From 7d33e1320c4b2c468e879d8892686858e85aef9a Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 19:01:16 +0100
+Subject: [PATCH] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add the
+ reboot modes
+
+Let "reboot bootloader" and "reboot recovery" work, with the values the
+other SM8250 boards and the bootloader use.
+
+The PM8009 PON block has no function here, but its driver registered a
+second reboot mode named "qcom-pon", which failed with -EEXIST and a
+warning at every boot. Disable it.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts    | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 538d1049c..44f029275 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -1434,6 +1434,16 @@ &pm8150b_vbus {
+        status = "okay";
+ };
+ 
++&pm8009_pon {
++	/* Nothing uses it; it registered a second "qcom-pon" reboot mode */
++	status = "disabled";
++};
++
++&pon {
++	mode-bootloader = <0x2>;
++	mode-recovery = <0x1>;
++};
++
+ &pon_pwrkey {
+ 	status = "okay";
+ };
+-- 
+2.43.0
+

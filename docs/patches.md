@@ -32,6 +32,7 @@
 | Compass heading: rotv needs fmv, which needs mag_cal and gyro_cal, which need the software motion detector that OnePlus switches off on SM8250 (`kona_amd_sw_disabled.json`) | works | `sensors/setup-sensors.sh` |
 | Video codec Venus and compute DSP: firmware from the phone's `modem_a` (split `.mdt`, joined with pil-squasher), no kernel change | works | `firmware/dsp-firmware.sh` |
 | Automatic screen rotation: iio-sensor-proxy 3.9 opens the SSC sensors synchronously at startup; a claim in that window (KWin, Phosh) is stored but the sensor is never started | works | iio-sensor-proxy 0001 |
+| Reboot modes: `reboot bootloader` / `reboot recovery`; the unused PM8009 PON registered a second `qcom-pon` reboot mode (-EEXIST warning at boot) | works | kernel 0052, pmaports 0028 |
 | OIS, colour tuning of the front camera, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
@@ -78,7 +79,7 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   modem's data channels, 0021 fixes NFC, 0022 adds the C-PHY series and the remaining
   cameras, 0023 adds them to libcamera, 0024 fixes the magnetometer, 0025 makes the
   focus actuators reliable, 0026 adds the 4684-byte sensor layout, 0027 powers the
-  telephoto actuator bus.
+  telephoto actuator bus, 0028 adds the reboot modes.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `firmware/` – boot service that copies the Venus and CDSP firmware from your own phone.

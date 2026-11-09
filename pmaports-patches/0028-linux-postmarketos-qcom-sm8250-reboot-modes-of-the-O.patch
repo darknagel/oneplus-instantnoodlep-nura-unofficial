@@ -1,0 +1,93 @@
+From 4ecbd4812f82e981e1549a487ccff2086869cf1b Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 19:04:42 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: reboot modes of the OnePlus 8
+ Pro
+
+Make reboot bootloader and reboot recovery work and drop the PM8009 PON, which registered a second reboot mode.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ...m8250-oneplus-instantnoodlep-Add-the.patch | 42 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  4 +-
+ 2 files changed, 45 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0052-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0052-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch b/device/testing/linux-postmarketos-qcom-sm8250/0052-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
+new file mode 100644
+index 0000000000..651305fa06
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0052-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
+@@ -0,0 +1,42 @@
++From 7d33e1320c4b2c468e879d8892686858e85aef9a Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 9 Nov 2026 19:01:16 +0100
++Subject: [PATCH] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add the
++ reboot modes
++
++Let "reboot bootloader" and "reboot recovery" work, with the values the
++other SM8250 boards and the bootloader use.
++
++The PM8009 PON block has no function here, but its driver registered a
++second reboot mode named "qcom-pon", which failed with -EEXIST and a
++warning at every boot. Disable it.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ .../boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts    | 10 ++++++++++
++ 1 file changed, 10 insertions(+)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 538d1049c..44f029275 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -1434,6 +1434,16 @@ &pm8150b_vbus {
++        status = "okay";
++ };
++ 
+++&pm8009_pon {
+++	/* Nothing uses it; it registered a second "qcom-pon" reboot mode */
+++	status = "disabled";
+++};
+++
+++&pon {
+++	mode-bootloader = <0x2>;
+++	mode-recovery = <0x1>;
+++};
+++
++ &pon_pwrkey {
++ 	status = "okay";
++ };
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index c9a73fe733..4dd516082c 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=58
++pkgrel=59
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -90,6 +90,7 @@ source="
+ 	0049-soc-qcom-oneplus-sensor-devinfo-support-legacy-layout.patch
+ 	0050-media-i2c-lc898217xc-Add-the-I-O-supply.patch
+ 	0051-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Power-t.patch
++	0052-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -187,4 +188,5 @@ ca0d56c0df8e7dfcd84ca0746cf1ba63ece7163062cceb92033db687b9a02dfc9483cffe24745e9f
+ 6a18934d04e7997d929bf3d470876a8fd6a19a37e6e24dc434367e9f2c4ade4e68f3af3b4b1c452e5d1de4354596cdfb2784d6a149c977140c387565ab348051  0049-soc-qcom-oneplus-sensor-devinfo-support-legacy-layout.patch
+ b7078fecbda54dce95d47fa5e992be04968a5ff3eaad2d8fb6ec1e53cde614a106907219098a82012f59f71cea8cbe762fc30421d29f55aef714833eb0173e9b  0050-media-i2c-lc898217xc-Add-the-I-O-supply.patch
+ ef99f452cc8848a6ecf4a142b6f86aa62ab3fc7113a74b9381fb2f48edda8132f085956315419917d4fdf02d34717762cd55e276d72aec8105c2155ab98d5be4  0051-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Power-t.patch
++a6d99005bb7d91bfb356a9552465aae8011c42879efba7617776e6a24024a5f5fc8d9018d764c38c156dcca1e89808cb29fe1927545daf3d0baf167a1e9e5fb2  0052-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
+ "
+-- 
+2.43.0
+
