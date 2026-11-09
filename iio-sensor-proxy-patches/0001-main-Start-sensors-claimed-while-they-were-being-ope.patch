@@ -1,0 +1,33 @@
+From 029d2105cf73c03d24d03d21f6455da4bf956a07 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 18:45:59 +0100
+Subject: [PATCH] main: Start sensors claimed while they were being opened
+
+The SSC drivers wait for QMI replies while they are opened at startup, which runs the main loop. A client that claims a sensor in that window, like KWin right after the proxy appears on the bus, gets no device yet, and the sensor is never started: the orientation stays "undefined" and the screen does not rotate. Start such sensors once they are open, like hotplugged ones.
+---
+ src/iio-sensor-proxy.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/iio-sensor-proxy.c b/src/iio-sensor-proxy.c
+index 9c7e8cd..83b085c 100644
+--- a/src/iio-sensor-proxy.c
++++ b/src/iio-sensor-proxy.c
+@@ -779,6 +779,15 @@ name_acquired_handler (GDBusConnection *connection,
+ 		}
+ 
+ 		DEVICE_FOR_TYPE(i) = sensor_device;
++
++		/* Opening a sensor can run the main loop (the SSC drivers wait
++		 * for QMI replies), so a client may have claimed it already.
++		 * Its Claim() found no device and returned, so start the sensor
++		 * now, like for a hotplugged one. */
++		if (g_hash_table_size (data->clients[i]) > 0) {
++			data->sensor_startup_dbus_event_delayed[i] = TRUE;
++			driver_set_polling (sensor_device, TRUE);
++		}
+ 	}
+ 
+ 	if (!any_sensors_left (data))
+-- 
+2.43.0
+

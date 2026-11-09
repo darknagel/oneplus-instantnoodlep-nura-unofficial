@@ -237,6 +237,10 @@ Using the phone as a small server (screen off, charge limit, sleep):
 - **`apk upgrade` can remove fixes.** The patched kernel and ModemManager can be replaced when
   Nura publishes a higher version. If modem or data break afterwards, this is the first thing
   to check: `apk policy modemmanager`.
+- The screen does not rotate under Phosh or Plasma Mobile: iio-sensor-proxy 3.9 loses a
+  claim that arrives while it opens the sensors at boot, so the accelerometer never starts.
+  Fixed by [`iio-sensor-proxy-patches/`](iio-sensor-proxy-patches/), not in an image yet.
+  Build iio-sensor-proxy 3.9 with the patch and `-Dssc-support=enabled`.
 - Under Plasma Mobile the keyboard did not always open in the SIM PIN popup. Enter the PIN
   in the settings or with `mmcli`.
 - Under Plasma Mobile, Snapshot crashes with the front camera. Start it with
