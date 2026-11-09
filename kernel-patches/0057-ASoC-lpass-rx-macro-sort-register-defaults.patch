@@ -1,0 +1,51 @@
+From b815c1413be554ead9f0f3aa5933c744672022d8 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 9 Nov 2026 18:17:12 +0000
+Subject: [PATCH] ASoC: lpass-rx-macro: sort register defaults
+
+Keep the RX macro register defaults in ascending address order, as
+regmap requires. This removes the unsorted-register-default warning at
+probe.
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ sound/soc/codecs/lpass-rx-macro.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/sound/soc/codecs/lpass-rx-macro.c b/sound/soc/codecs/lpass-rx-macro.c
+index 6233aa9f5..77b409623 100644
+--- a/sound/soc/codecs/lpass-rx-macro.c
++++ b/sound/soc/codecs/lpass-rx-macro.c
+@@ -7,6 +7,7 @@
+ #include <linux/io.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
++#include <linux/sort.h>
+ #include <linux/clk.h>
+ #include <sound/soc.h>
+ #include <sound/pcm.h>
+@@ -3760,6 +3761,14 @@ static const struct snd_soc_component_driver rx_macro_component_drv = {
+ 	.num_dapm_routes = ARRAY_SIZE(rx_audio_map),
+ };
+ 
++static int rx_macro_reg_default_cmp(const void *a, const void *b)
++{
++	const struct reg_default *ra = a;
++	const struct reg_default *rb = b;
++
++	return (ra->reg > rb->reg) - (ra->reg < rb->reg);
++}
++
+ static int rx_macro_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -3852,6 +3861,7 @@ static int rx_macro_probe(struct platform_device *pdev)
+ 	if (!reg_config)
+ 		return -ENOMEM;
+ 
++	sort(reg_defaults, def_count, sizeof(*reg_defaults), rx_macro_reg_default_cmp, NULL);
+ 	reg_config->reg_defaults = reg_defaults;
+ 	reg_config->num_reg_defaults = def_count;
+ 
+-- 
+2.56.0
+

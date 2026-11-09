@@ -1,0 +1,99 @@
+From f496339d7d6f52be4b6f493a6fd8d8799492078c Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 9 Nov 2026 18:17:12 +0000
+Subject: [PATCH] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: wire
+ USB-C audio
+
+Describe the FSA4480 analog switch at I2C address 0x42 and connect it to
+the Type-C connector and WCD9385 codec. Advertise audio accessories so a
+normal USB connection no longer triggers mechanical headset detection.
+
+Speaker playback and ordinary USB attachment were tested. Analog USB-C
+headset playback, microphone and buttons still require hardware testing.
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 40 +++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 44f029275..4f040dcbc 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -559,6 +559,7 @@ battery: battery {
+ 
+ 	wcd938x: audio-codec {
+ 		compatible = "qcom,wcd9385-codec";
++		mode-switch;
+ 
+ 		pinctrl-0 = <&wcd_default>;
+ 		pinctrl-names = "default";
+@@ -581,6 +582,11 @@ wcd938x: audio-codec {
+ 		vdd-mic-bias-supply = <&vreg_bob>;
+ 
+ 		#sound-dai-cells = <1>;
++		port {
++			wcd938x_usb_c: endpoint {
++				remote-endpoint = <&fsa4480_codec>;
++			};
++		};
+ 	};
+ };
+ 
+@@ -1401,6 +1407,7 @@ connector {
+                power-role = "dual";
+                data-role = "dual";
+                self-powered;
++		accessory-mode-audio;
+ 
+                source-pdos = <PDO_FIXED(5000, 3000,
+                                         PDO_FIXED_DUAL_ROLE |
+@@ -1416,6 +1423,13 @@ ports {
+                        #address-cells = <1>;
+                        #size-cells = <0>;
+ 
++			port@2 {
++				reg = <2>;
++				pm8150b_sbu: endpoint {
++					remote-endpoint = <&fsa4480_sbu>;
++				};
++			};
++
+                        port@0 {
+                                reg = <0>;
+ 
+@@ -1831,6 +1845,32 @@ &qup_spi7_data_clk {
+ &i2c15 {
+ 	status = "okay";
+ 
++	fsa4480: typec-mux@42 {
++		compatible = "fcs,fsa4480";
++		reg = <0x42>;
++		mode-switch;
++		orientation-switch;
++
++		ports {
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			port@0 {
++				reg = <0>;
++				fsa4480_sbu: endpoint {
++					remote-endpoint = <&pm8150b_sbu>;
++				};
++			};
++
++			port@1 {
++				reg = <1>;
++				fsa4480_codec: endpoint {
++					remote-endpoint = <&wcd938x_usb_c>;
++				};
++			};
++		};
++	};
++
+ 	top_spkr: tfa9874@34 {
+ 		compatible = "nxp,tfa9874";
+ 		reg = <0x34>;
+-- 
+2.56.0
+

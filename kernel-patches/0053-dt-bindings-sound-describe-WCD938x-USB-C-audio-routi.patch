@@ -1,0 +1,64 @@
+From 4356e3ff615d4609058441bed7710d28b860036f Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 9 Nov 2026 18:17:12 +0000
+Subject: [PATCH] dt-bindings: sound: describe WCD938x USB-C audio
+ routing
+
+Describe the codec as a Type-C mode-switch endpoint and allow FSA4480 to
+connect both the USB-C connector and the codec through graph ports.
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ .../devicetree/bindings/sound/qcom,wcd938x.yaml    |  8 ++++++++
+ .../devicetree/bindings/usb/fcs,fsa4480.yaml       | 14 +++++++++++++-
+ 2 files changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/sound/qcom,wcd938x.yaml b/Documentation/devicetree/bindings/sound/qcom,wcd938x.yaml
+index ab1c6285d..dc33b8228 100644
+--- a/Documentation/devicetree/bindings/sound/qcom,wcd938x.yaml
++++ b/Documentation/devicetree/bindings/sound/qcom,wcd938x.yaml
+@@ -23,6 +23,14 @@ properties:
+       - qcom,wcd9380-codec
+       - qcom,wcd9385-codec
+ 
++  mode-switch:
++    type: boolean
++    description: Receive USB-C audio accessory events from the analog audio switch.
++
++  port:
++    $ref: /schemas/graph.yaml#/properties/port
++    description: Connection to the USB-C analog audio switch.
++
+   mux-controls:
+     description: A reference to the audio mux switch for
+       switching CTIA/OMTP Headset types
+diff --git a/Documentation/devicetree/bindings/usb/fcs,fsa4480.yaml b/Documentation/devicetree/bindings/usb/fcs,fsa4480.yaml
+index 89b1fb90a..2c7235916 100644
+--- a/Documentation/devicetree/bindings/usb/fcs,fsa4480.yaml
++++ b/Documentation/devicetree/bindings/usb/fcs,fsa4480.yaml
+@@ -69,10 +69,22 @@ properties:
+                   - AUX+ connected to SBU2
+                   - AUX- connected to SBU1
+ 
++  ports:
++    $ref: /schemas/graph.yaml#/properties/ports
++    properties:
++      port@0:
++        $ref: /schemas/graph.yaml#/properties/port
++        description: Connection to the USB-C connector.
++      port@1:
++        $ref: /schemas/graph.yaml#/properties/port
++        description: Analog audio connection to the codec for accessory detection.
++    required:
++      - port@0
++      - port@1
++
+ required:
+   - compatible
+   - reg
+-  - port
+ 
+ allOf:
+   - $ref: usb-switch.yaml#
+-- 
+2.56.0
+
