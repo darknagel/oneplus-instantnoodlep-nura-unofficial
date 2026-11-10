@@ -1,0 +1,179 @@
+From c8dc988bf5ddd670a3dbf03a22d49c90e78626fc Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 12:07:46 +0000
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: fix early DSI PLL power and
+ cleanup
+
+Add kernel patches 0077-0078. Advance to release 72.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ ...ase-PLL-bias-references-after-a-lock.patch | 39 +++++++++
+ ...-the-digital-top-powered-for-PLL-and.patch | 79 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  6 +-
+ 3 files changed, 123 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0077-drm-msm-dsi-release-PLL-bias-references-after-a-lock.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0078-drm-msm-dsi-keep-the-digital-top-powered-for-PLL-and.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0077-drm-msm-dsi-release-PLL-bias-references-after-a-lock.patch b/device/testing/linux-postmarketos-qcom-sm8250/0077-drm-msm-dsi-release-PLL-bias-references-after-a-lock.patch
+new file mode 100644
+index 0000000000..e7fc315dac
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0077-drm-msm-dsi-release-PLL-bias-references-after-a-lock.patch
+@@ -0,0 +1,39 @@
++From 06fbf34467b5bd4ba8ae10791d371d3fed0c987e Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 12:07:46 +0000
++Subject: [PATCH] drm/msm/dsi: release PLL bias references after a lock timeout
++
++Stop the failed PLL and release its master and bonded-slave references.
++The clock core does not invoke unprepare after a failed prepare, so
++retries otherwise leak references.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c | 10 ++++++++++
++ 1 file changed, 10 insertions(+)
++
++diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
++index 984a66085..b70def8a4 100644
++--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
++@@ -532,7 +532,17 @@ static int dsi_pll_7nm_vco_prepare(struct clk_hw *hw)
++ 	if (pll_7nm->slave)
++ 		writel(0x1, pll_7nm->slave->phy->base + REG_DSI_7nm_PHY_CMN_RBUF_CTRL);
++ 
+++	return 0;
+++
++ error:
+++	/* A failed prepare is not followed by unprepare in the clock core. */
+++	writel(0, pll_7nm->phy->base + REG_DSI_7nm_PHY_CMN_PLL_CNTRL);
+++	if (pll_7nm->slave)
+++		dsi_pll_disable_pll_bias(pll_7nm->slave);
+++	dsi_pll_disable_pll_bias(pll_7nm);
+++	/* Flush the PLL stop and power-down writes before returning failure. */
+++	wmb();
+++
++ 	return rc;
++ }
++ 
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0078-drm-msm-dsi-keep-the-digital-top-powered-for-PLL-and.patch b/device/testing/linux-postmarketos-qcom-sm8250/0078-drm-msm-dsi-keep-the-digital-top-powered-for-PLL-and.patch
+new file mode 100644
+index 0000000000..0169f76103
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0078-drm-msm-dsi-keep-the-digital-top-powered-for-PLL-and.patch
+@@ -0,0 +1,79 @@
++From 1a83f0d2d8c807bee8045451d4f3a1f72e63bad8 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 12:07:46 +0000
++Subject: [PATCH] drm/msm/dsi: keep the digital top powered for PLL and PHY
++ users
++
++Power the digital top before early PLL startup and hold a real bias
++reference for the native PHY until disable. Balance the PHY setup error
++path; preserve PLL_SYSTEM_MUXES writes and avoid resetting shared
++reference counts.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c | 14 ++++++++++++--
++ 1 file changed, 12 insertions(+), 2 deletions(-)
++
++diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
++index b70def8a4..598f5abae 100644
++--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
++@@ -413,7 +413,8 @@ static void dsi_pll_disable_pll_bias(struct dsi_pll_7nm *pll)
++ 	} /* else: == 0 */
++ 
++ 	data = readl(pll->phy->base + REG_DSI_7nm_PHY_CMN_CTRL_0);
++-	data &= ~DSI_7nm_PHY_CMN_CTRL_0_PLL_SHUTDOWNB;
+++	data &= ~(DSI_7nm_PHY_CMN_CTRL_0_DIGTOP_PWRDN_B |
+++		  DSI_7nm_PHY_CMN_CTRL_0_PLL_SHUTDOWNB);
++ 	writel(0, pll->phy->pll_base + REG_DSI_7nm_PHY_PLL_SYSTEM_MUXES);
++ 	writel(data, pll->phy->base + REG_DSI_7nm_PHY_CMN_CTRL_0);
++ 	spin_unlock_irqrestore(&pll->pll_enable_lock, flags);
++@@ -430,7 +431,8 @@ static void dsi_pll_enable_pll_bias(struct dsi_pll_7nm *pll)
++ 	WARN_ON(pll->pll_enable_cnt == INT_MAX);
++ 
++ 	data = readl(pll->phy->base + REG_DSI_7nm_PHY_CMN_CTRL_0);
++-	data |= DSI_7nm_PHY_CMN_CTRL_0_PLL_SHUTDOWNB;
+++	data |= DSI_7nm_PHY_CMN_CTRL_0_DIGTOP_PWRDN_B |
+++		DSI_7nm_PHY_CMN_CTRL_0_PLL_SHUTDOWNB;
++ 	writel(data, pll->phy->base + REG_DSI_7nm_PHY_CMN_CTRL_0);
++ 
++ 	writel(0xc0, pll->phy->pll_base + REG_DSI_7nm_PHY_PLL_SYSTEM_MUXES);
++@@ -963,6 +965,8 @@ static void dsi_phy_hw_v4_0_lane_settings(struct msm_dsi_phy *phy)
++ 	}
++ }
++ 
+++static void dsi_7nm_phy_disable(struct msm_dsi_phy *phy);
+++
++ static int dsi_7nm_phy_enable(struct msm_dsi_phy *phy,
++ 			      struct msm_dsi_phy_clk_request *clk_req)
++ {
++@@ -1094,6 +1098,9 @@ static int dsi_7nm_phy_enable(struct msm_dsi_phy *phy,
++ 		glbl_rescode_bot_ctrl = 0x3c;
++ 	}
++ 
+++	/* Keep the digital block powered while the PHY owns the lanes. */
+++	dsi_pll_enable_pll_bias(to_pll_7nm(phy->vco_hw));
+++
++ 	/* de-assert digital and pll power down */
++ 	data = DSI_7nm_PHY_CMN_CTRL_0_DIGTOP_PWRDN_B |
++ 	       DSI_7nm_PHY_CMN_CTRL_0_PLL_SHUTDOWNB;
++@@ -1150,6 +1157,7 @@ static int dsi_7nm_phy_enable(struct msm_dsi_phy *phy,
++ 	if (ret) {
++ 		DRM_DEV_ERROR(&phy->pdev->dev, "%s: set pll usecase failed, %d\n",
++ 			__func__, ret);
+++		dsi_7nm_phy_disable(phy);
++ 		return ret;
++ 	}
++ 
++@@ -1237,6 +1245,8 @@ static void dsi_7nm_phy_disable(struct msm_dsi_phy *phy)
++ 	writel(data, base + REG_DSI_7nm_PHY_CMN_CTRL_0);
++ 	writel(0, base + REG_DSI_7nm_PHY_CMN_LANE_CTRL0);
++ 
+++	dsi_pll_disable_pll_bias(to_pll_7nm(phy->vco_hw));
+++
++ 	/* Turn off all PHY blocks */
++ 	writel(0x00, base + REG_DSI_7nm_PHY_CMN_CTRL_0);
++ 
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 35332ac6f6..f7a76ce1d3 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=71
++pkgrel=72
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -115,6 +115,8 @@ source="
+ 	0074-arm64-dts-qcom-instantnoodlep-describe-the-AW8697-ha.patch
+ 	0075-arm64-dts-qcom-instantnoodlep-expose-the-two-flash-L.patch
+ 	0076-arm64-dts-qcom-instantnoodlep-stop-matching-the-wron.patch
++	0077-drm-msm-dsi-release-PLL-bias-references-after-a-lock.patch
++	0078-drm-msm-dsi-keep-the-digital-top-powered-for-PLL-and.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -237,4 +239,6 @@ f3b7bd3f94643193e28a65e5591f35a2fe346e97d69c991e8b57cee4acaee11d6a7824226c44f502
+ be5fbaa6d335ad4c96ab529aee8ee7b8ef3dc026200e90af97945cbfec4d1f82eb958a2860dff66ac8114b44128a3ff2c93d0481cea586fd70f9dea91fed4c93  0074-arm64-dts-qcom-instantnoodlep-describe-the-AW8697-ha.patch
+ afe7b20f3bbde0ce93b5ef7884551fdb19a50b9affe16a6a040337d7398c534bf7ff9d7eed4370405f9a971733425ca8fea8a3f9422cd363e0c834725b83ef1e  0075-arm64-dts-qcom-instantnoodlep-expose-the-two-flash-L.patch
+ d0a4df4a7f7825b5f7efca63d0c22b0cfcbd387de6f939aaca543b3b99037f99ffbc1ef38d09e77491233749a0fcd9c9e8ea644ff928febf5e8938e72d80db4b  0076-arm64-dts-qcom-instantnoodlep-stop-matching-the-wron.patch
++97c18d9e77f3209d1b9856d46d3016fced27c1279115c5c245a742dfcb5a445bd94b99c268be6d5744289e4069295ab76abb9a19f217d4616afd2744efe5e8e1  0077-drm-msm-dsi-release-PLL-bias-references-after-a-lock.patch
++5b3f56c25576abca5a4cd0c5962d3d124a819a0a592f7f07ba6f487026198bf133fc1318e6ea80fb75f99a39c912b9557a317895a49c7a1eb6fe9efc925f3fc7  0078-drm-msm-dsi-keep-the-digital-top-powered-for-PLL-and.patch
+ "
+-- 
+2.51.2
+

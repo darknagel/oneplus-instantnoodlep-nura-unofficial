@@ -1,0 +1,39 @@
+From 06fbf34467b5bd4ba8ae10791d371d3fed0c987e Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 12:07:46 +0000
+Subject: [PATCH] drm/msm/dsi: release PLL bias references after a lock timeout
+
+Stop the failed PLL and release its master and bonded-slave references.
+The clock core does not invoke unprepare after a failed prepare, so
+retries otherwise leak references.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+index 984a66085..b70def8a4 100644
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+@@ -532,7 +532,17 @@ static int dsi_pll_7nm_vco_prepare(struct clk_hw *hw)
+ 	if (pll_7nm->slave)
+ 		writel(0x1, pll_7nm->slave->phy->base + REG_DSI_7nm_PHY_CMN_RBUF_CTRL);
+ 
++	return 0;
++
+ error:
++	/* A failed prepare is not followed by unprepare in the clock core. */
++	writel(0, pll_7nm->phy->base + REG_DSI_7nm_PHY_CMN_PLL_CNTRL);
++	if (pll_7nm->slave)
++		dsi_pll_disable_pll_bias(pll_7nm->slave);
++	dsi_pll_disable_pll_bias(pll_7nm);
++	/* Flush the PLL stop and power-down writes before returning failure. */
++	wmb();
++
+ 	return rc;
+ }
+ 
+-- 
+2.51.2
+
