@@ -1,0 +1,54 @@
+From e9647bb9f55ca418aa58e5c0e469ce6686ddca1c Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 10:08:51 +0000
+Subject: [PATCH] arm64: dts: qcom: instantnoodlep: stop matching the wrong
+ charge pump
+
+The stock project-19811 overlay identifies the device at I2C5:0x66
+as a BQ2597x wireless charge pump. The BQ25980 driver has a different
+register layout and is already blacklisted on the test device.
+
+Correct the compatible and disable the node until wireless receiver
+control and the required charging limits are integrated. This avoids
+relying on a userspace blacklist to prevent the wrong driver binding.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 20 ++++++++++---------
+ 1 file changed, 11 insertions(+), 9 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 79e125810..3e47dd0b3 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -1233,16 +1233,18 @@ nfc@28 {
+ };
+ 
+ &i2c5 {
+-    status = "okay";
++	status = "okay";
+ 
+-    charger@66 {
+-        compatible = "ti,bq25980";
+-        status = "ok";
+-        reg = <0x66>;
+-        interrupt-parent = <&tlmm>;
+-        interrupts = <0x0f 0x00>;
+-        monitored-battery = <&battery>;
+-    };
++	charger@66 {
++		/* Stock uses a BQ2597x wireless charge pump, not a BQ25980. */
++		compatible = "ti,bq2597x-standalone";
++		/* Requires the wireless receiver and validated charge limits. */
++		status = "disabled";
++		reg = <0x66>;
++		interrupt-parent = <&tlmm>;
++		interrupts = <0x0f 0x00>;
++		monitored-battery = <&battery>;
++	};
+ };
+ 
+ &i2c16 {
+-- 
+2.51.2
+

@@ -1,0 +1,53 @@
+From e5dd4b8368fc397c33ef0c56d26cea918cc39e34 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 10:08:51 +0000
+Subject: [PATCH] arm64: dts: qcom: instantnoodlep: expose the two flash LEDs
+
+The stock camera flash uses PM8150L channels 0 and 1, corresponding
+to the mainline binding indices 1 and 2. Expose both channels through
+the existing flash driver without a default trigger.
+
+Start hardware validation with conservative limits of 100 mA torch,
+500 mA flash and 200 ms duration per channel. Camera synchronization
+and maximum output remain unvalidated.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 24 +++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index d1a0a0184..79e125810 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -2301,3 +2301,27 @@ haptics_irq_default: haptics-irq-default-state {
+ 		bias-pull-up;
+ 	};
+ };
++
++&pm8150l_flash {
++	status = "okay";
++
++	led-0 {
++		function = LED_FUNCTION_FLASH;
++		color = <LED_COLOR_ID_WHITE>;
++		function-enumerator = <0>;
++		led-sources = <1>;
++		led-max-microamp = <100000>;
++		flash-max-microamp = <500000>;
++		flash-max-timeout-us = <200000>;
++	};
++
++	led-1 {
++		function = LED_FUNCTION_FLASH;
++		color = <LED_COLOR_ID_WHITE>;
++		function-enumerator = <1>;
++		led-sources = <2>;
++		led-max-microamp = <100000>;
++		flash-max-microamp = <500000>;
++		flash-max-timeout-us = <200000>;
++	};
++};
+-- 
+2.51.2
+
