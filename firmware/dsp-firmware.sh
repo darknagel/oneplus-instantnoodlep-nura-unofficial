@@ -11,10 +11,16 @@
 #  - dsp_<slot>/sdsp: the libraries the sensor DSP loads through hexagonrpcd.
 #    They belong to the SLPI firmware above, so they come from the same phone
 #    and replace any copies from elsewhere.
-# No proprietary firmware is distributed with this script.
+#  - persist: the factory calibration of the proximity sensor. The generated
+#    registry has zero offsets, and the sensor then never reports "near".
+# No proprietary firmware or calibration is distributed with this script.
 set -eu
 FW=${DSP_FW:-/lib/firmware/updates/postmarketos}
 SDSP=${DSP_LIBS:-/usr/share/qcom/sm8250/OnePlus/instantnoodlep/dsp/sdsp}
+SENSORS=/usr/share/qcom/sm8250/OnePlus/instantnoodlep/sensors/persist/registry
+REGISTRY=/var/lib/hexagonrpcd/sensors-registry/registry
+CAL=stk2232_0_platform.ps.fac_cal
+CAL_DONE=/var/lib/hexagonrpcd/.proximity-calibration
 
 # The slot the bootloader started; all firmware services read the same one
 android_slot() {
@@ -46,7 +52,9 @@ for fw in slpi venus cdsp; do
 done
 need_libs=false
 [ -e "$SDSP/.from-dsp_$slot" ] || need_libs=true
-"$need_fw" || "$need_libs" || exit 0
+need_cal=false
+[ -e "$CAL_DONE" ] || need_cal=true
+"$need_fw" || "$need_libs" || "$need_cal" || exit 0
 
 mkdir -p "$FW" "$SDSP"
 TMP=$(mktemp -d "$FW/.dsp-firmware.XXXXXX")
@@ -89,4 +97,37 @@ if "$need_libs"; then
 	mv "$TMP"/sdsp/* "$SDSP/"
 	touch "$SDSP/.from-dsp_$slot"
 	echo "dsp-firmware: copied the sensor DSP libraries from dsp_$slot"
+	umount "$MNT"
+	mounted=false
+fi
+
+# Not every phone keeps the file, so a missing one is not an error. Without
+# "noload", even a read-only ext4 mount replays the journal and writes to the
+# Android partition.
+if "$need_cal"; then
+	if part=$(android_part persist) &&
+	   mount -t ext4 -o ro,noload,nosuid,nodev,noexec "$part" "$MNT"; then
+		mounted=true
+		src=$MNT/sensors/registry/registry/$CAL
+		if [ -s "$src" ]; then
+			# The packaged registry seeds a new install, the writable copy
+			# is what the sensor DSP reads on an existing one
+			[ -d "$SENSORS" ] && cp "$src" "$SENSORS/$CAL" && chmod 644 "$SENSORS/$CAL"
+			if [ -d "$REGISTRY" ]; then
+				[ -e "$REGISTRY/$CAL" ] && cp -p "$REGISTRY/$CAL" "$REGISTRY/../$CAL.before-factory" 2>/dev/null || true
+				cp "$src" "$REGISTRY/$CAL"
+				chown fastrpc:fastrpc "$REGISTRY/$CAL" 2>/dev/null || true
+				chmod 644 "$REGISTRY/$CAL"
+			fi
+			echo "dsp-firmware: imported the proximity calibration from persist"
+		else
+			echo "dsp-firmware: no proximity calibration on persist"
+		fi
+		umount "$MNT"
+		mounted=false
+	else
+		echo "dsp-firmware: cannot read persist, keeping the proximity calibration"
+	fi
+	mkdir -p "${CAL_DONE%/*}"
+	touch "$CAL_DONE"
 fi
