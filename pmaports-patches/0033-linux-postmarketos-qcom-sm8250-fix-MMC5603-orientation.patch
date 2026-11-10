@@ -1,0 +1,82 @@
+From 321b1bf8445b2380f62e3da945ed6929a305ed1d Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 19:01:09 +0000
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: fix MMC5603 orientation
+
+Append kernel patch 0065 to restore the vendor MMC5603 mounting direction.
+Register its checksum and bump the kernel package from r63 to r64.
+---
+ ...stantnoodlep-Fix-MMC5603-orientation.patch | 33 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  4 ++-
+ 2 files changed, 36 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0065-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-MMC5603-orientation.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0065-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-MMC5603-orientation.patch b/device/testing/linux-postmarketos-qcom-sm8250/0065-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-MMC5603-orientation.patch
+new file mode 100644
+index 0000000..4ee5ee2
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0065-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-MMC5603-orientation.patch
+@@ -0,0 +1,33 @@
++From c48f0f038379feaf7e819525369e70f41ef2d397 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 19:01:08 +0000
++Subject: [PATCH] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Fix MMC5603
++ orientation
++
++Restore sensor-direction = <0> for the MMC5603 magnetometer, matching
++OnePlus's 19811 device tree. On an IN2023, compass headings agreed with
++a magnetic-north reference within a few degrees after recalibration;
++intermittent heading errors remain.
++
++Link: https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8250/blob/oneplus/sm8250_t_13.1_op8/vendor/qcom/proprietary/devicetree-4.19/19811/kona-19811-sensor.dtsi#L29-L35
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 2 +-
++ 1 file changed, 1 insertion(+), 1 deletion(-)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 210f6a0..c1b5477 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -415,7 +415,7 @@
++ 			sensor-type = <2>;
++ 			sensor-index = <1>;
++ 			sensor-name = <0x02>;
++-			sensor-direction = <4>;
+++			sensor-direction = <0>;
++ 			parameter-number = <18>;
++ 			soft-mag-parameter = <0x2703 0 0x188 1 0x144 0 0x123 1 0x26db
++ 					      0 0x1df 0 0x6f 0 0x217 1 0x2b3e 0>;
++-- 
++2.54.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 684c3a7..d920f9e 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=63
++pkgrel=64
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -103,6 +103,7 @@ source="
+ 	0062-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Use-the.patch
+ 	0063-media-i2c-lc898128-Start-only-once-the-camera-stays-.patch
+ 	0064-net-qrtr-accept-forwarded-client-deletions.patch
++	0065-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-MMC5603-orientation.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -213,4 +214,5 @@ e1da3546326a1cfa5d66d8292ba363525e756ebd4d14c1d78776dbb0661d7bd0eacb9dfe01d4b65f
+ 2adf814a5fd6bf0e80511eae770045c72d4f4da475c576e7ec4c082f86b570b26a712b95985bfa874723c66b70d4121ec1b2c227aa0e4dba77a2dad4e9b09fcb  0062-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Use-the.patch
+ 320bb9712cb872fb376e041fa0c3f2c126958cd6c70f4e881d7e614af5046c7646570e5e0117c8393effc5bb409def875965f188aea9a9a0a441696a2394da24  0063-media-i2c-lc898128-Start-only-once-the-camera-stays-.patch
+ b07c37ddbe5df4bf69ca9209de22563ee5283b26ea13198fa85dc0297f5ecce11abf33d8700c37e4dbfa39efb64005c14ad1e0da18c4e40cfd5e4a02ef0a670d  0064-net-qrtr-accept-forwarded-client-deletions.patch
++876f054b7914ae3a4b1cd3b81b2f1046664171d868f72550f6b8993d3fcfb1dab4ae8184ab5813b2fbde119fd4b66d34a7dd0aecd4092d977e5458d7bc865196  0065-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Fix-MMC5603-orientation.patch
+ "
+-- 
+2.54.0
+

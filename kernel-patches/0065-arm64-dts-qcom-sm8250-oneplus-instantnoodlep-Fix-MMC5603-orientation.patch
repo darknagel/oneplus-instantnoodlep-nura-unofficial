@@ -1,0 +1,33 @@
+From c48f0f038379feaf7e819525369e70f41ef2d397 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 19:01:08 +0000
+Subject: [PATCH] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Fix MMC5603
+ orientation
+
+Restore sensor-direction = <0> for the MMC5603 magnetometer, matching
+OnePlus's 19811 device tree. On an IN2023, compass headings agreed with
+a magnetic-north reference within a few degrees after recalibration;
+intermittent heading errors remain.
+
+Link: https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8250/blob/oneplus/sm8250_t_13.1_op8/vendor/qcom/proprietary/devicetree-4.19/19811/kona-19811-sensor.dtsi#L29-L35
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 210f6a0..c1b5477 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -415,7 +415,7 @@
+ 			sensor-type = <2>;
+ 			sensor-index = <1>;
+ 			sensor-name = <0x02>;
+-			sensor-direction = <4>;
++			sensor-direction = <0>;
+ 			parameter-number = <18>;
+ 			soft-mag-parameter = <0x2703 0 0x188 1 0x144 0 0x123 1 0x26db
+ 					      0 0x1df 0 0x6f 0 0x217 1 0x2b3e 0>;
+-- 
+2.54.0
+
