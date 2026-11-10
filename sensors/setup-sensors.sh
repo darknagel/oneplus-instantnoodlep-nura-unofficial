@@ -6,10 +6,42 @@
 #  - the DSP libraries from the dsp partition of the active slot,
 #  - the sensor configuration from Android, which you saved before flashing
 #    (see the README): vendor/ holds /vendor/etc/sensors, odm/ /odm/etc/sensor.
-# Usage: setup-sensors.sh DIR
+#  - the proximity calibration from this phone's persist partition.
+# Usage: setup-sensors.sh DIR | --proximity-calibration
 set -e
-SRC=${1:?usage: setup-sensors.sh DIR with vendor/ and odm/}
+SRC=${1:?usage: setup-sensors.sh DIR with vendor/ and odm/, or --proximity-calibration}
 F=/usr/share/qcom/sm8250/OnePlus/instantnoodlep
+CAL=stk2232_0_platform.ps.fac_cal
+
+copy_proximity_calibration() (
+	MNT=$(mktemp -d)
+	trap 'rmdir "$MNT"' EXIT
+	trap 'exit 1' HUP INT TERM
+	# ro alone can still replay the ext4 journal; leave Android persist untouched.
+	mount -t ext4 -o ro,noload /dev/disk/by-partlabel/persist "$MNT"
+	trap 'umount "$MNT"; rmdir "$MNT"' EXIT
+	SOURCE=$MNT/sensors/registry/registry/$CAL
+	[ -s "$SOURCE" ] || { echo "Missing proximity calibration: $SOURCE" >&2; exit 1; }
+	cp "$SOURCE" "$F/sensors/persist/registry/$CAL"
+)
+
+# Repair an existing install without extracting vendor/odm or resetting other sensors.
+if [ "$SRC" = --proximity-calibration ]; then
+	REGISTRY=/var/lib/hexagonrpcd/sensors-registry/registry
+	[ -f "$REGISTRY/$CAL" ] && [ -d "$F/sensors/persist/registry" ] || {
+		echo "Sensor registry is missing; run the full sensor setup first" >&2
+		exit 1
+	}
+	copy_proximity_calibration
+	systemctl stop hexagonrpcd-sdsp
+	BACKUP=/var/lib/hexagonrpcd/$CAL.before-factory
+	[ -e "$BACKUP" ] || cp -p "$REGISTRY/$CAL" "$BACKUP"
+	cp "$F/sensors/persist/registry/$CAL" "$REGISTRY/$CAL"
+	chown fastrpc:fastrpc "$REGISTRY/$CAL"
+	chmod 644 "$REGISTRY/$CAL"
+	echo "Done. Reboot to reload proximity calibration, then check with: monitor-sensor --proximity"
+	exit 0
+fi
 
 # adb pull nests the folder when the target already exists
 [ -d "$SRC/vendor/sensors" ] && mv "$SRC"/vendor/sensors/* "$SRC"/vendor/
@@ -72,6 +104,9 @@ sscregistrygen -p MTP -s 356 $TMP/vendor $F/sensors/persist/registry
 sscregistrygen -p MTP -s 356 $TMP/odm $F/sensors/persist/registry
 rm -rf $TMP
 printf '%s\n' "$(sed -n 's/^version=//p' $F/sensors/sns_reg.conf)" > $F/sensors/persist/sns_reg_version
+
+# Generated defaults have zero offsets; proximity needs this unit's factory values.
+copy_proximity_calibration
 
 find $F -type d -exec chmod 755 {} +
 find $F -type f -exec chmod 644 {} +
