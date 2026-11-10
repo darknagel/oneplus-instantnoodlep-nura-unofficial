@@ -1,0 +1,1926 @@
+From 1d5eb5b71747a71039e77db2ca0de82c449738ef Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 20:09:18 +0100
+Subject: [PATCH 34/35] temp/libcamera: upgrade to 0.8.0 with the OnePlus 8 Pro
+ patches
+
+Rebase on the 0.8.0 package of pmaports main and port the contrast detection autofocus to the renamed softisp IPA. Adds the sensor helpers and tuning files for S5K3M5, IMX586, IMX689 and GC5035; the IMX471 helper is part of 0.8.0 now. The autofocus rescans only after a sharpness change of 25 % in four statistics frames in a row, so low light noise no longer makes the lens hunt.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ...ware_isp-Allow-limiting-output-sizes.patch | 145 ++++++++++++++++++
+ ...ayer_egl-Re-add-log-for-failing-DMAB.patch |  40 -----
+ ...a-Add-quad-Bayer-CFA-layout-support.patch} | 112 +++++++-------
+ ..._sensor-Add-Sony-IMX355-sensor-prope.patch |  73 ---------
+ ...sensor-Add-Samsung-S5K3M5-sensor-pr.patch} |   4 +-
+ ...re_isp-debayer_egl-Use-untransposed-.patch |  65 --------
+ ...-demote-Unsupported-input-format-log.patch |  78 ----------
+ ...sensor-Add-IMX586-IMX689-and-GC5035.patch} |   2 +-
+ ...e-AGC-minimum-gain-step-from-sensor-.patch |  85 ----------
+ ...e_isp-Add-a-sharpness-measure-to-th.patch} |  37 ++---
+ ...Pass-focus-lens-controls-to-and-fro.patch} |  53 +++----
+ ...sp-Add-contrast-detection-autofocus.patch} | 125 +++++++--------
+ ...008-ipa-softisp-af-Shorten-the-scan.patch} |  33 ++--
+ ..._sensor-Add-Sony-IMX471-sensor-prope.patch |  71 ---------
+ temp/libcamera/APKBUILD                       | 111 ++++++--------
+ temp/libcamera/hi846.yaml                     |  22 +++
+ temp/libcamera/imx586.yaml                    |   4 +-
+ temp/libcamera/imx689.yaml                    |   4 +-
+ temp/libcamera/imx800.yaml                    |  31 ----
+ temp/libcamera/s5k3l6xx.yaml                  |  22 +++
+ temp/libcamera/s5k3m5.yaml                    |   2 +
+ 21 files changed, 414 insertions(+), 705 deletions(-)
+ create mode 100644 temp/libcamera/0001-libcamera-software_isp-Allow-limiting-output-sizes.patch
+ delete mode 100644 temp/libcamera/0001-software_isp-debayer_egl-Re-add-log-for-failing-DMAB.patch
+ rename temp/libcamera/{0006-libcamera-Add-quad-Bayer-CFA-layout-support.patch => 0002-libcamera-Add-quad-Bayer-CFA-layout-support.patch} (92%)
+ delete mode 100644 temp/libcamera/0002-libcamera-camera_sensor-Add-Sony-IMX355-sensor-prope.patch
+ rename temp/libcamera/{0007-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch => 0003-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch} (94%)
+ delete mode 100644 temp/libcamera/0003-libcamera-software_isp-debayer_egl-Use-untransposed-.patch
+ delete mode 100644 temp/libcamera/0004-debayer-Further-demote-Unsupported-input-format-log.patch
+ rename temp/libcamera/{0012-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch => 0004-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch} (97%)
+ delete mode 100644 temp/libcamera/0005-ipa-simple-Derive-AGC-minimum-gain-step-from-sensor-.patch
+ rename temp/libcamera/{0009-libcamera-software_isp-Add-a-sharpness-measure-to-th.patch => 0005-libcamera-software_isp-Add-a-sharpness-measure-to-th.patch} (80%)
+ rename temp/libcamera/{0010-libcamera-simple-Pass-focus-lens-controls-to-and-fro.patch => 0006-libcamera-simple-Pass-focus-lens-controls-to-and-fro.patch} (77%)
+ rename temp/libcamera/{0011-ipa-simple-Add-contrast-detection-autofocus.patch => 0007-ipa-softisp-Add-contrast-detection-autofocus.patch} (75%)
+ rename temp/libcamera/{0013-ipa-simple-af-Shorten-the-scan.patch => 0008-ipa-softisp-af-Shorten-the-scan.patch} (72%)
+ delete mode 100644 temp/libcamera/0008-libcamera-camera_sensor-Add-Sony-IMX471-sensor-prope.patch
+
+diff --git a/temp/libcamera/0001-libcamera-software_isp-Allow-limiting-output-sizes.patch b/temp/libcamera/0001-libcamera-software_isp-Allow-limiting-output-sizes.patch
+new file mode 100644
+index 0000000000..e8b5e2cf9d
+--- /dev/null
++++ b/temp/libcamera/0001-libcamera-software_isp-Allow-limiting-output-sizes.patch
+@@ -0,0 +1,145 @@
++From b6e75a7962a32473b8fee892cc8802c857e8b49e Mon Sep 17 00:00:00 2001
++From: Robert Mader <robert.mader@collabora.com>
++Date: Sat, 10 Oct 2026 22:45:50 +0200
++Subject: [PATCH 1/2] libcamera: software_isp: Allow limiting output sizes
++
++There are various scenarios where it can be useful to control the output
++sizes of the softisp inside libcamera without rebuilding the project.
++Examples include:
++ - Debugging and testing when one can't fully control the client
++ - Forcing well working sizes on devices where the GPU/CPU are not strong
++   enough for typically client-picked sizes. This can be especially
++   useful on mobile devices
++
++Add a new "options" block to softisp tuning files, to be used like shown
++below:
++
++>options:
++>  min_output_width: 640
++>  min_output_height: 480
++>  max_output_width: 1920
++>  max_output_height: 1080
++
++Signed-off-by: Robert Mader <robert.mader@collabora.com>
++
++---
++
++Changes in v2:
++ - Use tuning files instead of the global config
++ - Fix typo in commit message
++
++Context:
++
++I plan to use this as convenience feature in Nura (formerly postmarketOS),
++making it easy to ship device specific configuration files without needing
++libcamera-specific downstream changes to the kernel. To me the feature
++seems useful enough to upstream it, though.
++---
++ .../internal/software_isp/software_isp.h      |  1 +
++ include/libcamera/ipa/softisp.mojom           |  3 ++-
++ src/ipa/softisp/softisp.cpp                   | 22 +++++++++++++++++--
++ src/libcamera/software_isp/software_isp.cpp   |  8 +++++--
++ 4 files changed, 29 insertions(+), 5 deletions(-)
++
++diff --git a/include/libcamera/internal/software_isp/software_isp.h b/include/libcamera/internal/software_isp/software_isp.h
++index b64910637dcc..12e70ec12481 100644
++--- a/include/libcamera/internal/software_isp/software_isp.h
+++++ b/include/libcamera/internal/software_isp/software_isp.h
++@@ -102,6 +102,7 @@ private:
++ 	DmaBufAllocator dmaHeap_;
++ 	bool ccmEnabled_;
++ 	bool lscEnabled_;
+++	SizeRange outputSizeLimits_;
++ 
++ 	std::unique_ptr<ipa::softisp::IPAProxySoftIsp> ipa_;
++ 	std::deque<FrameBuffer *> queuedInputBuffers_;
++diff --git a/include/libcamera/ipa/softisp.mojom b/include/libcamera/ipa/softisp.mojom
++index e42742ed7f6d..52f60d902b25 100644
++--- a/include/libcamera/ipa/softisp.mojom
+++++ b/include/libcamera/ipa/softisp.mojom
++@@ -20,7 +20,8 @@ interface IPASoftIspInterface {
++ 	     libcamera.ControlInfoMap sensorControls)
++ 		=> (int32 ret,
++ 		    libcamera.ControlInfoMap ipaControls,
++-		    bool ccmEnabled, bool lscEnabled);
+++		    bool ccmEnabled, bool lscEnabled,
+++		    libcamera.SizeRange sizeLimits);
++ 	start() => (int32 ret);
++ 	stop();
++ 	configure(IPAConfigInfo configInfo)
++diff --git a/src/ipa/softisp/softisp.cpp b/src/ipa/softisp/softisp.cpp
++index 00249a300430..a166176b90c0 100644
++--- a/src/ipa/softisp/softisp.cpp
+++++ b/src/ipa/softisp/softisp.cpp
++@@ -59,7 +59,8 @@ public:
++ 		 const ControlInfoMap &sensorControls,
++ 		 ControlInfoMap *ipaControls,
++ 		 bool *ccmEnabled,
++-		 bool *lscEnabled) override;
+++		 bool *lscEnabled,
+++		 SizeRange *sizeLimits) override;
++ 	int configure(const IPAConfigInfo &configInfo,
++ 		      ControlInfoMap *ipaControls) override;
++ 
++@@ -99,7 +100,8 @@ int IPASoftIsp::init(const IPASettings &settings,
++ 		     const ControlInfoMap &sensorControls,
++ 		     ControlInfoMap *ipaControls,
++ 		     bool *ccmEnabled,
++-		     bool *lscEnabled)
+++		     bool *lscEnabled,
+++		     SizeRange *sizeLimits)
++ {
++ 	context_.camHelper = CameraSensorHelperFactoryBase::create(settings.sensorModel);
++ 	if (!context_.camHelper) {
++@@ -186,6 +188,22 @@ int IPASoftIsp::init(const IPASettings &settings,
++ 	ControlInfoMap::Map ctrlMap = context_.ctrlMap;
++ 	*ipaControls = ControlInfoMap(std::move(ctrlMap), controls::controls);
++ 
+++	sizeLimits->min = Size(0, 0);
+++	sizeLimits->max = Size(std::numeric_limits<uint32_t>::max(),
+++			       std::numeric_limits<uint32_t>::max());
+++	if (data->contains("options")) {
+++		const ValueNode *options = &(*data)["options"];
+++
+++		if (options->contains("min_output_width"))
+++			sizeLimits->min.width = (*options)["min_output_width"].get<uint32_t>(0);
+++		if (options->contains("min_output_heigth"))
+++			sizeLimits->min.height = (*options)["min_output_heigth"].get<uint32_t>(0);
+++		if (options->contains("max_output_width"))
+++			sizeLimits->max.width = (*options)["max_output_width"].get<uint32_t>(0);
+++		if (options->contains("max_output_heigth"))
+++			sizeLimits->max.height = (*options)["max_output_heigth"].get<uint32_t>(0);
+++	}
+++
++ 	return 0;
++ }
++ 
++diff --git a/src/libcamera/software_isp/software_isp.cpp b/src/libcamera/software_isp/software_isp.cpp
++index 627625b4f54f..218660ed8510 100644
++--- a/src/libcamera/software_isp/software_isp.cpp
+++++ b/src/libcamera/software_isp/software_isp.cpp
++@@ -164,7 +164,8 @@ SoftwareIsp::SoftwareIsp(PipelineHandler *pipe, const CameraSensor *sensor,
++ 			 sensor->controls(),
++ 			 ipaControls,
++ 			 &ccmEnabled_,
++-			 &lscEnabled_);
+++			 &lscEnabled_,
+++			 &outputSizeLimits_);
++ 	if (ret) {
++ 		LOG(SoftwareIsp, Error) << "IPA init failed";
++ 		debayer_.reset();
++@@ -244,7 +245,10 @@ SizeRange SoftwareIsp::sizes(PixelFormat inputFormat, const Size &inputSize)
++ {
++ 	ASSERT(debayer_);
++ 
++-	return debayer_->sizes(inputFormat, inputSize);
+++	SizeRange sizes = debayer_->sizes(inputFormat, inputSize);
+++	sizes.min = sizes.min.expandTo(outputSizeLimits_.min).alignUpTo(sizes.hStep, sizes.vStep);
+++	sizes.max = sizes.max.boundTo(outputSizeLimits_.max).alignDownTo(sizes.hStep, sizes.vStep);
+++	return sizes;
++ }
++ 
++ /**
++-- 
++2.56.0
++
+diff --git a/temp/libcamera/0001-software_isp-debayer_egl-Re-add-log-for-failing-DMAB.patch b/temp/libcamera/0001-software_isp-debayer_egl-Re-add-log-for-failing-DMAB.patch
+deleted file mode 100644
+index f87d47c3b1..0000000000
+--- a/temp/libcamera/0001-software_isp-debayer_egl-Re-add-log-for-failing-DMAB.patch
++++ /dev/null
+@@ -1,40 +0,0 @@
+-From a694d962ae264e95de1d0d5b6035f21e844151a8 Mon Sep 17 00:00:00 2001
+-From: Robert Mader <robert.mader@collabora.com>
+-Date: Thu, 23 Jul 2026 09:19:33 +0200
+-Subject: [PATCH 1/6] software_isp: debayer_egl: Re-add log for failing DMABuf
+- import
+-
+-The log was introduced in commit
+-93f0db167a8d ("debayer_egl: Implement dmabuf import for input buffers")
+-and dropped in the commit mentioned below. Let's readd it as failing
+-imports majorly impact performance and indicate actionable issues in the
+-V4L2 or GPU drivers. Ensure the log is only printed once, now that we use
+-multiple eGLImages.
+-
+-Fixes: 13f7b921acdf ("libcamera: software_isp: debayer_egl: Implement input/output frame caching mechanism")
+-Signed-off-by: Robert Mader <robert.mader@collabora.com>
+-Reviewed-by: Milan Zamazal <mzamazal@redhat.com>
+-Reviewed-by: Kieran Bingham <kieran.bingham@ideasonboard.com>
+-Signed-off-by: Kieran Bingham <kieran.bingham@ideasonboard.com>
+-(cherry picked from commit 69005af97f24691eeb851012ec909fc468312615)
+----
+- src/libcamera/software_isp/debayer_egl.cpp | 3 +++
+- 1 file changed, 3 insertions(+)
+-
+-diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+-index 02651fe87922..09ab5a58c994 100644
+---- a/src/libcamera/software_isp/debayer_egl.cpp
+-+++ b/src/libcamera/software_isp/debayer_egl.cpp
+-@@ -533,6 +533,9 @@ eGLImage *DebayerEGL::getCachedInputFrameBuffer(FrameBuffer *input, std::optiona
+- 		if (egl_.createInputDMABufTexture2D(*eglImageIn, input->planes()[0].fd.get()) == 0)
+- 			return eglImageIn;
+- 
+-+		if (eglImageInCache_.size() == 1)
+-+			LOG(Debayer, Info)
+-+				<< "Importing input DMABuf failed, falling back to upload";
+- 	} else if (!eglImageIn->dmabuf_import_failed_) {
+- 		egl_.activateBindTexture(*eglImageIn);
+- 		return eglImageIn;
+--- 
+-2.56.0
+-
+diff --git a/temp/libcamera/0006-libcamera-Add-quad-Bayer-CFA-layout-support.patch b/temp/libcamera/0002-libcamera-Add-quad-Bayer-CFA-layout-support.patch
+similarity index 92%
+rename from temp/libcamera/0006-libcamera-Add-quad-Bayer-CFA-layout-support.patch
+rename to temp/libcamera/0002-libcamera-Add-quad-Bayer-CFA-layout-support.patch
+index fe4a19a28e..14b8682fef 100644
+--- a/temp/libcamera/0006-libcamera-Add-quad-Bayer-CFA-layout-support.patch
++++ b/temp/libcamera/0002-libcamera-Add-quad-Bayer-CFA-layout-support.patch
+@@ -1,7 +1,7 @@
+-From 1d48b0c83e370979817ffb7e5505afbb7c7c1d47 Mon Sep 17 00:00:00 2001
++From e3be587eda57ea076145721ee53b9923e216a179 Mon Sep 17 00:00:00 2001
+ From: Frederic Laing <dev@fredfunk.tech>
+ Date: Tue, 25 Aug 2026 18:16:06 +0000
+-Subject: [PATCH 6/6] libcamera: Add quad-Bayer CFA layout support
++Subject: [PATCH 2/2] libcamera: Add quad-Bayer CFA layout support
+ 
+ Quad-Bayer sensors arrange pixels in 2x2 same-colour cells. Treating
+ the IMX371 full-resolution stream as a conventional Bayer pattern
+@@ -320,10 +320,10 @@ index 551870921862..6fe60e6a0bb2 100644
+  	std::vector<SwIspStats> stats_;
+  	SharedMemObject<SwIspStats> sharedStats_;
+ diff --git a/src/ipa/rpi/cam_helper/cam_helper.cpp b/src/ipa/rpi/cam_helper/cam_helper.cpp
+-index dfdcd167839a..6c7cf3a29e30 100644
++index a480de0043c1..846fbb5baa7a 100644
+ --- a/src/ipa/rpi/cam_helper/cam_helper.cpp
+ +++ b/src/ipa/rpi/cam_helper/cam_helper.cpp
+-@@ -206,8 +206,12 @@ unsigned int CamHelper::mistrustFramesModeSwitch() const
++@@ -206,8 +206,12 @@ unsigned int CamHelper::mistrustMetadataModeSwitch() const
+  
+  unsigned int CamHelper::getMinDebinFactor() const
+  {
+@@ -337,13 +337,13 @@ index dfdcd167839a..6c7cf3a29e30 100644
+ +	cfaLayout_ = layout;
+  }
+  
+- void CamHelper::parseEmbeddedData(Span<const uint8_t> buffer,
++ void CamHelper::parseEmbeddedData(std::span<const uint8_t> buffer,
+ diff --git a/src/ipa/rpi/cam_helper/cam_helper.h b/src/ipa/rpi/cam_helper/cam_helper.h
+-index bd101895f23e..6dac8c7a7b62 100644
++index bbaf57a1f268..eb9392ba4083 100644
+ --- a/src/ipa/rpi/cam_helper/cam_helper.h
+ +++ b/src/ipa/rpi/cam_helper/cam_helper.h
+ @@ -13,12 +13,14 @@
+- #include <libcamera/base/span.h>
++ 
+  #include <libcamera/base/utils.h>
+  
+ +#include "libcamera/internal/sensor_cfa_layout.h"
+@@ -360,13 +360,13 @@ index bd101895f23e..6dac8c7a7b62 100644
+  namespace RPiController {
+  
+ @@ -99,6 +101,7 @@ public:
+- 	virtual unsigned int mistrustFramesStartup() const;
+- 	virtual unsigned int mistrustFramesModeSwitch() const;
++ 	virtual unsigned int mistrustMetadataStartup() const;
++ 	virtual unsigned int mistrustMetadataModeSwitch() const;
+  	virtual unsigned int getMinDebinFactor() const;
+ +	void setCfaLayout(const libcamera::SensorCfaLayout &layout);
+  
+  protected:
+- 	void parseEmbeddedData(libcamera::Span<const uint8_t> buffer,
++ 	void parseEmbeddedData(std::span<const uint8_t> buffer,
+ @@ -109,6 +112,7 @@ protected:
+  	std::unique_ptr<MdParser> parser_;
+  	CameraMode mode_;
+@@ -376,10 +376,10 @@ index bd101895f23e..6dac8c7a7b62 100644
+  private:
+  	/*
+ diff --git a/src/ipa/rpi/cam_helper/cam_helper_imx708.cpp b/src/ipa/rpi/cam_helper/cam_helper_imx708.cpp
+-index e7b8d6712185..6150909ca34f 100644
++index a53b5c8fe554..020c801d6f31 100644
+ --- a/src/ipa/rpi/cam_helper/cam_helper_imx708.cpp
+ +++ b/src/ipa/rpi/cam_helper/cam_helper_imx708.cpp
+-@@ -58,7 +58,6 @@ public:
++@@ -60,7 +60,6 @@ public:
+  	double getModeSensitivity(const CameraMode &mode) const override;
+  	unsigned int hideFramesModeSwitch() const override;
+  	unsigned int hideFramesStartup() const override;
+@@ -387,7 +387,7 @@ index e7b8d6712185..6150909ca34f 100644
+  
+  private:
+  	/*
+-@@ -238,12 +237,6 @@ unsigned int CamHelperImx708::hideFramesStartup() const
++@@ -240,12 +239,6 @@ unsigned int CamHelperImx708::hideFramesStartup() const
+  	return hideFramesModeSwitch();
+  }
+  
+@@ -401,7 +401,7 @@ index e7b8d6712185..6150909ca34f 100644
+  				       Metadata &metadata) const
+  {
+ diff --git a/src/ipa/rpi/common/ipa_base.cpp b/src/ipa/rpi/common/ipa_base.cpp
+-index dacafa578c98..8f6b987edcd3 100644
++index c284834440c8..4623b8070ba5 100644
+ --- a/src/ipa/rpi/common/ipa_base.cpp
+ +++ b/src/ipa/rpi/common/ipa_base.cpp
+ @@ -144,6 +144,7 @@ int32_t IpaBase::init(const IPASettings &settings, const InitParams &params, Ini
+@@ -413,12 +413,12 @@ index dacafa578c98..8f6b987edcd3 100644
+  	/* Pass out the sensor metadata to the pipeline handler */
+  	int sensorMetadata = helper_->sensorEmbeddedDataPresent();
+ diff --git a/src/libcamera/shaders/bayer_1x_packed.frag b/src/libcamera/shaders/bayer_1x_packed.frag
+-index 0b641a5f35c5..d20d9d6fb694 100644
++index e613340702a9..b9db053a1c94 100644
+ --- a/src/libcamera/shaders/bayer_1x_packed.frag
+ +++ b/src/libcamera/shaders/bayer_1x_packed.frag
+-@@ -71,6 +71,26 @@ uniform vec3 blacklevel;
+- uniform float gamma;
+- uniform float contrastExp;
++@@ -75,6 +75,26 @@ uniform float contrastExp;
++ uniform sampler2D lsc_tex;
++ #endif
+  
+ +#if defined (QUAD_BAYER)
+ +vec2 quad_cell(vec2 pixel)
+@@ -443,7 +443,7 @@ index 0b641a5f35c5..d20d9d6fb694 100644
+  float apply_contrast(float value)
+  {
+  	// Apply simple S-curve
+-@@ -108,6 +128,9 @@ void main(void)
++@@ -112,6 +132,9 @@ void main(void)
+  	 * by hand.
+  	 */
+  	center_pixel = floor(textureOut * tex_size);
+@@ -453,7 +453,7 @@ index 0b641a5f35c5..d20d9d6fb694 100644
+  	center_bytes.y = center_pixel.y;
+  
+  	/*
+-@@ -127,6 +150,10 @@ void main(void)
++@@ -131,6 +154,10 @@ void main(void)
+  	center_bytes.x = floor(center_bytes.x);
+  	center_bytes *= tex_step;
+  
+@@ -464,7 +464,7 @@ index 0b641a5f35c5..d20d9d6fb694 100644
+  	xcoords = center_bytes.x + vec2(-tex_step.x, tex_step.x);
+  	ycoords = center_bytes.y + vec2(-tex_step.y, tex_step.y);
+  
+-@@ -143,8 +170,12 @@ void main(void)
++@@ -147,8 +174,12 @@ void main(void)
+  	 * byte forward.
+  	 */
+  	xcoords[1] += (fract_x > THRESHOLD_H) ? tex_step.x : 0.0;
+@@ -478,7 +478,7 @@ index 0b641a5f35c5..d20d9d6fb694 100644
+  	bool even_col = alternate.x < 1.0;
+  	bool even_row = alternate.y < 1.0;
+  
+-@@ -199,17 +230,31 @@ void main(void)
++@@ -203,17 +234,31 @@ void main(void)
+  	 *   patterns.z = (A0 + A1 + B0 + B1) / 4.0
+  	 *   patterns.w = (D0 + D1 + D2 + D3) / 4.0
+  	 */
+@@ -512,10 +512,10 @@ index 0b641a5f35c5..d20d9d6fb694 100644
+  		fetch(xcoords[0], ycoords[1]));		/* D2: (-1,1) */
+  	patterns = (patterns + temp) * 0.5;
+ diff --git a/src/libcamera/software_isp/debayer.cpp b/src/libcamera/software_isp/debayer.cpp
+-index 56446f55d44f..d60b2a2318a8 100644
++index 4f6659000edb..a038a998c66a 100644
+ --- a/src/libcamera/software_isp/debayer.cpp
+ +++ b/src/libcamera/software_isp/debayer.cpp
+-@@ -56,8 +56,8 @@ LOG_DEFINE_CATEGORY(Debayer)
++@@ -97,8 +97,8 @@ LOG_DEFINE_CATEGORY(Debayer)
+   * \brief Construct a Debayer object
+   * \param[in] cm The camera manager
+   */
+@@ -527,7 +527,7 @@ index 56446f55d44f..d60b2a2318a8 100644
+  }
+  
+ diff --git a/src/libcamera/software_isp/debayer.h b/src/libcamera/software_isp/debayer.h
+-index 28f1b857b388..6c52ed0249a4 100644
++index e30a05279c18..f0ebdf59c64a 100644
+ --- a/src/libcamera/software_isp/debayer.h
+ +++ b/src/libcamera/software_isp/debayer.h
+ @@ -35,7 +35,7 @@ LOG_DECLARE_CATEGORY(Debayer)
+@@ -548,7 +548,7 @@ index 28f1b857b388..6c52ed0249a4 100644
+  private:
+  	virtual Size patternSize(PixelFormat inputFormat) = 0;
+ diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+-index fdb1efec2a7b..aaa42b5b3932 100644
++index 33933b11db70..df0d9c9957d1 100644
+ --- a/src/libcamera/software_isp/debayer_egl.cpp
+ +++ b/src/libcamera/software_isp/debayer_egl.cpp
+ @@ -24,6 +24,7 @@
+@@ -559,21 +559,21 @@ index fdb1efec2a7b..aaa42b5b3932 100644
+  
+  #include "../shaders/glsl_shaders.h"
+  
+-@@ -40,9 +41,11 @@ namespace libcamera {
+-  * \brief Construct a DebayerEGL object
++@@ -41,9 +42,11 @@ namespace libcamera {
+   * \param[in] stats Statistics processing object
+   * \param[in] cm The camera manager
++  * \param[in] display The EGL display to use
+ + * \param[in] quadBayer Whether the sensor uses 2x2 same-colour cells
+   */
+--DebayerEGL::DebayerEGL(std::unique_ptr<SwStatsCpu> stats, const CameraManager &cm)
+--	: Debayer(cm), stats_(std::move(stats))
++-DebayerEGL::DebayerEGL(std::unique_ptr<SwStatsCpu> stats, const CameraManager &cm, EGLDisplay display)
++-	: Debayer(cm), stats_(std::move(stats)), egl_(display)
+ +DebayerEGL::DebayerEGL(std::unique_ptr<SwStatsCpu> stats, const CameraManager &cm,
+-+		       bool quadBayer)
+-+	: Debayer(cm, quadBayer), stats_(std::move(stats))
+++		       EGLDisplay display, bool quadBayer)
+++	: Debayer(cm, quadBayer), stats_(std::move(stats)), egl_(display)
+  {
+  }
+  
+-@@ -152,6 +155,8 @@ int DebayerEGL::initBayerShaders(PixelFormat inputFormat, PixelFormat outputForm
++@@ -142,6 +145,8 @@ int DebayerEGL::initBayerShaders(PixelFormat inputFormat, PixelFormat outputForm
+  
+  	/* Target gles 100 glsl requires "#version x" as first directive in shader */
+  	egl_.pushEnv(shaderEnv, "#version 100");
+@@ -582,7 +582,7 @@ index fdb1efec2a7b..aaa42b5b3932 100644
+  
+  	/* Specify GL_OES_EGL_image_external */
+  	egl_.pushEnv(shaderEnv, "#extension GL_OES_EGL_image_external: enable");
+-@@ -294,6 +299,9 @@ int DebayerEGL::configure(const StreamConfiguration &inputCfg,
++@@ -288,6 +293,9 @@ int DebayerEGL::configure(const StreamConfiguration &inputCfg,
+  		return -EINVAL;
+  	}
+  
+@@ -592,7 +592,7 @@ index fdb1efec2a7b..aaa42b5b3932 100644
+  	if (stats_->configure(inputCfg) != 0)
+  		return -EINVAL;
+  
+-@@ -335,18 +343,22 @@ int DebayerEGL::configure(const StreamConfiguration &inputCfg,
++@@ -331,18 +339,22 @@ int DebayerEGL::configure(const StreamConfiguration &inputCfg,
+  	outputSize_ = outputCfg.size;
+  	nativeOutputSize_ = outSizeRange.max;
+  
+@@ -622,7 +622,7 @@ index fdb1efec2a7b..aaa42b5b3932 100644
+  
+  	inputBufferCount_ = inputCfg.bufferCount;
+  	outputBufferCount_ = outputCfg.bufferCount;
+-@@ -366,6 +378,9 @@ Size DebayerEGL::patternSize(PixelFormat inputFormat)
++@@ -362,6 +374,9 @@ Size DebayerEGL::patternSize(PixelFormat inputFormat)
+  
+  std::vector<PixelFormat> DebayerEGL::formats(PixelFormat inputFormat)
+  {
+@@ -632,7 +632,7 @@ index fdb1efec2a7b..aaa42b5b3932 100644
+  	DebayerEGL::DebayerInputConfig config;
+  
+  	if (getInputConfig(inputFormat, config) != 0)
+-@@ -412,8 +427,10 @@ void DebayerEGL::setShaderVariableValues(eGLImage &eglImageIn, const DebayerPara
++@@ -402,8 +417,10 @@ void DebayerEGL::setShaderVariableValues(eGLImage &eglImageIn, const DebayerPara
+  	 * the input size. Keep the aspect ratio and prefer cropping over black
+  	 * bars.
+  	 */
+@@ -645,7 +645,7 @@ index fdb1efec2a7b..aaa42b5b3932 100644
+  	GLfloat trans = -(1.0f - scale);
+  	GLfloat projMatrix[] = {
+  		scale, 0, 0, 0,
+-@@ -428,12 +445,8 @@ void DebayerEGL::setShaderVariableValues(eGLImage &eglImageIn, const DebayerPara
++@@ -418,12 +435,8 @@ void DebayerEGL::setShaderVariableValues(eGLImage &eglImageIn, const DebayerPara
+  		{ +1.0f, +1.0f },
+  		{ +1.0f, -1.0f },
+  	};
+@@ -660,7 +660,7 @@ index fdb1efec2a7b..aaa42b5b3932 100644
+  
+  	/* vertexIn - bayer_8.vert */
+  	glEnableVertexAttribArray(attributeVertex_);
+-@@ -443,7 +456,7 @@ void DebayerEGL::setShaderVariableValues(eGLImage &eglImageIn, const DebayerPara
++@@ -433,7 +446,7 @@ void DebayerEGL::setShaderVariableValues(eGLImage &eglImageIn, const DebayerPara
+  	/* textureIn - bayer_8.vert */
+  	glEnableVertexAttribArray(attributeTexture_);
+  	glVertexAttribPointer(attributeTexture_, 2, GL_FLOAT, GL_TRUE,
+@@ -669,7 +669,7 @@ index fdb1efec2a7b..aaa42b5b3932 100644
+  
+  	/*
+  	 * Set the sampler2D to the respective texture unit for each texutre
+-@@ -626,7 +639,9 @@ int DebayerEGL::debayerGPU(FrameBuffer *input, FrameBuffer *output, const Debaye
++@@ -609,7 +622,9 @@ int DebayerEGL::debayerGPU(FrameBuffer *input, FrameBuffer *output, const Debaye
+  	egl_.attachTextureToFBO(*eglImageOut);
+  	setShaderVariableValues(*eglImageIn, params);
+  
+@@ -680,7 +680,7 @@ index fdb1efec2a7b..aaa42b5b3932 100644
+  	glClear(GL_COLOR_BUFFER_BIT);
+  	glDrawArrays(GL_TRIANGLE_FAN, 0, DEBAYER_OPENGL_COORDS);
+  
+-@@ -721,6 +736,15 @@ void DebayerEGL::stop()
++@@ -722,6 +737,15 @@ void DebayerEGL::stop()
+  
+  SizeRange DebayerEGL::sizes(PixelFormat inputFormat, const Size &inputSize)
+  {
+@@ -697,7 +697,7 @@ index fdb1efec2a7b..aaa42b5b3932 100644
+  	unsigned int borderHeight = patternSize.height;
+  
+ diff --git a/src/libcamera/software_isp/debayer_egl.h b/src/libcamera/software_isp/debayer_egl.h
+-index d6223f3a9724..8e6b4af91476 100644
++index cbbc6a450568..067524eeb0be 100644
+ --- a/src/libcamera/software_isp/debayer_egl.h
+ +++ b/src/libcamera/software_isp/debayer_egl.h
+ @@ -9,6 +9,7 @@
+@@ -712,13 +712,13 @@ index d6223f3a9724..8e6b4af91476 100644
+  class DebayerEGL : public Debayer
+  {
+  public:
+--	DebayerEGL(std::unique_ptr<SwStatsCpu> stats, const CameraManager &cm);
++-	DebayerEGL(std::unique_ptr<SwStatsCpu> stats, const CameraManager &cm, EGLDisplay display);
+ +	DebayerEGL(std::unique_ptr<SwStatsCpu> stats, const CameraManager &cm,
+-+		   bool quadBayer = false);
+++		   EGLDisplay display, bool quadBayer = false);
+  	~DebayerEGL();
+  
+  	int configure(const StreamConfiguration &inputCfg,
+-@@ -93,6 +95,7 @@ private:
++@@ -98,6 +100,7 @@ private:
+  	GLint textureUniformStrideFactor_;
+  	GLint textureUniformBayerFirstRed_;
+  	GLint textureUniformProjMatrix_;
+@@ -727,7 +727,7 @@ index d6223f3a9724..8e6b4af91476 100644
+  	GLint textureUniformBayerDataIn_;
+  
+ diff --git a/src/libcamera/software_isp/software_isp.cpp b/src/libcamera/software_isp/software_isp.cpp
+-index c73a16ce0a29..74973d9ef99e 100644
++index 218660ed8510..71b95a105575 100644
+ --- a/src/libcamera/software_isp/software_isp.cpp
+ +++ b/src/libcamera/software_isp/software_isp.cpp
+ @@ -26,6 +26,7 @@
+@@ -738,7 +738,7 @@ index c73a16ce0a29..74973d9ef99e 100644
+  
+  #include "debayer_cpu.h"
+  #if HAVE_DEBAYER_EGL
+-@@ -98,8 +99,9 @@ SoftwareIsp::SoftwareIsp(PipelineHandler *pipe, const CameraSensor *sensor,
++@@ -97,8 +98,9 @@ SoftwareIsp::SoftwareIsp(PipelineHandler *pipe, const CameraSensor *sensor,
+  	}
+  
+  	const CameraManager &cm = *pipe->cameraManager();
+@@ -750,11 +750,11 @@ index c73a16ce0a29..74973d9ef99e 100644
+  		LOG(SoftwareIsp, Error) << "Failed to create SwStatsCpu object";
+  		return;
+ @@ -121,7 +123,7 @@ SoftwareIsp::SoftwareIsp(PipelineHandler *pipe, const CameraSensor *sensor,
+- 
+  	if (!softISPMode || softISPMode == "gpu") {
+- 		if (eGL::isAvailable()) {
+--			debayer_ = std::make_unique<DebayerEGL>(std::move(stats), cm);
+-+			debayer_ = std::make_unique<DebayerEGL>(std::move(stats), cm, quadBayer);
++ 		auto display = eGL::probeDisplay();
++ 		if (display != EGL_NO_DISPLAY) {
++-			debayer_ = std::make_unique<DebayerEGL>(std::move(stats), cm, display);
+++			debayer_ = std::make_unique<DebayerEGL>(std::move(stats), cm, display, quadBayer);
+  		} else {
+  			LOG(SoftwareIsp, Info)
+  				<< "EGL not available, falling back to CPU debayer";
+@@ -773,7 +773,7 @@ index c73a16ce0a29..74973d9ef99e 100644
+  		debayer_ = std::make_unique<DebayerCpu>(std::move(stats), cm);
+  
+ diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+-index 7fb77ce7ddd6..0d3359422caf 100644
++index 74633815ed0a..5918024a9550 100644
+ --- a/src/libcamera/software_isp/swstats_cpu.cpp
+ +++ b/src/libcamera/software_isp/swstats_cpu.cpp
+ @@ -17,6 +17,7 @@
+@@ -795,7 +795,7 @@ index 7fb77ce7ddd6..0d3359422caf 100644
+  {
+  	if (!sharedStats_)
+  		LOG(SwStatsCpu, Error)
+-@@ -323,6 +324,34 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
++@@ -338,6 +339,34 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
+  	SWSTATS_FINISH_LINE_STATS()
+  }
+  
+@@ -830,7 +830,7 @@ index 7fb77ce7ddd6..0d3359422caf 100644
+  void SwStatsCpu::statsBGGR12PLine0(const uint8_t *src[], SwIspStats &stats)
+  {
+  	const uint8_t *src0 = src[1] + window_.x * 3 / 2;
+-@@ -473,6 +502,18 @@ int SwStatsCpu::configure(const StreamConfiguration &inputCfg, unsigned int stat
++@@ -491,6 +520,18 @@ int SwStatsCpu::configure(const StreamConfiguration &inputCfg, unsigned int stat
+  	BayerFormat bayerFormat =
+  		BayerFormat::fromPixelFormat(inputCfg.pixelFormat);
+  
+@@ -849,7 +849,7 @@ index 7fb77ce7ddd6..0d3359422caf 100644
+  	if (bayerFormat.packing == BayerFormat::Packing::None &&
+  	    setupStandardBayerOrder(bayerFormat.order) == 0) {
+  		processFrame_ = &SwStatsCpu::processBayerFrame2;
+-@@ -594,6 +635,19 @@ void SwStatsCpu::processBayerFrame2(MappedFrameBuffer &in)
++@@ -612,6 +653,19 @@ void SwStatsCpu::processBayerFrame2(MappedFrameBuffer &in)
+  	}
+  }
+  
+@@ -870,7 +870,7 @@ index 7fb77ce7ddd6..0d3359422caf 100644
+   * \brief Calculate statistics for a frame in one go
+   * \param[in] frame The frame number
+ diff --git a/test/meson.build b/test/meson.build
+-index e4450625ee4c..d41ce23c0fd3 100644
++index 62f8c7da8b30..b86bccffaa16 100644
+ --- a/test/meson.build
+ +++ b/test/meson.build
+ @@ -51,6 +51,7 @@ public_tests = [
+diff --git a/temp/libcamera/0002-libcamera-camera_sensor-Add-Sony-IMX355-sensor-prope.patch b/temp/libcamera/0002-libcamera-camera_sensor-Add-Sony-IMX355-sensor-prope.patch
+deleted file mode 100644
+index 0efbf5c898..0000000000
+--- a/temp/libcamera/0002-libcamera-camera_sensor-Add-Sony-IMX355-sensor-prope.patch
++++ /dev/null
+@@ -1,73 +0,0 @@
+-From f357c675a42b6d80ecda513818eb820b9c0657a4 Mon Sep 17 00:00:00 2001
+-From: Naushir Patuck <naush@raspberrypi.com>
+-Date: Fri, 17 Jul 2026 14:42:11 +0100
+-Subject: [PATCH 2/6] libcamera: camera_sensor: Add Sony IMX355 sensor
+- properties and helper
+-
+-Add the camera sensor properties and camera helper entry for the Sony
+-IMX355 sensor.
+-
+-Signed-off-by: Naushir Patuck <naush@raspberrypi.com>
+-Reviewed-by: Laurent Pinchart <laurent.pinchart@ideasonboard.com>
+-Tested-by: Robert Mader <robert.mader@collabora.com>
+-Reviewed-by: David Plowman <david.plowman@raspberrypi.com>
+-Signed-off-by: Kieran Bingham <kieran.bingham@ideasonboard.com>
+-(cherry picked from commit a1db25dabaee98676024ae11e9ed3a736e982d03)
+----
+- src/ipa/libipa/camera_sensor_helper.cpp          | 12 ++++++++++++
+- .../sensor/camera_sensor_properties.cpp          | 16 ++++++++++++++++
+- 2 files changed, 28 insertions(+)
+-
+-diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+-index 9457d62b3339..bb9570053ecf 100644
+---- a/src/ipa/libipa/camera_sensor_helper.cpp
+-+++ b/src/ipa/libipa/camera_sensor_helper.cpp
+-@@ -617,6 +617,18 @@ public:
+- };
+- REGISTER_CAMERA_SENSOR_HELPER("imx335", CameraSensorHelperImx335)
+- 
+-+class CameraSensorHelperImx355 : public CameraSensorHelper
+-+{
+-+public:
+-+	CameraSensorHelperImx355()
+-+	{
+-+		/* From datasheet: 64 at 10bits. */
+-+		blackLevel_ = 4096;
+-+		gain_ = AnalogueGainLinear{ 0, 1024, -1, 1024 };
+-+	}
+-+};
+-+REGISTER_CAMERA_SENSOR_HELPER("imx355", CameraSensorHelperImx355)
+-+
+- class CameraSensorHelperImx415 : public CameraSensorHelper
+- {
+- public:
+-diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+-index 28043150e2cb..cbe55bc5076c 100644
+---- a/src/libcamera/sensor/camera_sensor_properties.cpp
+-+++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+-@@ -261,6 +261,22 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+- 			.testPatternModes = {},
+- 			.sensorDelays = { },
+- 		} },
+-+		{ "imx355", {
+-+			.unitCellSize = { 1120, 1120 },
+-+			.testPatternModes = {
+-+				{ controls::draft::TestPatternModeOff, 0 },
+-+				{ controls::draft::TestPatternModeColorBars, 1 },
+-+				{ controls::draft::TestPatternModeSolidColor, 2 },
+-+				{ controls::draft::TestPatternModeColorBarsFadeToGray, 3 },
+-+				{ controls::draft::TestPatternModePn9, 4 },
+-+			},
+-+			.sensorDelays = {
+-+				.exposureDelay = 2,
+-+				.gainDelay = 2,
+-+				.vblankDelay = 2,
+-+				.hblankDelay = 2
+-+			},
+-+		} },
+- 		{ "imx415", {
+- 			.unitCellSize = { 1450, 1450 },
+- 			.testPatternModes = {},
+--- 
+-2.56.0
+-
+diff --git a/temp/libcamera/0007-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch b/temp/libcamera/0003-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch
+similarity index 94%
+rename from temp/libcamera/0007-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch
+rename to temp/libcamera/0003-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch
+index ee43e72246..2300d624f1 100644
+--- a/temp/libcamera/0007-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch
++++ b/temp/libcamera/0003-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch
+@@ -1,7 +1,7 @@
+-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From b4b39954dbbe9398050fe2af65475bd67b9b00f7 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Mon, 26 Oct 2026 18:42:05 +0100
+-Subject: [PATCH] libcamera: camera_sensor: Add Samsung S5K3M5 sensor
++Subject: [PATCH 1/5] libcamera: camera_sensor: Add Samsung S5K3M5 sensor
+  properties and helper
+ 
+ Add the camera sensor properties and the camera sensor helper for the
+diff --git a/temp/libcamera/0003-libcamera-software_isp-debayer_egl-Use-untransposed-.patch b/temp/libcamera/0003-libcamera-software_isp-debayer_egl-Use-untransposed-.patch
+deleted file mode 100644
+index e8855e4dd2..0000000000
+--- a/temp/libcamera/0003-libcamera-software_isp-debayer_egl-Use-untransposed-.patch
++++ /dev/null
+@@ -1,65 +0,0 @@
+-From 2a50fed07b672fe9bba9353edf909ef000748a10 Mon Sep 17 00:00:00 2001
+-From: Robert Mader <robert.mader@collabora.com>
+-Date: Sat, 29 Aug 2026 16:27:09 +0200
+-Subject: [PATCH 3/6] libcamera: software_isp: debayer_egl: Use untransposed
+- matrix to fix GLES 2.0
+-MIME-Version: 1.0
+-Content-Type: text/plain; charset=UTF-8
+-Content-Transfer-Encoding: 8bit
+-
+-The softISP curently fails on Mali-400 on Mesa. It turns out that
+-transposed matrices are not allowed by the specification:
+-
+-> The UniformMatrix{234}fv commands will load count 2 × 2, 3 × 3, or 4 × 4
+-> matrices (corresponding to 2, 3, or 4 in the command name) of floating-point
+-> values into a uniform location defined as a matrix or an array of matrices.
+-> The matrix is specified in column-major order. transpose must be FALSE.
+-
+-Thus partially revert the commit mentioned below and manually transpose
+-the matrix.
+-
+-Fixes: d780e285b593 ("shaders: bayer: Use native matrix multiplication")
+-Closes: https://gitlab.freedesktop.org/camera/libcamera/-/work_items/342
+-Signed-off-by: Robert Mader <robert.mader@collabora.com>
+-Tested-by: Barnabás Pőcze <barnabas.pocze@ideasonboard.com> # pinephone
+-Reviewed-by: Barnabás Pőcze <barnabas.pocze@ideasonboard.com>
+-Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+-Reviewed-by: Milan Zamazal <mzamazal@redhat.com>
+-[Adjust commit message slightly.]
+-Signed-off-by: Barnabás Pőcze <barnabas.pocze@ideasonboard.com>
+-(cherry picked from commit 1df5cbe722a839ce4e257093550fa8107c02cf8b)
+----
+- src/libcamera/software_isp/debayer_egl.cpp | 17 +++++++++++++++--
+- 1 file changed, 15 insertions(+), 2 deletions(-)
+-
+-diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+-index 09ab5a58c994..5cd11c380243 100644
+---- a/src/libcamera/software_isp/debayer_egl.cpp
+-+++ b/src/libcamera/software_isp/debayer_egl.cpp
+-@@ -479,8 +479,21 @@ void DebayerEGL::setShaderVariableValues(eGLImage &eglImageIn, const DebayerPara
+- 			    << " textureUniformStep_.y " << Step[1]
+- 			    << " textureUniformStrideFactor_ " << Stride
+- 			    << " textureUniformProjMatrix_ " << textureUniformProjMatrix_;
+--
+--	glUniformMatrix3fv(ccmUniformDataIn_, 1, GL_TRUE, params.combinedMatrix.data().data());
+-+	/*
+-+	 * Pre-transpose matrix for GLES 2.0
+-+	 */
+-+	GLfloat ccm[9] = {
+-+		params.combinedMatrix[0][0],
+-+		params.combinedMatrix[1][0],
+-+		params.combinedMatrix[2][0],
+-+		params.combinedMatrix[0][1],
+-+		params.combinedMatrix[1][1],
+-+		params.combinedMatrix[2][1],
+-+		params.combinedMatrix[0][2],
+-+		params.combinedMatrix[1][2],
+-+		params.combinedMatrix[2][2],
+-+	};
+-+	glUniformMatrix3fv(ccmUniformDataIn_, 1, GL_FALSE, ccm);
+- 	LOG(Debayer, Debug) << " ccmUniformDataIn_ " << ccmUniformDataIn_ << " data " << params.combinedMatrix;
+- 
+- 	/*
+--- 
+-2.56.0
+-
+diff --git a/temp/libcamera/0004-debayer-Further-demote-Unsupported-input-format-log.patch b/temp/libcamera/0004-debayer-Further-demote-Unsupported-input-format-log.patch
+deleted file mode 100644
+index 8d87e679cb..0000000000
+--- a/temp/libcamera/0004-debayer-Further-demote-Unsupported-input-format-log.patch
++++ /dev/null
+@@ -1,78 +0,0 @@
+-From 7bf23f3babc9b266a7efee0c980232c7b37b4f12 Mon Sep 17 00:00:00 2001
+-From: Robert Mader <robert.mader@collabora.com>
+-Date: Sat, 26 Sep 2026 14:56:46 +0200
+-Subject: [PATCH 4/6] debayer: Further demote 'Unsupported input format' log
+-
+-On some platforms such as the PinePhone these logs clutter the output of
+-tools and the journal a lot. Let's silence them for normal usage.
+-
+-Also add error logs for the cases where hitting the path would actually
+-be errors.
+-
+-Signed-off-by: Robert Mader <robert.mader@collabora.com>
+-Reviewed-by: Kieran Bingham <kieran.bingham@ideasonboard.com>
+-Reviewed-by: Milan Zamazal <mzamazal@redhat.com>
+-Signed-off-by: Kieran Bingham <kieran.bingham@ideasonboard.com>
+-(cherry picked from commit 4f21700fb08da155f3e76cfd586215fa63462582)
+----
+- src/libcamera/software_isp/debayer_cpu.cpp | 9 ++++++---
+- src/libcamera/software_isp/debayer_egl.cpp | 7 +++++--
+- 2 files changed, 11 insertions(+), 5 deletions(-)
+-
+-diff --git a/src/libcamera/software_isp/debayer_cpu.cpp b/src/libcamera/software_isp/debayer_cpu.cpp
+-index 49382b4c2719..c84832cf3a49 100644
+---- a/src/libcamera/software_isp/debayer_cpu.cpp
+-+++ b/src/libcamera/software_isp/debayer_cpu.cpp
+-@@ -469,8 +469,8 @@ int DebayerCpu::getInputConfig(PixelFormat inputFormat, DebayerInputConfig &conf
+- 		return 0;
+- 	}
+- 
+--	LOG(Debayer, Info)
+--		<< "Unsupported input format " << inputFormat.toString();
+-+	LOG(Debayer, Debug)
+-+		<< "Unsupported input format " << inputFormat;
+- 	return -EINVAL;
+- }
+- 
+-@@ -643,8 +643,11 @@ int DebayerCpu::configure(const StreamConfiguration &inputCfg,
+- 			  const std::vector<std::reference_wrapper<const StreamConfiguration>> &outputCfgs,
+- 			  bool ccmEnabled)
+- {
+--	if (getInputConfig(inputCfg.pixelFormat, inputConfig_) != 0)
+-+	if (getInputConfig(inputCfg.pixelFormat, inputConfig_) != 0) {
+-+		LOG(Debayer, Error)
+-+			<< "Unsupported input format " << inputCfg.pixelFormat;
+- 		return -EINVAL;
+-+	}
+- 
+- 	if (stats_->configure(inputCfg, threads_.size()) != 0)
+- 		return -EINVAL;
+-diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+-index 5cd11c380243..fdb1efec2a7b 100644
+---- a/src/libcamera/software_isp/debayer_egl.cpp
+-+++ b/src/libcamera/software_isp/debayer_egl.cpp
+-@@ -90,7 +90,7 @@ int DebayerEGL::getInputConfig(PixelFormat inputFormat, DebayerInputConfig &conf
+- 		return 0;
+- 	}
+- 
+--	LOG(Debayer, Info)
+-+	LOG(Debayer, Debug)
+- 		<< "Unsupported input format " << inputFormat;
+- 
+- 	return -EINVAL;
+-@@ -288,8 +288,11 @@ int DebayerEGL::configure(const StreamConfiguration &inputCfg,
+- 			  const std::vector<std::reference_wrapper<const StreamConfiguration>> &outputCfgs,
+- 			  [[maybe_unused]] bool ccmEnabled)
+- {
+--	if (getInputConfig(inputCfg.pixelFormat, inputConfig_) != 0)
+-+	if (getInputConfig(inputCfg.pixelFormat, inputConfig_) != 0) {
+-+		LOG(Debayer, Error)
+-+			<< "Unsupported input format " << inputCfg.pixelFormat;
+- 		return -EINVAL;
+-+	}
+- 
+- 	if (stats_->configure(inputCfg) != 0)
+- 		return -EINVAL;
+--- 
+-2.56.0
+-
+diff --git a/temp/libcamera/0012-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch b/temp/libcamera/0004-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch
+similarity index 97%
+rename from temp/libcamera/0012-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch
+rename to temp/libcamera/0004-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch
+index b334bfd16e..339dd8c5f9 100644
+--- a/temp/libcamera/0012-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch
++++ b/temp/libcamera/0004-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch
+@@ -1,7 +1,7 @@
+ From 38846149d1c9e3292c8e6af24987ebbf662ba1e7 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Mon, 2 Nov 2026 22:09:00 +0100
+-Subject: [PATCH] libcamera: camera_sensor: Add IMX586, IMX689 and GC5035
++Subject: [PATCH 6/7] libcamera: camera_sensor: Add IMX586, IMX689 and GC5035
+  properties and helpers
+ 
+ Add the camera sensor properties and helpers for the ultrawide, main and
+diff --git a/temp/libcamera/0005-ipa-simple-Derive-AGC-minimum-gain-step-from-sensor-.patch b/temp/libcamera/0005-ipa-simple-Derive-AGC-minimum-gain-step-from-sensor-.patch
+deleted file mode 100644
+index e5b46afb61..0000000000
+--- a/temp/libcamera/0005-ipa-simple-Derive-AGC-minimum-gain-step-from-sensor-.patch
++++ /dev/null
+@@ -1,85 +0,0 @@
+-From e27a28ef46e1008dcd1d75e82dc97588087a55fc Mon Sep 17 00:00:00 2001
+-From: Emilio Miranda <gemilio@gmail.com>
+-Date: Tue, 25 Aug 2026 14:06:30 +0200
+-Subject: [PATCH 5/6] ipa: simple: Derive AGC minimum gain step from sensor
+- granularity
+-MIME-Version: 1.0
+-Content-Type: text/plain; charset=UTF-8
+-Content-Transfer-Encoding: 8bit
+-
+-The minimum gain step is computed as 1% of the sensor's gain range. For a
+-sensor with a wide gain range that is far larger than the hardware can
+-resolve: the OV01A10 spans 1-63.9961, giving a step of 0.629961, which is
+-63% at unity gain where the sensor resolves 1/256 = 0.0039.
+-
+-updateExposure() substitutes againMinStep whenever the proportional
+-correction is smaller than it. Once the exposure saturates and gain is
+-the only remaining control, the AGC therefore applies a 63% change every
+-time it computes a 2% one, and never settles:
+-
+-  again 1.00000 exposureMSV 1.99 error +0.51 factor 1.020 -> 1.62996
+-  again 1.62996 exposureMSV 2.90 error -0.41 factor 0.984 -> 1.00000
+-
+-That is 0.7 EV of brightness flicker at frame rate, observed on a Dell
+-XPS 13 9315 (IPU6, simple pipeline and software ISP).
+-
+-This is not specific to one sensor. Without a CameraSensorHelper the gain
+-values are raw register codes, where a step of 1.0 is by definition the
+-smallest possible change in gain; adding a helper switches the units to
+-real multipliers, and 1% of the range then bears no relation to what the
+-sensor can resolve. Any sensor with a wide gain range is exposed to this
+-once it gains a helper.
+-
+-Sample the step at both ends of the gain range and take the smaller one,
+-so that non-uniform gain models are covered as well. This yields
+-0.00390625 for the OV01A10, and the gain then tracks continuously
+-instead of alternating between two values.
+-
+-Link: https://bugzilla.redhat.com/show_bug.cgi?id=2483190
+-Suggested-by: Barnabás Pőcze <barnabas.pocze@ideasonboard.com>
+-Signed-off-by: Emilio Miranda <gemilio@gmail.com>
+----
+- src/ipa/simple/soft_simple.cpp | 20 ++++++++++++++++----
+- 1 file changed, 16 insertions(+), 4 deletions(-)
+-
+-diff --git a/src/ipa/simple/soft_simple.cpp b/src/ipa/simple/soft_simple.cpp
+-index 629e1a32de8a..8bffd2a441fd 100644
+---- a/src/ipa/simple/soft_simple.cpp
+-+++ b/src/ipa/simple/soft_simple.cpp
+-@@ -6,6 +6,7 @@
+-  */
+- 
+- #include <chrono>
+-+#include <cmath>
+- #include <stdint.h>
+- #include <sys/mman.h>
+- 
+-@@ -228,10 +229,21 @@ int IPASoftSimple::configure(const IPAConfigInfo &configInfo)
+- 		context_.configuration.agc.againMin = camHelper_->gain(againMin);
+- 		context_.configuration.agc.againMax = camHelper_->gain(againMax);
+- 		context_.configuration.agc.again10 = std::max(context_.configuration.agc.againMin, 1.0);
+--		context_.configuration.agc.againMinStep =
+--			(context_.configuration.agc.againMax -
+--			 context_.configuration.agc.againMin) /
+--			100.0;
+-+		/*
+-+		 * The minimum gain step must reflect what the sensor can
+-+		 * actually resolve. Deriving it from a fraction of the gain
+-+		 * range yields a huge step for sensors with a wide range: the
+-+		 * OV01A10 spans 1-63.9961, giving 0.63 at unity gain where the
+-+		 * hardware resolves 1/256. The AGC can then make no correction
+-+		 * smaller than 63%, and oscillates around the target once the
+-+		 * exposure saturates and gain is the only remaining control.
+-+		 *
+-+		 * Sample the step at both ends of the range and take the
+-+		 * smaller one, so that non-uniform gain models are covered.
+-+		 */
+-+		context_.configuration.agc.againMinStep = std::min(
+-+			std::abs(camHelper_->gain(againMin + 1) - camHelper_->gain(againMin)),
+-+			std::abs(camHelper_->gain(againMax) - camHelper_->gain(againMax - 1)));
+- 		if (camHelper_->blackLevel().has_value()) {
+- 			/*
+- 			 * The black level from camHelper_ is a 16 bit value, software ISP
+--- 
+-2.56.0
+-
+diff --git a/temp/libcamera/0009-libcamera-software_isp-Add-a-sharpness-measure-to-th.patch b/temp/libcamera/0005-libcamera-software_isp-Add-a-sharpness-measure-to-th.patch
+similarity index 80%
+rename from temp/libcamera/0009-libcamera-software_isp-Add-a-sharpness-measure-to-th.patch
+rename to temp/libcamera/0005-libcamera-software_isp-Add-a-sharpness-measure-to-th.patch
+index f7a129838a..616d9f849d 100644
+--- a/temp/libcamera/0009-libcamera-software_isp-Add-a-sharpness-measure-to-th.patch
++++ b/temp/libcamera/0005-libcamera-software_isp-Add-a-sharpness-measure-to-th.patch
+@@ -1,15 +1,9 @@
+-From 7f2ac03aef1fddfe74faa398fc75d7293274f49b Mon Sep 17 00:00:00 2001
++From fae811892385729a12da6080c07c16fbe862cd5e Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+-Date: Tue, 27 Oct 2026 18:04:59 +0100
+-Subject: [PATCH 09/11] libcamera: software_isp: Add a sharpness measure to the
++Date: Mon, 9 Nov 2026 23:30:28 +0100
++Subject: [PATCH 1/4] libcamera: software_isp: Add a sharpness measure to the
+  statistics
+ 
+-Sum the absolute green differences between neighbouring sampled pixels in
+-the centre half of the image for 10-bit packed Bayer formats, together
+-with the green values they were taken from. This gives the soft IPA a
+-brightness independent measure for contrast detection autofocus.
+-
+-Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+ ---
+  .../internal/software_isp/swisp_stats.h       | 15 ++++++++
+  .../internal/software_isp/swstats_cpu.h       |  3 ++
+@@ -17,10 +11,10 @@ Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+  3 files changed, 55 insertions(+)
+ 
+ diff --git a/include/libcamera/internal/software_isp/swisp_stats.h b/include/libcamera/internal/software_isp/swisp_stats.h
+-index d9d0d9b..fa010d1 100644
++index 65d826f..247b4fa 100644
+ --- a/include/libcamera/internal/software_isp/swisp_stats.h
+ +++ b/include/libcamera/internal/software_isp/swisp_stats.h
+-@@ -43,6 +43,21 @@ struct SwIspStats {
++@@ -56,6 +56,21 @@ struct SwIspStats {
+  	 * \brief A histogram of luminance values of all the sampled pixels
+  	 */
+  	Histogram yHistogram;
+@@ -57,7 +51,7 @@ index 6fe60e6..82cc7e0 100644
+  	Size patternSize_;
+  
+ diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+-index 0d33594..8634573 100644
++index 5918024..96c5fae 100644
+ --- a/src/libcamera/software_isp/swstats_cpu.cpp
+ +++ b/src/libcamera/software_isp/swstats_cpu.cpp
+ @@ -11,6 +11,8 @@
+@@ -69,7 +63,7 @@ index 0d33594..8634573 100644
+  #include <libcamera/base/log.h>
+  
+  #include <libcamera/stream.h>
+-@@ -282,6 +284,9 @@ void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats)
++@@ -297,6 +299,9 @@ void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats)
+  		std::swap(src0, src1);
+  
+  	SWSTATS_START_LINE_STATS(uint8_t)
+@@ -79,7 +73,7 @@ index 0d33594..8634573 100644
+  
+  	/* x += 5 sample every other 2x2 block */
+  	for (unsigned int x = 0; x < widthInBytes; x += 5) {
+-@@ -291,10 +296,18 @@ void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats)
++@@ -306,10 +311,18 @@ void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats)
+  		g2 = src1[x];
+  		r = src1[x + 1];
+  		g = (g + g2) / 2;
+@@ -98,7 +92,7 @@ index 0d33594..8634573 100644
+  	SWSTATS_FINISH_LINE_STATS()
+  }
+  
+-@@ -308,6 +321,9 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
++@@ -323,6 +336,9 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
+  		std::swap(src0, src1);
+  
+  	SWSTATS_START_LINE_STATS(uint8_t)
+@@ -108,7 +102,7 @@ index 0d33594..8634573 100644
+  
+  	/* x += 5 sample every other 2x2 block */
+  	for (unsigned int x = 0; x < widthInBytes; x += 5) {
+-@@ -317,10 +333,18 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
++@@ -332,10 +348,18 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
+  		r = src1[x];
+  		g2 = src1[x + 1];
+  		g = (g + g2) / 2;
+@@ -127,29 +121,30 @@ index 0d33594..8634573 100644
+  	SWSTATS_FINISH_LINE_STATS()
+  }
+  
+-@@ -421,6 +445,8 @@ void SwStatsCpu::startFrame(uint32_t frame)
+- 	for (auto &s : stats_) {
++@@ -437,6 +461,8 @@ void SwStatsCpu::startFrame(uint32_t frame)
+  		s.sum_ = RGB<uint64_t>({ 0, 0, 0 });
++ 		s.numPixels_ = 0;
+  		s.yHistogram.fill(0);
+ +		s.sharpness = 0;
+ +		s.sharpnessBase = 0;
+  	}
+  }
+  
+-@@ -438,8 +464,12 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
+- 	if (valid) {
++@@ -455,9 +481,13 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
+  		sharedStats_->sum_ = RGB<uint64_t>({ 0, 0, 0 });
++ 		sharedStats_->numPixels_ = 0;
+  		sharedStats_->yHistogram.fill(0);
+ +		sharedStats_->sharpness = 0;
+ +		sharedStats_->sharpnessBase = 0;
+  		for (const auto &s : stats_) {
+  			sharedStats_->sum_ += s.sum_;
++ 			sharedStats_->numPixels_ += s.numPixels_;
+ +			sharedStats_->sharpness += s.sharpness;
+ +			sharedStats_->sharpnessBase += s.sharpnessBase;
+  			for (unsigned int j = 0; j < SwIspStats::kYHistogramSize; j++)
+  				sharedStats_->yHistogram[j] += s.yHistogram[j];
+  		}
+-@@ -611,6 +641,13 @@ void SwStatsCpu::setWindow(const Rectangle &window)
++@@ -629,6 +659,13 @@ void SwStatsCpu::setWindow(const Rectangle &window)
+  	window_.width = (window_.width > xShift_ ? window_.width - xShift_ : 0);
+  	window_.width &= ~(patternSize_.width - 1);
+  	window_.height &= ~(patternSize_.height - 1);
+diff --git a/temp/libcamera/0010-libcamera-simple-Pass-focus-lens-controls-to-and-fro.patch b/temp/libcamera/0006-libcamera-simple-Pass-focus-lens-controls-to-and-fro.patch
+similarity index 77%
+rename from temp/libcamera/0010-libcamera-simple-Pass-focus-lens-controls-to-and-fro.patch
+rename to temp/libcamera/0006-libcamera-simple-Pass-focus-lens-controls-to-and-fro.patch
+index ad4af09f69..8690d1f898 100644
+--- a/temp/libcamera/0010-libcamera-simple-Pass-focus-lens-controls-to-and-fro.patch
++++ b/temp/libcamera/0006-libcamera-simple-Pass-focus-lens-controls-to-and-fro.patch
+@@ -1,26 +1,21 @@
+-From 985fa3d2fead7bb237921d521bbb5db37d72979e Mon Sep 17 00:00:00 2001
++From b3ebf74b0e02eb041c332f9b6dbec9ed0072b082 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+-Date: Tue, 27 Oct 2026 18:04:59 +0100
+-Subject: [PATCH 10/11] libcamera: simple: Pass focus lens controls to and from
++Date: Mon, 9 Nov 2026 23:31:59 +0100
++Subject: [PATCH 2/4] libcamera: simple: Pass focus lens controls to and from
+  the soft IPA
+ 
+-Give the soft IPA the controls of the focus lens of the sensor, if there is
+-one, and apply the lens controls it returns along with the sensor
+-controls.
+-
+-Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+ ---
+  .../libcamera/internal/software_isp/software_isp.h  |  5 +++--
+- include/libcamera/ipa/soft.mojom                    |  4 +++-
++ include/libcamera/ipa/softisp.mojom                 |  4 +++-
+  src/libcamera/pipeline/simple/simple.cpp            | 13 +++++++++++--
+  src/libcamera/software_isp/software_isp.cpp         |  9 +++++----
+  4 files changed, 22 insertions(+), 9 deletions(-)
+ 
+ diff --git a/include/libcamera/internal/software_isp/software_isp.h b/include/libcamera/internal/software_isp/software_isp.h
+-index 4f72dce..2d0dba9 100644
++index 12e70ec..10e5aa5 100644
+ --- a/include/libcamera/internal/software_isp/software_isp.h
+ +++ b/include/libcamera/internal/software_isp/software_isp.h
+-@@ -86,11 +86,12 @@ public:
++@@ -87,11 +87,12 @@ public:
+  	Signal<FrameBuffer *> outputBufferReady;
+  	Signal<uint32_t, uint32_t> ispStatsReady;
+  	Signal<uint32_t, const ControlList &> metadataReady;
+@@ -28,17 +23,17 @@ index 4f72dce..2d0dba9 100644
+ +	Signal<const ControlList &, const ControlList &> setSensorControls;
+  
+  private:
+- 	void saveIspParams();
++ 	void saveIspParams(uint32_t frame);
+ -	void setSensorCtrls(const ControlList &sensorControls);
+ +	void setSensorCtrls(const ControlList &sensorControls,
+ +			    const ControlList &lensControls);
+  	void statsReady(uint32_t frame, uint32_t bufferId);
+  	void inputReady(FrameBuffer *input);
+  	void outputReady(FrameBuffer *output);
+-diff --git a/include/libcamera/ipa/soft.mojom b/include/libcamera/ipa/soft.mojom
+-index 77328c5..a6e3ed5 100644
+---- a/include/libcamera/ipa/soft.mojom
+-+++ b/include/libcamera/ipa/soft.mojom
++diff --git a/include/libcamera/ipa/softisp.mojom b/include/libcamera/ipa/softisp.mojom
++index 52f60d9..ad67aa3 100644
++--- a/include/libcamera/ipa/softisp.mojom
+++++ b/include/libcamera/ipa/softisp.mojom
+ @@ -10,6 +10,7 @@ import "include/libcamera/ipa/core.mojom";
+  
+  struct IPAConfigInfo {
+@@ -46,22 +41,22 @@ index 77328c5..a6e3ed5 100644
+ +	libcamera.ControlInfoMap lensControls;
+  };
+  
+- interface IPASoftInterface {
+-@@ -32,7 +33,8 @@ interface IPASoftInterface {
++ interface IPASoftIspInterface {
++@@ -35,7 +36,8 @@ interface IPASoftIspInterface {
+  };
+  
+- interface IPASoftEventInterface {
++ interface IPASoftIspEventInterface {
+ -	setSensorControls(libcamera.ControlList sensorControls);
+ +	setSensorControls(libcamera.ControlList sensorControls,
+ +			  libcamera.ControlList lensControls);
+- 	setIspParams();
++ 	paramsComputed(uint32 frame);
+  	metadataReady(uint32 frame, libcamera.ControlList metadata);
+  };
+ diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+-index e26f438..5ae8d70 100644
++index 35e0664..002b222 100644
+ --- a/src/libcamera/pipeline/simple/simple.cpp
+ +++ b/src/libcamera/pipeline/simple/simple.cpp
+-@@ -33,6 +33,7 @@
++@@ -34,6 +34,7 @@
+  #include <libcamera/stream.h>
+  
+  #include "libcamera/internal/camera.h"
+@@ -69,7 +64,7 @@ index e26f438..5ae8d70 100644
+  #include "libcamera/internal/camera_manager.h"
+  #include "libcamera/internal/camera_sensor.h"
+  #include "libcamera/internal/camera_sensor_properties.h"
+-@@ -371,7 +372,8 @@ private:
++@@ -374,7 +375,8 @@ private:
+  
+  	void ispStatsReady(uint32_t frame, uint32_t bufferId);
+  	void metadataReady(uint32_t frame, const ControlList &metadata);
+@@ -79,7 +74,7 @@ index e26f438..5ae8d70 100644
+  };
+  
+  class SimpleCameraConfiguration : public CameraConfiguration
+-@@ -1041,8 +1043,13 @@ void SimpleCameraData::metadataReady(uint32_t frame, const ControlList &metadata
++@@ -1046,8 +1048,13 @@ void SimpleCameraData::metadataReady(uint32_t frame, const ControlList &metadata
+  	tryCompleteRequest(info->request);
+  }
+  
+@@ -94,17 +89,17 @@ index e26f438..5ae8d70 100644
+  	delayedCtrls_->push(sensorControls);
+  	/*
+  	 * Directly apply controls now if there is no frameStart signal.
+-@@ -1605,6 +1612,8 @@ int SimplePipelineHandler::configure(Camera *camera, CameraConfiguration *c)
++@@ -1652,6 +1659,8 @@ int SimplePipelineHandler::configure(Camera *camera, CameraConfiguration *c)
+  	} else {
+- 		ipa::soft::IPAConfigInfo configInfo;
++ 		ipa::softisp::IPAConfigInfo configInfo;
+  		configInfo.sensorControls = data->sensor_->controls();
+ +		if (CameraLens *lens = data->sensor_->focusLens())
+ +			configInfo.lensControls = lens->controls();
+- 		return data->swIsp_->configure(inputCfg, outputCfgs, configInfo);
++ 		return data->swIsp_->configure(inputCfg, outputCfgs, configInfo, &data->controlInfo_);
+  	}
+  }
+ diff --git a/src/libcamera/software_isp/software_isp.cpp b/src/libcamera/software_isp/software_isp.cpp
+-index 74973d9..c3b2d7e 100644
++index 71b95a1..8ba8cad 100644
+ --- a/src/libcamera/software_isp/software_isp.cpp
+ +++ b/src/libcamera/software_isp/software_isp.cpp
+ @@ -69,8 +69,8 @@ LOG_DEFINE_CATEGORY(SoftwareIsp)
+@@ -118,7 +113,7 @@ index 74973d9..c3b2d7e 100644
+   */
+  
+  /**
+-@@ -445,9 +445,10 @@ void SoftwareIsp::saveIspParams()
++@@ -456,9 +456,10 @@ void SoftwareIsp::saveIspParams([[maybe_unused]] uint32_t frame)
+  	debayerParams_ = *sharedParams_;
+  }
+  
+diff --git a/temp/libcamera/0011-ipa-simple-Add-contrast-detection-autofocus.patch b/temp/libcamera/0007-ipa-softisp-Add-contrast-detection-autofocus.patch
+similarity index 75%
+rename from temp/libcamera/0011-ipa-simple-Add-contrast-detection-autofocus.patch
+rename to temp/libcamera/0007-ipa-softisp-Add-contrast-detection-autofocus.patch
+index e9979f1147..f817bc4ce8 100644
+--- a/temp/libcamera/0011-ipa-simple-Add-contrast-detection-autofocus.patch
++++ b/temp/libcamera/0007-ipa-softisp-Add-contrast-detection-autofocus.patch
+@@ -1,31 +1,23 @@
+-From d5785adcfe9cce0ee0562d90fb7d630d141f8d56 Mon Sep 17 00:00:00 2001
++From 9cc997e63c3be7c920fd66a631c583e17b49cc7c Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+-Date: Tue, 27 Oct 2026 18:04:59 +0100
+-Subject: [PATCH] ipa: simple: Add contrast detection autofocus
++Date: Mon, 9 Nov 2026 23:32:38 +0100
++Subject: [PATCH 3/4] ipa: softisp: Add contrast detection autofocus
+ 
+-Sweep the lens in coarse steps, then in fine steps around the sharpest
+-position, using the sharpness measure of the software ISP statistics. In
+-continuous mode, scan again when the sharpness changes for a few
+-statistics frames in a row. Support AfMode and AfTrigger and report
+-AfState. Enabled by adding Af to the tuning file of a camera with a focus
+-lens.
+-
+-Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+ ---
+- src/ipa/simple/algorithms/af.cpp      | 260 ++++++++++++++++++++++++++
+- src/ipa/simple/algorithms/af.h        |  71 +++++++
+- src/ipa/simple/algorithms/meson.build |   1 +
+- src/ipa/simple/ipa_context.h          |   9 +
+- src/ipa/simple/soft_simple.cpp        |  12 +-
+- 5 files changed, 352 insertions(+), 1 deletion(-)
+- create mode 100755 src/ipa/simple/algorithms/af.cpp
+- create mode 100755 src/ipa/simple/algorithms/af.h
++ src/ipa/softisp/algorithms/af.cpp      | 260 +++++++++++++++++++++++++
++ src/ipa/softisp/algorithms/af.h        |  71 +++++++
++ src/ipa/softisp/algorithms/meson.build |   1 +
++ src/ipa/softisp/ipa_context.h          |  10 +
++ src/ipa/softisp/softisp.cpp            |  12 +-
++ 5 files changed, 353 insertions(+), 1 deletion(-)
++ create mode 100755 src/ipa/softisp/algorithms/af.cpp
++ create mode 100755 src/ipa/softisp/algorithms/af.h
+ 
+-diff --git a/src/ipa/simple/algorithms/af.cpp b/src/ipa/simple/algorithms/af.cpp
++diff --git a/src/ipa/softisp/algorithms/af.cpp b/src/ipa/softisp/algorithms/af.cpp
+ new file mode 100755
+-index 0000000..4c2aa79
++index 0000000..97b0cbe
+ --- /dev/null
+-+++ b/src/ipa/simple/algorithms/af.cpp
+++++ b/src/ipa/softisp/algorithms/af.cpp
+ @@ -0,0 +1,260 @@
+ +/* SPDX-License-Identifier: LGPL-2.1-or-later */
+ +/*
+@@ -45,7 +37,7 @@ index 0000000..4c2aa79
+ +
+ +namespace libcamera {
+ +
+-+namespace ipa::soft::algorithms {
+++namespace ipa::softisp::algorithms {
+ +
+ +/**
+ + * \class Af
+@@ -284,14 +276,14 @@ index 0000000..4c2aa79
+ +
+ +REGISTER_IPA_ALGORITHM(Af, "Af")
+ +
+-+} /* namespace ipa::soft::algorithms */
+++} /* namespace ipa::softisp::algorithms */
+ +
+ +} /* namespace libcamera */
+-diff --git a/src/ipa/simple/algorithms/af.h b/src/ipa/simple/algorithms/af.h
++diff --git a/src/ipa/softisp/algorithms/af.h b/src/ipa/softisp/algorithms/af.h
+ new file mode 100755
+-index 0000000..e7bcfa3
++index 0000000..978100a
+ --- /dev/null
+-+++ b/src/ipa/simple/algorithms/af.h
+++++ b/src/ipa/softisp/algorithms/af.h
+ @@ -0,0 +1,71 @@
+ +/* SPDX-License-Identifier: LGPL-2.1-or-later */
+ +/*
+@@ -306,7 +298,7 @@ index 0000000..e7bcfa3
+ +
+ +namespace libcamera {
+ +
+-+namespace ipa::soft::algorithms {
+++namespace ipa::softisp::algorithms {
+ +
+ +class Af : public Algorithm
+ +{
+@@ -361,26 +353,26 @@ index 0000000..e7bcfa3
+ +	unsigned int settle_ = 0;
+ +};
+ +
+-+} /* namespace ipa::soft::algorithms */
+++} /* namespace ipa::softisp::algorithms */
+ +
+ +} /* namespace libcamera */
+-diff --git a/src/ipa/simple/algorithms/meson.build b/src/ipa/simple/algorithms/meson.build
+-index 73c6372..1cd58d5 100644
+---- a/src/ipa/simple/algorithms/meson.build
+-+++ b/src/ipa/simple/algorithms/meson.build
++diff --git a/src/ipa/softisp/algorithms/meson.build b/src/ipa/softisp/algorithms/meson.build
++index d98f4b1..7d10771 100644
++--- a/src/ipa/softisp/algorithms/meson.build
+++++ b/src/ipa/softisp/algorithms/meson.build
+ @@ -2,6 +2,7 @@
+  
+- soft_simple_ipa_algorithms = files([
++ softisp_ipa_algorithms = files([
+      'adjust.cpp',
+ +    'af.cpp',
+      'awb.cpp',
+      'agc.cpp',
+      'blc.cpp',
+-diff --git a/src/ipa/simple/ipa_context.h b/src/ipa/simple/ipa_context.h
+-index 8ccfacb..7a11be6 100644
+---- a/src/ipa/simple/ipa_context.h
+-+++ b/src/ipa/simple/ipa_context.h
+-@@ -33,6 +33,10 @@ struct IPASessionConfiguration {
++diff --git a/src/ipa/softisp/ipa_context.h b/src/ipa/softisp/ipa_context.h
++index 1c5db17..aeb770e 100644
++--- a/src/ipa/softisp/ipa_context.h
+++++ b/src/ipa/softisp/ipa_context.h
++@@ -35,6 +35,10 @@ struct IPASessionConfiguration {
+  	struct {
+  		std::optional<uint8_t> level;
+  	} black;
+@@ -391,9 +383,9 @@ index 8ccfacb..7a11be6 100644
+  };
+  
+  struct IPAActiveState {
+-@@ -53,6 +57,11 @@ struct IPAActiveState {
+- 		unsigned int temperatureK;
+- 	} awb;
++@@ -48,6 +52,11 @@ struct IPAActiveState {
++ 		double lastGain;
++ 	} blc;
+  
+ +	struct {
+ +		int32_t position;
+@@ -403,34 +395,35 @@ index 8ccfacb..7a11be6 100644
+  	Matrix<float, 3, 3> combinedMatrix;
+  
+  	struct {
+-diff --git a/src/ipa/simple/soft_simple.cpp b/src/ipa/simple/soft_simple.cpp
+-index 8bffd2a..a4fb1c3 100644
+---- a/src/ipa/simple/soft_simple.cpp
+-+++ b/src/ipa/simple/soft_simple.cpp
+-@@ -79,6 +79,7 @@ private:
+- 	SwIspStats *stats_;
+- 	std::unique_ptr<CameraSensorHelper> camHelper_;
+- 	ControlInfoMap sensorInfoMap_;
+-+	ControlInfoMap lensInfoMap_;
++@@ -84,6 +93,7 @@ struct IPAContext {
+  
+- 	/* Local parameter storage */
+- 	struct IPAContext context_;
+-@@ -203,6 +204,7 @@ int IPASoftSimple::init(const IPASettings &settings,
+- int IPASoftSimple::configure(const IPAConfigInfo &configInfo)
++ 	IPACameraSensorInfo sensorInfo;
++ 	ControlInfoMap sensorControls;
+++	ControlInfoMap lensControls;
++ 	std::unique_ptr<CameraSensorHelper> camHelper;
++ 	IPASessionConfiguration configuration;
++ 	IPAActiveState activeState;
++diff --git a/src/ipa/softisp/softisp.cpp b/src/ipa/softisp/softisp.cpp
++index a166176..ed97063 100644
++--- a/src/ipa/softisp/softisp.cpp
+++++ b/src/ipa/softisp/softisp.cpp
++@@ -210,6 +210,7 @@ int IPASoftIsp::init(const IPASettings &settings,
++ int IPASoftIsp::configure(const IPAConfigInfo &configInfo, ControlInfoMap *ipaControls)
+  {
+- 	sensorInfoMap_ = configInfo.sensorControls;
+-+	lensInfoMap_ = configInfo.lensControls;
+- 
+- 	const ControlInfo &exposureInfo = sensorInfoMap_.find(V4L2_CID_EXPOSURE)->second;
+- 	const ControlInfo &gainInfo = sensorInfoMap_.find(V4L2_CID_ANALOGUE_GAIN)->second;
+-@@ -337,7 +339,15 @@ void IPASoftSimple::processStats(const uint32_t frame,
+- 	ctrls.set(V4L2_CID_ANALOGUE_GAIN,
+- 		  static_cast<int32_t>(camHelper_ ? camHelper_->gainCode(againNew) : againNew));
++ 	context_.sensorControls = configInfo.sensorControls;
+++	context_.lensControls = configInfo.lensControls;
+  
++ 	/* Clear the IPA context before the streaming session. */
++ 	context_.configuration = {};
++@@ -274,7 +275,16 @@ void IPASoftIsp::processStats(const uint32_t frame,
++ 	ControlList ctrls(context_.sensorControls);
++ 	agc::prepareControls(ctrls, context_.camHelper.get(),
++ 			     frameContext.agc.exposure, frameContext.agc.gain);
+ -	setSensorControls.emit(ctrls);
+-+	ControlList lensCtrls = lensInfoMap_.empty()
+++
+++	ControlList lensCtrls = context_.lensControls.empty()
+ +					? ControlList(controls::controls)
+-+					: ControlList(lensInfoMap_);
+++					: ControlList(context_.lensControls);
+ +	if (context_.activeState.af.update) {
+ +		lensCtrls.set(V4L2_CID_FOCUS_ABSOLUTE, context_.activeState.af.position);
+ +		context_.activeState.af.update = false;
+@@ -439,7 +432,7 @@ index 8bffd2a..a4fb1c3 100644
+ +	setSensorControls.emit(ctrls, lensCtrls);
+  }
+  
+- std::string IPASoftSimple::logPrefix() const
++ std::string IPASoftIsp::logPrefix() const
+ -- 
+ 2.43.0
+ 
+diff --git a/temp/libcamera/0013-ipa-simple-af-Shorten-the-scan.patch b/temp/libcamera/0008-ipa-softisp-af-Shorten-the-scan.patch
+similarity index 72%
+rename from temp/libcamera/0013-ipa-simple-af-Shorten-the-scan.patch
+rename to temp/libcamera/0008-ipa-softisp-af-Shorten-the-scan.patch
+index 5f1c2c1ffc..efe1257228 100644
+--- a/temp/libcamera/0013-ipa-simple-af-Shorten-the-scan.patch
++++ b/temp/libcamera/0008-ipa-softisp-af-Shorten-the-scan.patch
+@@ -1,24 +1,17 @@
+-From 233438e49e406309dea1ec1bed5ab6875def2d18 Mon Sep 17 00:00:00 2001
++From b58e25d99766e39cb08d81b494d1224d93944417 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+-Date: Mon, 2 Nov 2026 22:46:28 +0100
+-Subject: [PATCH] ipa: simple: af: Shorten the scan
++Date: Mon, 9 Nov 2026 23:32:38 +0100
++Subject: [PATCH 4/4] ipa: softisp: af: Shorten the scan
+ 
+-Make the early stop of the coarse scan tunable, so that lenses with a
+-flat curve past the peak stop as well, and only search half a coarse step
+-around the peak in the fine scan. The coarse scan already measured the
+-outer positions. Only stop early after a clear peak, the noise on a flat
+-part of the curve looks like falling sharpness.
+-
+-Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+ ---
+- src/ipa/simple/algorithms/af.cpp | 22 +++++++++++++++++-----
+- src/ipa/simple/algorithms/af.h   |  4 ++++
++ src/ipa/softisp/algorithms/af.cpp | 22 +++++++++++++++++-----
++ src/ipa/softisp/algorithms/af.h   |  4 ++++
+  2 files changed, 21 insertions(+), 5 deletions(-)
+ 
+-diff --git a/src/ipa/simple/algorithms/af.cpp b/src/ipa/simple/algorithms/af.cpp
+-index 4c2aa79..691da17 100755
+---- a/src/ipa/simple/algorithms/af.cpp
+-+++ b/src/ipa/simple/algorithms/af.cpp
++diff --git a/src/ipa/softisp/algorithms/af.cpp b/src/ipa/softisp/algorithms/af.cpp
++index 97b0cbe..59a555e 100755
++--- a/src/ipa/softisp/algorithms/af.cpp
+++++ b/src/ipa/softisp/algorithms/af.cpp
+ @@ -47,6 +47,9 @@ int Af::init(IPAContext &context, const ValueNode &tuningData)
+  	changeThreshold_ = tuningData["changeThreshold"].get<double>(changeThreshold_);
+  	changeCount_ = tuningData["changeCount"].get<uint32_t>(changeCount_);
+@@ -80,10 +73,10 @@ index 4c2aa79..691da17 100755
+  		return;
+  
+  	case State::Fine:
+-diff --git a/src/ipa/simple/algorithms/af.h b/src/ipa/simple/algorithms/af.h
+-index e7bcfa3..8e636b8 100755
+---- a/src/ipa/simple/algorithms/af.h
+-+++ b/src/ipa/simple/algorithms/af.h
++diff --git a/src/ipa/softisp/algorithms/af.h b/src/ipa/softisp/algorithms/af.h
++index 978100a..4864e61 100755
++--- a/src/ipa/softisp/algorithms/af.h
+++++ b/src/ipa/softisp/algorithms/af.h
+ @@ -46,6 +46,10 @@ private:
+  	double changeThreshold_ = 0.3;
+  	unsigned int changeCount_ = 3;
+diff --git a/temp/libcamera/0008-libcamera-camera_sensor-Add-Sony-IMX471-sensor-prope.patch b/temp/libcamera/0008-libcamera-camera_sensor-Add-Sony-IMX471-sensor-prope.patch
+deleted file mode 100644
+index 2d641f44b5..0000000000
+--- a/temp/libcamera/0008-libcamera-camera_sensor-Add-Sony-IMX471-sensor-prope.patch
++++ /dev/null
+@@ -1,71 +0,0 @@
+-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+-From: Timo <1788603+darknagel@users.noreply.github.com>
+-Date: Mon, 26 Oct 2026 19:22:19 +0100
+-Subject: [PATCH] libcamera: camera_sensor: Add Sony IMX471 sensor properties
+- and helper
+-
+-Add the camera sensor properties and the camera sensor helper for the
+-Sony IMX471, used as front camera in the OnePlus 8 Pro. The analogue
+-gain follows the usual Sony formula (1024 / (1024 - code)), the black
+-level of 64 at 10 bits comes from the camera module data, and the test
+-pattern modes follow the menu of the kernel driver.
+-
+-Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+----
+- src/ipa/libipa/camera_sensor_helper.cpp          | 12 ++++++++++++
+- .../sensor/camera_sensor_properties.cpp          | 16 ++++++++++++++++
+- 2 files changed, 28 insertions(+)
+-
+-diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+-index 2085730..ff022dc 100644
+---- a/src/ipa/libipa/camera_sensor_helper.cpp
+-+++ b/src/ipa/libipa/camera_sensor_helper.cpp
+-@@ -639,6 +639,18 @@ public:
+- };
+- REGISTER_CAMERA_SENSOR_HELPER("imx415", CameraSensorHelperImx415)
+- 
+-+class CameraSensorHelperImx471 : public CameraSensorHelper
+-+{
+-+public:
+-+	CameraSensorHelperImx471()
+-+	{
+-+		/* From the camera module data: 64 at 10bits. */
+-+		blackLevel_ = 4096;
+-+		gain_ = AnalogueGainLinear{ 0, 1024, -1, 1024 };
+-+	}
+-+};
+-+REGISTER_CAMERA_SENSOR_HELPER("imx471", CameraSensorHelperImx471)
+-+
+- class CameraSensorHelperImx462 : public CameraSensorHelperImx290
+- {
+- };
+-diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+-index 592002c..eb5c24b 100644
+---- a/src/libcamera/sensor/camera_sensor_properties.cpp
+-+++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+-@@ -287,6 +287,22 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+- 				.hblankDelay = 2
+- 			},
+- 		} },
+-+		{ "imx471", {
+-+			.unitCellSize = { 1000, 1000 },
+-+			.testPatternModes = {
+-+				{ controls::draft::TestPatternModeOff, 0 },
+-+				{ controls::draft::TestPatternModeSolidColor, 1 },
+-+				{ controls::draft::TestPatternModeColorBars, 2 },
+-+				{ controls::draft::TestPatternModeColorBarsFadeToGray, 3 },
+-+				{ controls::draft::TestPatternModePn9, 4 },
+-+			},
+-+			.sensorDelays = {
+-+				.exposureDelay = 2,
+-+				.gainDelay = 2,
+-+				.vblankDelay = 2,
+-+				.hblankDelay = 2
+-+			},
+-+		} },
+- 		{ "imx462", {
+- 			.unitCellSize = { 2900, 2900 },
+- 			.testPatternModes = {},
+--- 
+-2.43.0
+-
+diff --git a/temp/libcamera/APKBUILD b/temp/libcamera/APKBUILD
+index 4d4a709745..6d7594ca97 100644
+--- a/temp/libcamera/APKBUILD
++++ b/temp/libcamera/APKBUILD
+@@ -1,9 +1,11 @@
+ # Forked from Alpine for temporary downstream patches
++# OnePlus 8 Pro: sensor helpers for S5K3M5, IMX586, IMX689 and GC5035,
++# contrast detection autofocus for the software ISP (patches 0003-0008)
+ maintainer="Robert Mader <robert.mader@collabora.com>"
+ pkgname=libcamera
+-_pkgver=0.7.2
++_pkgver=0.8.0
+ pkgver=9999$_pkgver
+-pkgrel=12
++pkgrel=11
+ pkgdesc="Linux camera framework"
+ url="https://libcamera.org/"
+ arch="all"
+@@ -38,12 +40,13 @@ makedepends="
+ subpackages="
+ 	$pkgname-dbg
+ 	$pkgname-dev
+-	qcam
+ 	$pkgname-gstreamer
+-	$pkgname-v4l2
++	$pkgname-ipa
+ 	$pkgname-tools
++	$pkgname-v4l2
+ 	py3-$pkgname-pyc:pyc
+ 	py3-$pkgname:py3
++	qcam
+ 	"
+ _tuning_files="
+ 	hi846.yaml
+@@ -51,31 +54,26 @@ _tuning_files="
+ 	imx363.yaml
+ 	imx371.yaml
+ 	imx376.yaml
+-	gc5035.yaml
+-	imx471.yaml
+-	imx586.yaml
+-	imx689.yaml
+ 	imx519.yaml
+ 	imx800.yaml
+ 	imx858.yaml
+ 	s5k3l6xx.yaml
+-	s5k3m5.yaml
+ 	s5kjn1.yaml
++	gc5035.yaml
++	imx471.yaml
++	imx586.yaml
++	imx689.yaml
++	s5k3m5.yaml
+ 	"
+ source="https://gitlab.freedesktop.org/camera/libcamera/-/archive/v$_pkgver/libcamera-v$_pkgver.tar.gz
+-	0001-software_isp-debayer_egl-Re-add-log-for-failing-DMAB.patch
+-	0002-libcamera-camera_sensor-Add-Sony-IMX355-sensor-prope.patch
+-	0003-libcamera-software_isp-debayer_egl-Use-untransposed-.patch
+-	0004-debayer-Further-demote-Unsupported-input-format-log.patch
+-	0005-ipa-simple-Derive-AGC-minimum-gain-step-from-sensor-.patch
+-	0006-libcamera-Add-quad-Bayer-CFA-layout-support.patch
+-	0007-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch
+-	0008-libcamera-camera_sensor-Add-Sony-IMX471-sensor-prope.patch
+-	0009-libcamera-software_isp-Add-a-sharpness-measure-to-th.patch
+-	0010-libcamera-simple-Pass-focus-lens-controls-to-and-fro.patch
+-	0011-ipa-simple-Add-contrast-detection-autofocus.patch
+-	0012-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch
+-	0013-ipa-simple-af-Shorten-the-scan.patch
++	0001-libcamera-software_isp-Allow-limiting-output-sizes.patch
++	0002-libcamera-Add-quad-Bayer-CFA-layout-support.patch
++	0003-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch
++	0004-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch
++	0005-libcamera-software_isp-Add-a-sharpness-measure-to-th.patch
++	0006-libcamera-simple-Pass-focus-lens-controls-to-and-fro.patch
++	0007-ipa-softisp-Add-contrast-detection-autofocus.patch
++	0008-ipa-softisp-af-Shorten-the-scan.patch
+ 	qcam.desktop
+ 	$_tuning_files
+ 	"
+@@ -86,23 +84,13 @@ options="!strip !check"
+ 
+ case "$CARCH" in
+ arm*|aarch64)
+-	subpackages="$subpackages $pkgname-raspberrypi"
+-	;;
+-esac
+-
+-case "$CARCH" in
+-ppc64le|s390x|riscv64|loongarch64)
+-	# doesn't install any ipa
+-	;;
+-*)
+-	depends="$pkgname-ipa=$pkgver-r$pkgrel"
+-	subpackages="$subpackages $pkgname-ipa"
++	# must be ordered before the ipa subpackage
++	subpackages="$pkgname-raspberrypi $subpackages"
+ 	;;
+ esac
+ 
+ build() {
+ 	abuild-meson \
+-		-Dpipelines=auto,virtual \
+ 		-Dv4l2=true \
+ 		-Dwerror=false \
+ 		-Ddocumentation=disabled \
+@@ -130,14 +118,11 @@ package() {
+ }
+ 
+ ipa() {
+-	depends=""
+-	amove usr/lib/libcamera
+-	amove usr/share/libcamera/ipa
++	depends="$pkgname=$pkgver-r$pkgrel"
++	install_if="$pkgname=$pkgver-r$pkgrel"
+ 
+-	for _tuning_file in $_tuning_files; do
+-		install -Dm644 -t "$subpkgdir"/usr/share/libcamera/ipa/simple \
+-			"$srcdir"/"$_tuning_file"
+-	done
++	amove usr/lib/libcamera/ipa
++	amove usr/share/libcamera/ipa
+ 
+ 	# then sign ipa's
+ 	local ipa
+@@ -148,6 +133,11 @@ ipa() {
+ 			"$ipa" \
+ 			"$ipa".sign
+ 	done
++
++	for _tuning_file in $_tuning_files; do
++		install -Dm644 -t "$subpkgdir"/usr/share/libcamera/ipa/softisp \
++			"$srcdir"/"$_tuning_file"
++	done
+ }
+ 
+ qcam() {
+@@ -189,34 +179,29 @@ py3() {
+ 
+ 
+ sha512sums="
+-b317cdc96f61682ee0bf26dfb7c4d6441db9a9c5b93ab53528121a8cd44862b3d59cbaa3881bb0837e3e381564c184c7b742124aef4267eea754c6083de353c1  libcamera-v0.7.2.tar.gz
+-53e6627a4d1bdb9af7c76add1bcad784e7f620e0b0667ccce202a9ee1417bb3701df5e2ace43086eb69ae3b816be0e0833ed5d5a6d1bf0ff1d801a052ac8bcc8  0001-software_isp-debayer_egl-Re-add-log-for-failing-DMAB.patch
+-512565fcf40617b3c199e0bdea66de8377e77dbd5873c52338c4ca2978a87ba22ec2b675b1f943f77ce2dcbd373f1b3c68f8668ce20d7d54bc2b8c6b0c2a8824  0002-libcamera-camera_sensor-Add-Sony-IMX355-sensor-prope.patch
+-80189ce5f542647e163b499f040e4b92fa1cce5717d72bed3034490214220ac92a9ce14af496f478aa765bcfc227a90600a87f177c9ca9bb64ed1ae91eb52443  0003-libcamera-software_isp-debayer_egl-Use-untransposed-.patch
+-915dcc65861cb27485636647586155f3dc9ace914b4df51e1889c05e15a82a87a35ef06c44a3f09153d29fc834bc10aa60394c594233fe72a52b6fa0a8605c9a  0004-debayer-Further-demote-Unsupported-input-format-log.patch
+-50fd6a28353534e143418207ee07d462f017078091c2909ca2d495840facf7849dfebb061a7ed29a62f57dbf4e506aa9ec085b0c05ccd054d19c31a987b7e37d  0005-ipa-simple-Derive-AGC-minimum-gain-step-from-sensor-.patch
+-47277fedc943ad45391ba150f1c4ae70b7bd041fb162239996fe5430429c50fe27a1c5915c9de90cb714ec578c68c4ba5e4c25a3431e35e721fdd232368b703f  0006-libcamera-Add-quad-Bayer-CFA-layout-support.patch
+-24f5fced54c2e1c65e2ed022db66c0f865869dcde829e3d310fc5321a3f88d77c22eda1dd7ff6777286518f3da6acf82e447dd498834f81bc38101b05aafab41  0007-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch
+-8342f079c2803f2a322aa1564ac1408fac7f19bff29a72c0602ec8bbcc8ada9aa8dc11d7b7d2e316fd53d687f57da684081f3d89b293b249f7d57ce1631c6413  0008-libcamera-camera_sensor-Add-Sony-IMX471-sensor-prope.patch
+-cb846ead7df66ea38b9e0a75465ad667565d2210fd5de4fecc4e0f88c5b32924e8fae1c5b7cccf1439a44e83a035df1efc7243f73daefd35e9d4b53697f63c8a  0009-libcamera-software_isp-Add-a-sharpness-measure-to-th.patch
+-59d5ed22ac8abf837e784de9954b4a3b93ffbae3541d935f8785492d3a8b4c67487d64049c56afc7e9295fe64a930e1cb318900aba2d753936d31d23567281fe  0010-libcamera-simple-Pass-focus-lens-controls-to-and-fro.patch
+-3fb3dd9136e22fd592b1cc5b75bd2c695bb0a19537fa6979a873ff9058860566b64c50e44331fc7d68a4c251d9cc1b52bf30b4d81a2d6df54dc6b6d3e4aafed7  0011-ipa-simple-Add-contrast-detection-autofocus.patch
+-d4438919145a298ad1c31e3d39bc6c020b1d0b820bc378a7a1f8785c9e8ab227970c3a61e4db3159a3f06123ca8e7ab01abca34e8558311e023956c6f6de72a8  0012-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch
+-84b7e546e555c847ce2d1256076e954ef657b178d4fc43901f1f2ce191947d0299e93f2c5bf88ea270b63e33ef624f0e2838055d6a7912c2203044adb86ffe18  0013-ipa-simple-af-Shorten-the-scan.patch
++21ada092a1944c3476e0a254fe82d2775d2eb833d931dd051bd551a9f12ae596b3cd57f3792335d4ad86479e2247d23056d30e2631aa620897d067002c88e060  libcamera-v0.8.0.tar.gz
++e255545cdc1d3d0e68fd40c504d2c2a24ec9a89de9e26842e05cc6046cf79615be87b0b9f80a3637b1f130c0404ff5e0f7df5136334b05c1d4e24e3290738223  0001-libcamera-software_isp-Allow-limiting-output-sizes.patch
++7918e3e2eed6ea6413936c30c88b752ba7c2da568c75236b2f5740e311b7b16fc6b4cc21413f4751af252843d0b98ad45ca41033e65686a9e9cdfa8d05f467c2  0002-libcamera-Add-quad-Bayer-CFA-layout-support.patch
++fdf6bfaae85bdf1de99cf38a2869dcfec3bd9e30f92473b3c183896a15056469eea0e0187ec5ff4fbb7b6bc041104e5a784166de993d640c723fc7ff950763db  0003-libcamera-camera_sensor-Add-Samsung-S5K3M5-sensor-pr.patch
++d8f90434ecc11311ad64aa34d9d5c9e0be92f4c68308c363ac8cd3b6982ca0c7651fd2082de35f2bed0151e3303a691b60f0dbf030938d87d3665078a81447ea  0004-libcamera-camera_sensor-Add-IMX586-IMX689-and-GC5035.patch
++dfa7f5c9e8ff635d136b0c4810bb6c730cbd7a1b76e2771c3b109208fbcd44b3b3a16785425cbedcd6bfdc955d27e59bf96fea4f3e77380e75c2493a30d08676  0005-libcamera-software_isp-Add-a-sharpness-measure-to-th.patch
++d01432273b0e560dd4e80afe3040ecca10557735a29f87f171603a04e87c2b2e1cd233a8f6942d3a22dbfe569333b4b297265ca4bf008baccc74d712ed9cb3b1  0006-libcamera-simple-Pass-focus-lens-controls-to-and-fro.patch
++03d8b69b82e60e35a173568ff91638ee74a453740913ea621e5b93778d8535b6cde9f48bc93e3e09767d4c4e7c37e8a85f83adb2725b72eb879a3f1e2305b604  0007-ipa-softisp-Add-contrast-detection-autofocus.patch
++e90c4a8ec40fc0b887849810910cc60972aab6445fb4cc36a3d5e5ca500221f6698852e999fa7db490c88c3abff2934bae8ef07fde34fed3c2d17d49cfa8f449  0008-ipa-softisp-af-Shorten-the-scan.patch
+ 22167a4eceb6d1b40b0b7c45fdf116c71684f5340de7f767535cb8e160ad9d2ae0f00cb3d461f73a344520a48a4641cf46226841d78bee06bfbfd2a91337f754  qcam.desktop
+-2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  hi846.yaml
++926933ed5aa6bc005471d8ddbbf49afaeb5034ac776c78bcba6655adc05b68be858923aac7887f8a8451a424113ed4d11c78856229a728abf031ebe747684e14  hi846.yaml
+ 4942edd551dcf51630246f71e600c17760d3574d5d45e5530d6cfeefe2c9ab1a812fbe220f8e89d92e19a499c592b2507c801ca4eb74cd15fcecb60bff5c650b  imx355.yaml
+ 285c6d0d712df341c0117c3762ddc139f53f44e6be36c3388d1a62696429175e2916f392163131e21f410c3676f02f5d125f375171f45f8d82ad278aa5076c62  imx363.yaml
+ 1b1f6d36311bee38006eaa1e380571fc9fbd5625fd72f63309426d3651483cef52a176d56cdebd2ce46cbb264684ede186740df169027d2bf27d0f3057da2f86  imx371.yaml
+ 1b1f6d36311bee38006eaa1e380571fc9fbd5625fd72f63309426d3651483cef52a176d56cdebd2ce46cbb264684ede186740df169027d2bf27d0f3057da2f86  imx376.yaml
+-2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  gc5035.yaml
+-2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  imx471.yaml
+-8cd6fe7f640e0f7cd691a8c999e892688320cb31ec38988707fa3fada511951499cba60a5baea59ca39912c90c00248103c6eaba7b75f47bc45fb5191bfdd210  imx586.yaml
+-8cd6fe7f640e0f7cd691a8c999e892688320cb31ec38988707fa3fada511951499cba60a5baea59ca39912c90c00248103c6eaba7b75f47bc45fb5191bfdd210  imx689.yaml
+ 1b1f6d36311bee38006eaa1e380571fc9fbd5625fd72f63309426d3651483cef52a176d56cdebd2ce46cbb264684ede186740df169027d2bf27d0f3057da2f86  imx519.yaml
+-55dab9dcb9b1982143b9d63e4e51138c5bffd7c8f4a8e4e122750b3ad9d475446956bc297d9f564819ade4be75a575d06633a064e14f8ba3ef77986783c5f067  imx800.yaml
++2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  imx800.yaml
+ 55dab9dcb9b1982143b9d63e4e51138c5bffd7c8f4a8e4e122750b3ad9d475446956bc297d9f564819ade4be75a575d06633a064e14f8ba3ef77986783c5f067  imx858.yaml
+-2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  s5k3l6xx.yaml
+-cf541f8ac12505373af908acdfd3ef8723cc1df15a8a8fe62166a84a677700c9915d1aa6533c9e0f7c0b8f3bee2ec21cd746e1eea6ca795c69b85aab402a43c0  s5k3m5.yaml
++926933ed5aa6bc005471d8ddbbf49afaeb5034ac776c78bcba6655adc05b68be858923aac7887f8a8451a424113ed4d11c78856229a728abf031ebe747684e14  s5k3l6xx.yaml
+ d59020e62520ee622282c85ce7bcdfe453c99becf48cc1005c5f8a4bb8b2511b19c89f38fb3c994e7c6a79d1f84e2ed5f5a09b4c5bdc1dc4a44b071dbccf0d44  s5kjn1.yaml
++2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  gc5035.yaml
++2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  imx471.yaml
++e09e65d130bf9b1bc7539eb1734b9cded64d5f0b4c50b297ac0d6576dd91ac97638157ea588b8736fc81e1522e75fcabe5f1e53308fbe808f965422d159f4d78  imx586.yaml
++e09e65d130bf9b1bc7539eb1734b9cded64d5f0b4c50b297ac0d6576dd91ac97638157ea588b8736fc81e1522e75fcabe5f1e53308fbe808f965422d159f4d78  imx689.yaml
++88016f9ccf669cf09e7824158f6cda25bedbe33b32bee0f70272e7e75f18574f686e3f3d2e03bc42f9b6a30e605f39f0e78d544f95ac4cf03355d8364379de04  s5k3m5.yaml
+ "
+diff --git a/temp/libcamera/hi846.yaml b/temp/libcamera/hi846.yaml
+index e903d96a8f..d1a689d4ab 100644
+--- a/temp/libcamera/hi846.yaml
++++ b/temp/libcamera/hi846.yaml
+@@ -6,6 +6,28 @@ algorithms:
+   - BlackLevel:
+       blackLevel: 4096
+   - Awb:
++  - Ccm:
++      # copied from imx355.yaml
++      ccms:
++        - ct: 2920
++          ccm: [ 1.70452, -0.28006, -0.42446,
++                -0.66546,  2.27544, -0.60998,
++                -0.16166, -0.89357,  2.05524 ]
++        - ct: 3630
++          ccm: [ 1.82077, -0.47914, -0.34163,
++                -0.58711,  2.13712, -0.55002,
++                -0.12653, -0.74572,  1.87226 ]
++        - ct: 4550
++          ccm: [ 1.80579, -0.47998, -0.32582,
++                -0.52116,  2.23331, -0.71214,
++                -0.11717, -0.64942,  1.76659 ]
++        - ct: 5580
++          ccm: [ 1.84933, -0.52533, -0.32401,
++                -0.45888,  2.07922, -0.62033,
++                -0.12065, -0.56643,  1.68708 ]
+   - Adjust:
+   - Agc:
++options:
++  max_output_width: 640
++  max_output_height: 480
+ ...
+diff --git a/temp/libcamera/imx586.yaml b/temp/libcamera/imx586.yaml
+index 7ad39396fd..15da0e1bfa 100755
+--- a/temp/libcamera/imx586.yaml
++++ b/temp/libcamera/imx586.yaml
+@@ -14,6 +14,6 @@ algorithms:
+       warmup: 4
+       stopRatio: 0.95
+       stopCount: 2
+-      changeThreshold: 0.1
+-      changeCount: 2
++      changeThreshold: 0.25
++      changeCount: 4
+ ...
+diff --git a/temp/libcamera/imx689.yaml b/temp/libcamera/imx689.yaml
+index 7ad39396fd..15da0e1bfa 100755
+--- a/temp/libcamera/imx689.yaml
++++ b/temp/libcamera/imx689.yaml
+@@ -14,6 +14,6 @@ algorithms:
+       warmup: 4
+       stopRatio: 0.95
+       stopCount: 2
+-      changeThreshold: 0.1
+-      changeCount: 2
++      changeThreshold: 0.25
++      changeCount: 4
+ ...
+diff --git a/temp/libcamera/imx800.yaml b/temp/libcamera/imx800.yaml
+index 2c5ea9e510..e903d96a8f 100644
+--- a/temp/libcamera/imx800.yaml
++++ b/temp/libcamera/imx800.yaml
+@@ -6,37 +6,6 @@ algorithms:
+   - BlackLevel:
+       blackLevel: 4096
+   - Awb:
+-  - Ccm:
+-      # copied from s5kjn1.yaml
+-      ccms:
+-        - ct: 2676
+-          ccm: [ 2.02152, -0.41859, -0.60292,
+-                -0.59481,  2.21509, -0.62029,
+-                -0.44029, -1.16865,  2.60894 ]
+-        - ct: 2710
+-          ccm: [ 2.01597, -0.46478, -0.55119,
+-                -0.59047,  2.14717, -0.55671,
+-                -0.40793, -1.19946,  2.60739 ]
+-        - ct: 2719
+-          ccm: [ 1.99894, -0.41626, -0.58268,
+-                -0.59321,  2.18167, -0.58846,
+-                -0.42518, -1.21384,  2.63903 ]
+-        - ct: 2867
+-          ccm: [ 1.95177, -0.35904, -0.59274,
+-                -0.44282,  1.97362, -0.53079,
+-                -0.49059, -1.35379,  2.84439 ]
+-        - ct: 3474
+-          ccm: [ 1.97712, -0.60854, -0.36858,
+-                -0.47723,  1.91142, -0.43418,
+-                -0.23092, -0.72246,  1.95339 ]
+-        - ct: 3761
+-          ccm: [ 2.29903, -0.94652, -0.35251,
+-                -0.51661,  1.90311, -0.38651,
+-                -0.25114, -0.67501,  1.92615 ]
+-        - ct: 6890
+-          ccm: [ 1.93867, -0.67486, -0.26381,
+-                -0.43049,  2.00702, -0.57652,
+-                -0.15696, -0.51345,  1.67041 ]
+   - Adjust:
+   - Agc:
+ ...
+diff --git a/temp/libcamera/s5k3l6xx.yaml b/temp/libcamera/s5k3l6xx.yaml
+index e903d96a8f..d1a689d4ab 100644
+--- a/temp/libcamera/s5k3l6xx.yaml
++++ b/temp/libcamera/s5k3l6xx.yaml
+@@ -6,6 +6,28 @@ algorithms:
+   - BlackLevel:
+       blackLevel: 4096
+   - Awb:
++  - Ccm:
++      # copied from imx355.yaml
++      ccms:
++        - ct: 2920
++          ccm: [ 1.70452, -0.28006, -0.42446,
++                -0.66546,  2.27544, -0.60998,
++                -0.16166, -0.89357,  2.05524 ]
++        - ct: 3630
++          ccm: [ 1.82077, -0.47914, -0.34163,
++                -0.58711,  2.13712, -0.55002,
++                -0.12653, -0.74572,  1.87226 ]
++        - ct: 4550
++          ccm: [ 1.80579, -0.47998, -0.32582,
++                -0.52116,  2.23331, -0.71214,
++                -0.11717, -0.64942,  1.76659 ]
++        - ct: 5580
++          ccm: [ 1.84933, -0.52533, -0.32401,
++                -0.45888,  2.07922, -0.62033,
++                -0.12065, -0.56643,  1.68708 ]
+   - Adjust:
+   - Agc:
++options:
++  max_output_width: 640
++  max_output_height: 480
+ ...
+diff --git a/temp/libcamera/s5k3m5.yaml b/temp/libcamera/s5k3m5.yaml
+index be45ddf2e7..ecc8c5b710 100755
+--- a/temp/libcamera/s5k3m5.yaml
++++ b/temp/libcamera/s5k3m5.yaml
+@@ -9,4 +9,6 @@ algorithms:
+   - Adjust:
+   - Agc:
+   - Af:
++      changeThreshold: 0.25
++      changeCount: 4
+ ...
+-- 
+2.43.0
+

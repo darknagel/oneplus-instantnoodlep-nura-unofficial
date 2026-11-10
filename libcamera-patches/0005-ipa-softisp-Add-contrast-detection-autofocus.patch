@@ -1,31 +1,23 @@
-From d5785adcfe9cce0ee0562d90fb7d630d141f8d56 Mon Sep 17 00:00:00 2001
+From 9cc997e63c3be7c920fd66a631c583e17b49cc7c Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
-Date: Tue, 27 Oct 2026 18:04:59 +0100
-Subject: [PATCH 5/5] ipa: simple: Add contrast detection autofocus
+Date: Mon, 9 Nov 2026 23:32:38 +0100
+Subject: [PATCH 3/4] ipa: softisp: Add contrast detection autofocus
 
-Sweep the lens in coarse steps, then in fine steps around the sharpest
-position, using the sharpness measure of the software ISP statistics. In
-continuous mode, scan again when the sharpness changes for a few
-statistics frames in a row. Support AfMode and AfTrigger and report
-AfState. Enabled by adding Af to the tuning file of a camera with a focus
-lens.
-
-Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
 ---
- src/ipa/simple/algorithms/af.cpp      | 260 ++++++++++++++++++++++++++
- src/ipa/simple/algorithms/af.h        |  71 +++++++
- src/ipa/simple/algorithms/meson.build |   1 +
- src/ipa/simple/ipa_context.h          |   9 +
- src/ipa/simple/soft_simple.cpp        |  12 +-
- 5 files changed, 352 insertions(+), 1 deletion(-)
- create mode 100755 src/ipa/simple/algorithms/af.cpp
- create mode 100755 src/ipa/simple/algorithms/af.h
+ src/ipa/softisp/algorithms/af.cpp      | 260 +++++++++++++++++++++++++
+ src/ipa/softisp/algorithms/af.h        |  71 +++++++
+ src/ipa/softisp/algorithms/meson.build |   1 +
+ src/ipa/softisp/ipa_context.h          |  10 +
+ src/ipa/softisp/softisp.cpp            |  12 +-
+ 5 files changed, 353 insertions(+), 1 deletion(-)
+ create mode 100755 src/ipa/softisp/algorithms/af.cpp
+ create mode 100755 src/ipa/softisp/algorithms/af.h
 
-diff --git a/src/ipa/simple/algorithms/af.cpp b/src/ipa/simple/algorithms/af.cpp
+diff --git a/src/ipa/softisp/algorithms/af.cpp b/src/ipa/softisp/algorithms/af.cpp
 new file mode 100755
-index 0000000..4c2aa79
+index 0000000..97b0cbe
 --- /dev/null
-+++ b/src/ipa/simple/algorithms/af.cpp
++++ b/src/ipa/softisp/algorithms/af.cpp
 @@ -0,0 +1,260 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/*
@@ -45,7 +37,7 @@ index 0000000..4c2aa79
 +
 +namespace libcamera {
 +
-+namespace ipa::soft::algorithms {
++namespace ipa::softisp::algorithms {
 +
 +/**
 + * \class Af
@@ -284,14 +276,14 @@ index 0000000..4c2aa79
 +
 +REGISTER_IPA_ALGORITHM(Af, "Af")
 +
-+} /* namespace ipa::soft::algorithms */
++} /* namespace ipa::softisp::algorithms */
 +
 +} /* namespace libcamera */
-diff --git a/src/ipa/simple/algorithms/af.h b/src/ipa/simple/algorithms/af.h
+diff --git a/src/ipa/softisp/algorithms/af.h b/src/ipa/softisp/algorithms/af.h
 new file mode 100755
-index 0000000..e7bcfa3
+index 0000000..978100a
 --- /dev/null
-+++ b/src/ipa/simple/algorithms/af.h
++++ b/src/ipa/softisp/algorithms/af.h
 @@ -0,0 +1,71 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/*
@@ -306,7 +298,7 @@ index 0000000..e7bcfa3
 +
 +namespace libcamera {
 +
-+namespace ipa::soft::algorithms {
++namespace ipa::softisp::algorithms {
 +
 +class Af : public Algorithm
 +{
@@ -361,26 +353,26 @@ index 0000000..e7bcfa3
 +	unsigned int settle_ = 0;
 +};
 +
-+} /* namespace ipa::soft::algorithms */
++} /* namespace ipa::softisp::algorithms */
 +
 +} /* namespace libcamera */
-diff --git a/src/ipa/simple/algorithms/meson.build b/src/ipa/simple/algorithms/meson.build
-index 73c6372..1cd58d5 100644
---- a/src/ipa/simple/algorithms/meson.build
-+++ b/src/ipa/simple/algorithms/meson.build
+diff --git a/src/ipa/softisp/algorithms/meson.build b/src/ipa/softisp/algorithms/meson.build
+index d98f4b1..7d10771 100644
+--- a/src/ipa/softisp/algorithms/meson.build
++++ b/src/ipa/softisp/algorithms/meson.build
 @@ -2,6 +2,7 @@
  
- soft_simple_ipa_algorithms = files([
+ softisp_ipa_algorithms = files([
      'adjust.cpp',
 +    'af.cpp',
      'awb.cpp',
      'agc.cpp',
      'blc.cpp',
-diff --git a/src/ipa/simple/ipa_context.h b/src/ipa/simple/ipa_context.h
-index 8ccfacb..7a11be6 100644
---- a/src/ipa/simple/ipa_context.h
-+++ b/src/ipa/simple/ipa_context.h
-@@ -33,6 +33,10 @@ struct IPASessionConfiguration {
+diff --git a/src/ipa/softisp/ipa_context.h b/src/ipa/softisp/ipa_context.h
+index 1c5db17..aeb770e 100644
+--- a/src/ipa/softisp/ipa_context.h
++++ b/src/ipa/softisp/ipa_context.h
+@@ -35,6 +35,10 @@ struct IPASessionConfiguration {
  	struct {
  		std::optional<uint8_t> level;
  	} black;
@@ -391,9 +383,9 @@ index 8ccfacb..7a11be6 100644
  };
  
  struct IPAActiveState {
-@@ -53,6 +57,11 @@ struct IPAActiveState {
- 		unsigned int temperatureK;
- 	} awb;
+@@ -48,6 +52,11 @@ struct IPAActiveState {
+ 		double lastGain;
+ 	} blc;
  
 +	struct {
 +		int32_t position;
@@ -403,34 +395,35 @@ index 8ccfacb..7a11be6 100644
  	Matrix<float, 3, 3> combinedMatrix;
  
  	struct {
-diff --git a/src/ipa/simple/soft_simple.cpp b/src/ipa/simple/soft_simple.cpp
-index 8bffd2a..a4fb1c3 100644
---- a/src/ipa/simple/soft_simple.cpp
-+++ b/src/ipa/simple/soft_simple.cpp
-@@ -79,6 +79,7 @@ private:
- 	SwIspStats *stats_;
- 	std::unique_ptr<CameraSensorHelper> camHelper_;
- 	ControlInfoMap sensorInfoMap_;
-+	ControlInfoMap lensInfoMap_;
+@@ -84,6 +93,7 @@ struct IPAContext {
  
- 	/* Local parameter storage */
- 	struct IPAContext context_;
-@@ -203,6 +204,7 @@ int IPASoftSimple::init(const IPASettings &settings,
- int IPASoftSimple::configure(const IPAConfigInfo &configInfo)
+ 	IPACameraSensorInfo sensorInfo;
+ 	ControlInfoMap sensorControls;
++	ControlInfoMap lensControls;
+ 	std::unique_ptr<CameraSensorHelper> camHelper;
+ 	IPASessionConfiguration configuration;
+ 	IPAActiveState activeState;
+diff --git a/src/ipa/softisp/softisp.cpp b/src/ipa/softisp/softisp.cpp
+index a166176..ed97063 100644
+--- a/src/ipa/softisp/softisp.cpp
++++ b/src/ipa/softisp/softisp.cpp
+@@ -210,6 +210,7 @@ int IPASoftIsp::init(const IPASettings &settings,
+ int IPASoftIsp::configure(const IPAConfigInfo &configInfo, ControlInfoMap *ipaControls)
  {
- 	sensorInfoMap_ = configInfo.sensorControls;
-+	lensInfoMap_ = configInfo.lensControls;
+ 	context_.sensorControls = configInfo.sensorControls;
++	context_.lensControls = configInfo.lensControls;
  
- 	const ControlInfo &exposureInfo = sensorInfoMap_.find(V4L2_CID_EXPOSURE)->second;
- 	const ControlInfo &gainInfo = sensorInfoMap_.find(V4L2_CID_ANALOGUE_GAIN)->second;
-@@ -337,7 +339,15 @@ void IPASoftSimple::processStats(const uint32_t frame,
- 	ctrls.set(V4L2_CID_ANALOGUE_GAIN,
- 		  static_cast<int32_t>(camHelper_ ? camHelper_->gainCode(againNew) : againNew));
- 
+ 	/* Clear the IPA context before the streaming session. */
+ 	context_.configuration = {};
+@@ -274,7 +275,16 @@ void IPASoftIsp::processStats(const uint32_t frame,
+ 	ControlList ctrls(context_.sensorControls);
+ 	agc::prepareControls(ctrls, context_.camHelper.get(),
+ 			     frameContext.agc.exposure, frameContext.agc.gain);
 -	setSensorControls.emit(ctrls);
-+	ControlList lensCtrls = lensInfoMap_.empty()
++
++	ControlList lensCtrls = context_.lensControls.empty()
 +					? ControlList(controls::controls)
-+					: ControlList(lensInfoMap_);
++					: ControlList(context_.lensControls);
 +	if (context_.activeState.af.update) {
 +		lensCtrls.set(V4L2_CID_FOCUS_ABSOLUTE, context_.activeState.af.position);
 +		context_.activeState.af.update = false;
@@ -439,7 +432,7 @@ index 8bffd2a..a4fb1c3 100644
 +	setSensorControls.emit(ctrls, lensCtrls);
  }
  
- std::string IPASoftSimple::logPrefix() const
+ std::string IPASoftIsp::logPrefix() const
 -- 
 2.43.0
 

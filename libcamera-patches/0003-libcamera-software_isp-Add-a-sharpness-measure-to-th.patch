@@ -1,15 +1,9 @@
-From 7f2ac03aef1fddfe74faa398fc75d7293274f49b Mon Sep 17 00:00:00 2001
+From fae811892385729a12da6080c07c16fbe862cd5e Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
-Date: Tue, 27 Oct 2026 18:04:59 +0100
-Subject: [PATCH 3/5] libcamera: software_isp: Add a sharpness measure to the
+Date: Mon, 9 Nov 2026 23:30:28 +0100
+Subject: [PATCH 1/4] libcamera: software_isp: Add a sharpness measure to the
  statistics
 
-Sum the absolute green differences between neighbouring sampled pixels in
-the centre half of the image for 10-bit packed Bayer formats, together
-with the green values they were taken from. This gives the soft IPA a
-brightness independent measure for contrast detection autofocus.
-
-Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
 ---
  .../internal/software_isp/swisp_stats.h       | 15 ++++++++
  .../internal/software_isp/swstats_cpu.h       |  3 ++
@@ -17,10 +11,10 @@ Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
  3 files changed, 55 insertions(+)
 
 diff --git a/include/libcamera/internal/software_isp/swisp_stats.h b/include/libcamera/internal/software_isp/swisp_stats.h
-index d9d0d9b..fa010d1 100644
+index 65d826f..247b4fa 100644
 --- a/include/libcamera/internal/software_isp/swisp_stats.h
 +++ b/include/libcamera/internal/software_isp/swisp_stats.h
-@@ -43,6 +43,21 @@ struct SwIspStats {
+@@ -56,6 +56,21 @@ struct SwIspStats {
  	 * \brief A histogram of luminance values of all the sampled pixels
  	 */
  	Histogram yHistogram;
@@ -57,7 +51,7 @@ index 6fe60e6..82cc7e0 100644
  	Size patternSize_;
  
 diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
-index 0d33594..8634573 100644
+index 5918024..96c5fae 100644
 --- a/src/libcamera/software_isp/swstats_cpu.cpp
 +++ b/src/libcamera/software_isp/swstats_cpu.cpp
 @@ -11,6 +11,8 @@
@@ -69,7 +63,7 @@ index 0d33594..8634573 100644
  #include <libcamera/base/log.h>
  
  #include <libcamera/stream.h>
-@@ -282,6 +284,9 @@ void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats)
+@@ -297,6 +299,9 @@ void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats)
  		std::swap(src0, src1);
  
  	SWSTATS_START_LINE_STATS(uint8_t)
@@ -79,7 +73,7 @@ index 0d33594..8634573 100644
  
  	/* x += 5 sample every other 2x2 block */
  	for (unsigned int x = 0; x < widthInBytes; x += 5) {
-@@ -291,10 +296,18 @@ void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats)
+@@ -306,10 +311,18 @@ void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats)
  		g2 = src1[x];
  		r = src1[x + 1];
  		g = (g + g2) / 2;
@@ -98,7 +92,7 @@ index 0d33594..8634573 100644
  	SWSTATS_FINISH_LINE_STATS()
  }
  
-@@ -308,6 +321,9 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
+@@ -323,6 +336,9 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
  		std::swap(src0, src1);
  
  	SWSTATS_START_LINE_STATS(uint8_t)
@@ -108,7 +102,7 @@ index 0d33594..8634573 100644
  
  	/* x += 5 sample every other 2x2 block */
  	for (unsigned int x = 0; x < widthInBytes; x += 5) {
-@@ -317,10 +333,18 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
+@@ -332,10 +348,18 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
  		r = src1[x];
  		g2 = src1[x + 1];
  		g = (g + g2) / 2;
@@ -127,29 +121,30 @@ index 0d33594..8634573 100644
  	SWSTATS_FINISH_LINE_STATS()
  }
  
-@@ -421,6 +445,8 @@ void SwStatsCpu::startFrame(uint32_t frame)
- 	for (auto &s : stats_) {
+@@ -437,6 +461,8 @@ void SwStatsCpu::startFrame(uint32_t frame)
  		s.sum_ = RGB<uint64_t>({ 0, 0, 0 });
+ 		s.numPixels_ = 0;
  		s.yHistogram.fill(0);
 +		s.sharpness = 0;
 +		s.sharpnessBase = 0;
  	}
  }
  
-@@ -438,8 +464,12 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
- 	if (valid) {
+@@ -455,9 +481,13 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
  		sharedStats_->sum_ = RGB<uint64_t>({ 0, 0, 0 });
+ 		sharedStats_->numPixels_ = 0;
  		sharedStats_->yHistogram.fill(0);
 +		sharedStats_->sharpness = 0;
 +		sharedStats_->sharpnessBase = 0;
  		for (const auto &s : stats_) {
  			sharedStats_->sum_ += s.sum_;
+ 			sharedStats_->numPixels_ += s.numPixels_;
 +			sharedStats_->sharpness += s.sharpness;
 +			sharedStats_->sharpnessBase += s.sharpnessBase;
  			for (unsigned int j = 0; j < SwIspStats::kYHistogramSize; j++)
  				sharedStats_->yHistogram[j] += s.yHistogram[j];
  		}
-@@ -611,6 +641,13 @@ void SwStatsCpu::setWindow(const Rectangle &window)
+@@ -629,6 +659,13 @@ void SwStatsCpu::setWindow(const Rectangle &window)
  	window_.width = (window_.width > xShift_ ? window_.width - xShift_ : 0);
  	window_.width &= ~(patternSize_.width - 1);
  	window_.height &= ~(patternSize_.height - 1);

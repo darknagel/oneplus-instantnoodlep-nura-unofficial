@@ -37,7 +37,13 @@
 | Reboot modes: `reboot bootloader` / `reboot recovery`; the unused PM8009 PON registered a second `qcom-pon` reboot mode (-EEXIST warning at boot) | works | kernel 0052, pmaports 0028 |
 | OIS of the main camera: onsemi LC898128 at 0x24, runs from its own firmware and reads the module gyroscope itself; new driver starts it whenever the sensor is powered, PM8009 L5 added for its supply | works | kernel 0053–0054, pmaports 0029 |
 | QRTR forwarded client deletions: accept notifications from a remote router for clients reached through the same transport endpoint | tested on IN2023 | kernel 0064, pmaports 0032 |
-| OIS of the telephoto camera (second LC898128, gets the gyroscope data from the main one), colour tuning of the front camera, calls | not done | – |
+| Compass: the MMC5603 sensor-direction of OnePlus's own device tree for this phone (19811) is 0, not 4; found by naorunaoru | works | kernel 0065, pmaports 0033 |
+| Lens noise: the AK7375 driver steps the lens to and from its rest position, which buzzes on this phone; a module parameter turns that off, as the vendor kernel does | works | kernel 0066, pmaports 0033, `system/ak7375.conf` |
+| OIS: the LC898128 firmware is busy for about 2 s after the servo command and drops the OIS enable meanwhile; it also reads the gyroscope only while the sensor DSP runs it | works | kernel 0067, pmaports 0033, `system/ois-gyro` |
+| libcamera 0.8.0: autofocus series ported to the renamed softisp IPA, IMX471 helper now upstream; autofocus rescans only after a 25 % change in four frames, so low light noise no longer makes the lens hunt | works | libcamera 0001–0006, pmaports 0034 |
+| Camera names (Main, Ultrawide, Telephoto, Colour Filter, Front) for PipeWire apps | works | `system/60-oneplus-instantnoodlep-cameras.conf` |
+| Proximity calibration from the Android `persist` partition, at first boot | works | `firmware/dsp-firmware.sh`, `sensors/setup-sensors.sh` |
+| OIS of the telephoto camera (second LC898128), colour tuning of the front camera, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
 `camnoc_axi_src` clock was never scaled, so full resolution RDI capture never completed a
@@ -86,7 +92,9 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   telephoto actuator bus, 0028 adds the reboot modes, 0029 adds the main camera
   OIS, 0030 fixes USB-C audio detection, 0031 takes the sensor layout from SMEM and
   starts the OIS only once the camera stays on, and 0032 accepts forwarded QRTR
-  client deletions from nodes on the same transport endpoint.
+  client deletions from nodes on the same transport endpoint. 0033 adds kernel patches
+  0065–0067, 0034 updates `temp/libcamera` to 0.8.0 with the autofocus series, and 0035
+  adds `temp/iio-sensor-proxy` 3.9 with the rotation fix and SSC support.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `firmware/` – boot service that copies SLPI, Venus and CDSP firmware from your own phone.
@@ -94,10 +102,14 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
 - `iio-sensor-proxy-patches/` – against https://gitlab.freedesktop.org/hadess/iio-sensor-proxy tag `3.9`.
 - `hexagonrpc-patches/` – against https://github.com/linux-msm/hexagonrpc tag `v0.5.0`.
   Adds a writable sensor registry (`-w DIR`), needed by the OnePlus sensor DSP.
-- `libcamera-patches/` – against libcamera v0.7.2 plus the patches already carried in
-  Nura `temp/libcamera`: sensor helpers for S5K3M5 and IMX471 (0001–0002) and the
-  autofocus series (0003–0005), sensor helpers for IMX586, IMX689 and GC5035 (0006) and a
-  shorter autofocus scan (0007).
+- `libcamera-patches/` – against libcamera v0.8.0 plus the patches already carried in
+  Nura `temp/libcamera`: sensor helpers for S5K3M5 (0001) and IMX586, IMX689 and GC5035
+  (0002), the autofocus series (0003–0005) and a shorter autofocus scan (0006). The IMX471
+  helper is upstream since v0.8.0. The autofocus tuning is in the sensor files of
+  pmaports patch 0034.
+- `system/` – small files the image adds: the `ois-gyro` service, which keeps the
+  gyroscope running while the main camera's OIS is active, the AK7375 option without the
+  lens ramp, and camera names for PipeWire.
 
 Kernel patches 0033–0041 are not my work either: they are the series "media: camss: Add
 support for C-PHY" v5 by David Heidelberg, with patches by Casey Connolly and Luca Weiss.

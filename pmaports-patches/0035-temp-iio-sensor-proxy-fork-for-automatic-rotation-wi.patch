@@ -1,0 +1,131 @@
+From 2e4715c6b784edd85695f8688dce3bb80e99737e Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 20:09:18 +0100
+Subject: [PATCH 35/35] temp/iio-sensor-proxy: fork for automatic rotation with
+ SSC sensors
+
+iio-sensor-proxy 3.9 loses a claim that arrives while it opens the SSC sensors at startup, so KWin never gets the accelerometer and the screen does not rotate. Start such sensors once they are open.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ...rs-claimed-while-they-were-being-ope.patch | 33 ++++++++++++
+ temp/iio-sensor-proxy/APKBUILD                | 51 +++++++++++++++++++
+ temp/iio-sensor-proxy/iio-sensor-proxy.initd  |  8 +++
+ 3 files changed, 92 insertions(+)
+ create mode 100644 temp/iio-sensor-proxy/0001-main-Start-sensors-claimed-while-they-were-being-ope.patch
+ create mode 100644 temp/iio-sensor-proxy/APKBUILD
+ create mode 100644 temp/iio-sensor-proxy/iio-sensor-proxy.initd
+
+diff --git a/temp/iio-sensor-proxy/0001-main-Start-sensors-claimed-while-they-were-being-ope.patch b/temp/iio-sensor-proxy/0001-main-Start-sensors-claimed-while-they-were-being-ope.patch
+new file mode 100644
+index 0000000000..c7da132167
+--- /dev/null
++++ b/temp/iio-sensor-proxy/0001-main-Start-sensors-claimed-while-they-were-being-ope.patch
+@@ -0,0 +1,33 @@
++From 029d2105cf73c03d24d03d21f6455da4bf956a07 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 9 Nov 2026 18:45:59 +0100
++Subject: [PATCH] main: Start sensors claimed while they were being opened
++
++The SSC drivers wait for QMI replies while they are opened at startup, which runs the main loop. A client that claims a sensor in that window, like KWin right after the proxy appears on the bus, gets no device yet, and the sensor is never started: the orientation stays "undefined" and the screen does not rotate. Start such sensors once they are open, like hotplugged ones.
++---
++ src/iio-sensor-proxy.c | 9 +++++++++
++ 1 file changed, 9 insertions(+)
++
++diff --git a/src/iio-sensor-proxy.c b/src/iio-sensor-proxy.c
++index 9c7e8cd..83b085c 100644
++--- a/src/iio-sensor-proxy.c
+++++ b/src/iio-sensor-proxy.c
++@@ -779,6 +779,15 @@ name_acquired_handler (GDBusConnection *connection,
++ 		}
++ 
++ 		DEVICE_FOR_TYPE(i) = sensor_device;
+++
+++		/* Opening a sensor can run the main loop (the SSC drivers wait
+++		 * for QMI replies), so a client may have claimed it already.
+++		 * Its Claim() found no device and returned, so start the sensor
+++		 * now, like for a hotplugged one. */
+++		if (g_hash_table_size (data->clients[i]) > 0) {
+++			data->sensor_startup_dbus_event_delayed[i] = TRUE;
+++			driver_set_polling (sensor_device, TRUE);
+++		}
++ 	}
++ 
++ 	if (!any_sensors_left (data))
++-- 
++2.43.0
++
+diff --git a/temp/iio-sensor-proxy/APKBUILD b/temp/iio-sensor-proxy/APKBUILD
+new file mode 100644
+index 0000000000..984f96a37e
+--- /dev/null
++++ b/temp/iio-sensor-proxy/APKBUILD
+@@ -0,0 +1,51 @@
++# Forked from Alpine: start SSC sensors that are claimed while they are
++# opened at startup, so that KWin and Phosh get the accelerometer (screen
++# rotation). From instantnoodlep-nura-unofficial, iio-sensor-proxy-patches/
++# Contributor: Rasmus Thomsen <oss@cogitri.dev>
++# Maintainer: Natanael Copa <ncopa@alpinelinux.org>
++pkgname=iio-sensor-proxy
++pkgver=3.9
++pkgrel=10
++pkgdesc="IIO sensors to D-Bus proxy"
++url="https://gitlab.freedesktop.org/hadess/iio-sensor-proxy"
++arch="all"
++license="GPL-2.0-or-later"
++depends="dbus"
++makedepends="
++	eudev-dev
++	glib-dev
++	libgudev-dev
++	meson
++	polkit-dev
++	libssc-dev
++	"
++subpackages="$pkgname-openrc $pkgname-systemd $pkgname-udev $pkgname-dbg"
++source="https://gitlab.freedesktop.org/hadess/iio-sensor-proxy/-/archive/$pkgver/iio-sensor-proxy-$pkgver.tar.gz
++	iio-sensor-proxy.initd
++	0001-main-Start-sensors-claimed-while-they-were-being-ope.patch
++	"
++
++build() {
++	abuild-meson \
++		-Db_lto=true \
++		-Dssc-support=enabled \
++		-Dsystemdsystemunitdir=/usr/lib/systemd/system \
++		. output
++	meson compile -C output
++}
++
++check() {
++	meson test --print-errorlogs -C output
++}
++
++package() {
++	DESTDIR="$pkgdir" meson install --no-rebuild -C output
++
++	install -Dm755 "$srcdir"/$pkgname.initd "$pkgdir"/etc/init.d/$pkgname
++}
++
++sha512sums="
++a89c842f8db2a1a36c1c7c990434bb57fd905224459170cba2ec56e79f1272acc4cac4221937704d5e9247f957d86fde716d25e2d1ccb80d88fa643b47edfda6  iio-sensor-proxy-3.9.tar.gz
++b25df94e249ca46fe96926e5a866c20dc913fa52a2d9259fb7a3594861c6b2f246fc7fef8a21f5b021f3a71401f734ae27210137b0b1917a7daaffb5e3221f2e  iio-sensor-proxy.initd
++bbd4a2b513ead697c3979b5fa3aeb1a675ce4a06fbb01679755fed532e53a7a02475bd6cd9c39a4cd90d89f96dcd6d3f49d657ca7a091c20492dd9a13bb8b4d7  0001-main-Start-sensors-claimed-while-they-were-being-ope.patch
++"
+diff --git a/temp/iio-sensor-proxy/iio-sensor-proxy.initd b/temp/iio-sensor-proxy/iio-sensor-proxy.initd
+new file mode 100644
+index 0000000000..cb3c73eb2d
+--- /dev/null
++++ b/temp/iio-sensor-proxy/iio-sensor-proxy.initd
+@@ -0,0 +1,8 @@
++#!/sbin/openrc-run
++
++supervisor=supervise-daemon
++command="/usr/libexec/iio-sensor-proxy"
++
++depend() {
++	need dbus
++}
+-- 
+2.43.0
+

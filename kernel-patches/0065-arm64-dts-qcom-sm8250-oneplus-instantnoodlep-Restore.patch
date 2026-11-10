@@ -1,0 +1,31 @@
+From 8440bde29fc24f4e9e7cba13c84a7443eadbcece Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 20:08:52 +0100
+Subject: [PATCH] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Restore the
+ MMC5603 direction
+
+OnePlus's own device tree for this phone (project 19811) gives the
+MMC5603 sensor-direction 0, not 4. With 0 the compass agrees with a
+reference within a few degrees after calibration. Found by naorunaoru.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index ed8053b85..00008acaf 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -415,7 +415,7 @@ msensor-1 {
+ 			sensor-type = <2>;
+ 			sensor-index = <1>;
+ 			sensor-name = <0x02>;
+-			sensor-direction = <4>;
++			sensor-direction = <0>;
+ 			parameter-number = <18>;
+ 			soft-mag-parameter = <0x2703 0 0x188 1 0x144 0 0x123 1 0x26db
+ 					      0 0x1df 0 0x6f 0 0x217 1 0x2b3e 0>;
+-- 
+2.43.0
+

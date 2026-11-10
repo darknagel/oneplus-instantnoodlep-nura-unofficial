@@ -1,0 +1,306 @@
+From c26f62e79d3086383ff3cc4350fd663f66388a51 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 20:09:17 +0100
+Subject: [PATCH 33/35] linux-postmarketos-qcom-sm8250: OnePlus 8 Pro compass
+ direction, quieter lenses, working OIS
+
+Restore the MMC5603 direction of the vendor device tree, make the stepped lens ramp of the AK7375 optional, and let the LC898128 OIS wait for its firmware between commands.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ ...m8250-oneplus-instantnoodlep-Restore.patch |  31 ++++++
+ ...c-ak7375-Make-the-lens-ramp-optional.patch |  99 +++++++++++++++++
+ ...28-Wait-for-the-firmware-between-com.patch | 105 ++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |   8 +-
+ 4 files changed, 242 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0065-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Restore.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0066-media-i2c-ak7375-Make-the-lens-ramp-optional.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0067-media-i2c-lc898128-Wait-for-the-firmware-between-com.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0065-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Restore.patch b/device/testing/linux-postmarketos-qcom-sm8250/0065-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Restore.patch
+new file mode 100644
+index 0000000000..dd3ac4cb2e
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0065-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Restore.patch
+@@ -0,0 +1,31 @@
++From 8440bde29fc24f4e9e7cba13c84a7443eadbcece Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 10 Nov 2026 20:08:52 +0100
++Subject: [PATCH] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Restore the
++ MMC5603 direction
++
++OnePlus's own device tree for this phone (project 19811) gives the
++MMC5603 sensor-direction 0, not 4. With 0 the compass agrees with a
++reference within a few degrees after calibration. Found by naorunaoru.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 2 +-
++ 1 file changed, 1 insertion(+), 1 deletion(-)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index ed8053b85..00008acaf 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -415,7 +415,7 @@ msensor-1 {
++ 			sensor-type = <2>;
++ 			sensor-index = <1>;
++ 			sensor-name = <0x02>;
++-			sensor-direction = <4>;
+++			sensor-direction = <0>;
++ 			parameter-number = <18>;
++ 			soft-mag-parameter = <0x2703 0 0x188 1 0x144 0 0x123 1 0x26db
++ 					      0 0x1df 0 0x6f 0 0x217 1 0x2b3e 0>;
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0066-media-i2c-ak7375-Make-the-lens-ramp-optional.patch b/device/testing/linux-postmarketos-qcom-sm8250/0066-media-i2c-ak7375-Make-the-lens-ramp-optional.patch
+new file mode 100644
+index 0000000000..fb8453466d
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0066-media-i2c-ak7375-Make-the-lens-ramp-optional.patch
+@@ -0,0 +1,99 @@
++From df5dd162022d87108da3fb796d6e61001e648277 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 10 Nov 2026 19:45:36 +0100
++Subject: [PATCH] media: i2c: ak7375: Make the lens ramp optional
++
++The lens is moved to and from its rest position in steps of 64 when the
++actuator is powered up and down. On the OnePlus 8 Pro the AK7377 buzzes
++audibly and visibly during these 40 ms; the vendor kernel instead just
++removes the power and lets the lens return on its own.
++
++Add module parameters to turn the ramp off and to change the time
++between the steps.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ drivers/media/i2c/ak7375.c | 26 ++++++++++++++++++++++----
++ 1 file changed, 22 insertions(+), 4 deletions(-)
++
++diff --git a/drivers/media/i2c/ak7375.c b/drivers/media/i2c/ak7375.c
++index d61cb8ab2..6720dd7d6 100644
++--- a/drivers/media/i2c/ak7375.c
+++++ b/drivers/media/i2c/ak7375.c
++@@ -5,6 +5,7 @@
++ #include <linux/delay.h>
++ #include <linux/i2c.h>
++ #include <linux/module.h>
+++#include <linux/moduleparam.h>
++ #include <linux/pm_runtime.h>
++ #include <linux/regulator/consumer.h>
++ #include <media/v4l2-ctrls.h>
++@@ -13,6 +14,14 @@
++ #define AK7375_RESUME_RETRIES		20
++ #define AK7375_RESUME_RETRY_US		2000
++ 
+++static bool ramp = true;
+++module_param(ramp, bool, 0644);
+++MODULE_PARM_DESC(ramp, "Move the lens to and from its rest position in steps");
+++
+++static unsigned int ramp_delay_us;
+++module_param(ramp_delay_us, uint, 0644);
+++MODULE_PARM_DESC(ramp_delay_us, "Time between the steps, 0 for the chip default");
+++
++ struct ak73xx_chipdef {
++ 	u8 reg_position;
++ 	u8 reg_cont;
++@@ -247,6 +256,13 @@ static void ak7375_remove(struct i2c_client *client)
++  * The lens position is gradually moved in units of ctrl_steps,
++  * to make the movements smoothly.
++  */
+++static void ak7375_step_delay(const struct ak73xx_chipdef *cdef)
+++{
+++	unsigned int us = ramp_delay_us ? ramp_delay_us : cdef->ctrl_delay_us;
+++
+++	usleep_range(us, us + 10);
+++}
+++
++ static int __maybe_unused ak7375_vcm_suspend(struct device *dev)
++ {
++ 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++@@ -257,14 +273,15 @@ static int __maybe_unused ak7375_vcm_suspend(struct device *dev)
++ 	if (!ak7375_dev->active)
++ 		return 0;
++ 
+++	/* Without the ramp, the lens returns to its rest position on its own */
++ 	for (val = ak7375_dev->focus->val & ~(cdef->ctrl_steps - 1);
++-	     val >= 0; val -= cdef->ctrl_steps) {
+++	     ramp && val >= 0; val -= cdef->ctrl_steps) {
++ 		ret = ak7375_i2c_write(ak7375_dev, cdef->reg_position,
++ 				       val << cdef->shift_pos, 2);
++ 		if (ret)
++ 			dev_err_once(dev, "%s I2C failure: %d\n",
++ 				     __func__, ret);
++-		usleep_range(cdef->ctrl_delay_us, cdef->ctrl_delay_us + 10);
+++		ak7375_step_delay(cdef);
++ 	}
++ 
++ 	if (cdef->has_standby) {
++@@ -333,7 +350,8 @@ static int __maybe_unused ak7375_vcm_resume(struct device *dev)
++ 	/* The first position write right after leaving standby can be NACKed */
++ 	usleep_range(cdef->ctrl_delay_us, cdef->ctrl_delay_us + 10);
++ 
++-	for (val = ak7375_dev->focus->val % cdef->ctrl_steps;
+++	for (val = ramp ? ak7375_dev->focus->val % cdef->ctrl_steps
+++		       : ak7375_dev->focus->val;
++ 	     val <= ak7375_dev->focus->val;
++ 	     val += cdef->ctrl_steps) {
++ 		ret = ak7375_i2c_write(ak7375_dev, cdef->reg_position,
++@@ -341,7 +359,7 @@ static int __maybe_unused ak7375_vcm_resume(struct device *dev)
++ 		if (ret)
++ 			dev_err_ratelimited(dev, "%s I2C failure: %d\n",
++ 						__func__, ret);
++-		usleep_range(cdef->ctrl_delay_us, cdef->ctrl_delay_us + 10);
+++		ak7375_step_delay(cdef);
++ 	}
++ 
++ 	ak7375_dev->active = true;
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0067-media-i2c-lc898128-Wait-for-the-firmware-between-com.patch b/device/testing/linux-postmarketos-qcom-sm8250/0067-media-i2c-lc898128-Wait-for-the-firmware-between-com.patch
+new file mode 100644
+index 0000000000..373bd02c47
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0067-media-i2c-lc898128-Wait-for-the-firmware-between-com.patch
+@@ -0,0 +1,105 @@
++From bcb7f344eee90b490fcb79c215209cff061d6264 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 10 Nov 2026 19:57:19 +0100
++Subject: [PATCH] media: i2c: lc898128: Wait for the firmware between commands
++
++The firmware works on the servo command for up to about two seconds and
++drops commands that arrive meanwhile, so the OIS enable that followed
++100 ms later never took effect. Poll the busy bit of the status register
++after every command instead of waiting a fixed time.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ drivers/media/i2c/lc898128.c | 50 +++++++++++++++++++++++++-----------
++ 1 file changed, 35 insertions(+), 15 deletions(-)
++
++diff --git a/drivers/media/i2c/lc898128.c b/drivers/media/i2c/lc898128.c
++index a2af6a55c..06d9f6af2 100644
++--- a/drivers/media/i2c/lc898128.c
+++++ b/drivers/media/i2c/lc898128.c
++@@ -17,6 +17,7 @@
++ #include <linux/device.h>
++ #include <linux/devm-helpers.h>
++ #include <linux/i2c.h>
+++#include <linux/jiffies.h>
++ #include <linux/module.h>
++ #include <linux/of.h>
++ #include <linux/pm_runtime.h>
++@@ -30,9 +31,12 @@
++ #define LC898128_SERVO_BOTH_ON		3
++ #define LC898128_CMD_OIS_ENABLE		0xf012
++ #define LC898128_CMD_GYRO_INIT		0xf015
+++#define LC898128_REG_STATUS		0xf100
+++#define LC898128_STATUS_BUSY		0x01000000
++ 
++ #define LC898128_READY_RETRIES		10
++ #define LC898128_START_DELAY_MS		1500
+++#define LC898128_BUSY_TIMEOUT_MS	3000
++ 
++ static bool enable = true;
++ module_param(enable, bool, 0644);
++@@ -112,30 +116,46 @@ static int lc898128_wait_ready(struct lc898128 *ois, u32 *version)
++ 	return ret;
++ }
++ 
++-static int lc898128_start(struct lc898128 *ois)
+++/* The firmware works on a command for up to about 2 s and drops new ones meanwhile */
+++static int lc898128_wait_idle(struct lc898128 *ois)
++ {
++-	u32 val;
+++	unsigned long timeout = jiffies + msecs_to_jiffies(LC898128_BUSY_TIMEOUT_MS);
+++	u32 status;
++ 	int ret;
++ 
++-	ret = lc898128_write(ois, LC898128_CMD_GYRO_INIT, ois->gyro);
++-	if (ret)
++-		return ret;
++-	usleep_range(5000, 6000);
+++	do {
+++		msleep(20);
+++		ret = lc898128_read(ois, LC898128_REG_STATUS, &status);
+++		if (ret)
+++			return ret;
+++		if (!(status & LC898128_STATUS_BUSY))
+++			return 0;
+++	} while (time_before(jiffies, timeout));
++ 
++-	ret = lc898128_write(ois, LC898128_CMD_SERVO, LC898128_SERVO_BOTH_ON);
++-	if (ret)
++-		return ret;
+++	return -ETIMEDOUT;
+++}
++ 
++-	/* The servo takes about 50 ms to settle, earlier OIS commands are lost */
++-	msleep(100);
+++static int lc898128_start(struct lc898128 *ois)
+++{
+++	u32 val;
+++	int ret;
++ 
++-	ret = lc898128_write(ois, LC898128_CMD_OIS_ENABLE, enable);
+++	ret = lc898128_write(ois, LC898128_CMD_GYRO_INIT, ois->gyro);
+++	if (!ret)
+++		ret = lc898128_wait_idle(ois);
+++	if (!ret)
+++		ret = lc898128_write(ois, LC898128_CMD_SERVO, LC898128_SERVO_BOTH_ON);
+++	if (!ret)
+++		ret = lc898128_wait_idle(ois);
+++	if (!ret)
+++		ret = lc898128_write(ois, LC898128_CMD_OIS_ENABLE, enable);
+++	if (!ret)
+++		ret = lc898128_wait_idle(ois);
+++	if (!ret)
+++		ret = lc898128_read(ois, LC898128_CMD_OIS_ENABLE, &val);
++ 	if (ret)
++ 		return ret;
++ 
++-	ret = lc898128_read(ois, LC898128_CMD_OIS_ENABLE, &val);
++-	if (ret)
++-		return ret;
++ 	if (val != enable)
++ 		dev_warn(&ois->client->dev, "OIS enable not taken: %u\n", val);
++ 
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 684c3a7303..4888972fda 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=63
++pkgrel=64
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -103,6 +103,9 @@ source="
+ 	0062-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Use-the.patch
+ 	0063-media-i2c-lc898128-Start-only-once-the-camera-stays-.patch
+ 	0064-net-qrtr-accept-forwarded-client-deletions.patch
++	0065-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Restore.patch
++	0066-media-i2c-ak7375-Make-the-lens-ramp-optional.patch
++	0067-media-i2c-lc898128-Wait-for-the-firmware-between-com.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -213,4 +216,7 @@ e1da3546326a1cfa5d66d8292ba363525e756ebd4d14c1d78776dbb0661d7bd0eacb9dfe01d4b65f
+ 2adf814a5fd6bf0e80511eae770045c72d4f4da475c576e7ec4c082f86b570b26a712b95985bfa874723c66b70d4121ec1b2c227aa0e4dba77a2dad4e9b09fcb  0062-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Use-the.patch
+ 320bb9712cb872fb376e041fa0c3f2c126958cd6c70f4e881d7e614af5046c7646570e5e0117c8393effc5bb409def875965f188aea9a9a0a441696a2394da24  0063-media-i2c-lc898128-Start-only-once-the-camera-stays-.patch
+ b07c37ddbe5df4bf69ca9209de22563ee5283b26ea13198fa85dc0297f5ecce11abf33d8700c37e4dbfa39efb64005c14ad1e0da18c4e40cfd5e4a02ef0a670d  0064-net-qrtr-accept-forwarded-client-deletions.patch
++3b67423fdba0bf8d0b997d5661f556ae301d93ef583380ae8eb46dbb5d8cdaae63ebb9ab40b011474a645fc3f84bea1bab346389b4f39eaa41283ba8c2adb932  0065-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Restore.patch
++9f80f586745e43679c74301ae49bd8c8b59d40577956d161e2d71076350351df571ddbb059c71f8e261f2adb00595560a8de7e8df793944ea9e9bc226720344e  0066-media-i2c-ak7375-Make-the-lens-ramp-optional.patch
++5993b3c0c6173ee375f521a8ba290aec7bb9799f25be721e4025c220a855640bbfc639846abe197e1db8105344567745ecbde2bf5aa5b2e6bb5daf4afeabdfae  0067-media-i2c-lc898128-Wait-for-the-firmware-between-com.patch
+ "
+-- 
+2.43.0
+

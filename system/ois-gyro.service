@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the gyroscope for the main camera OIS while it is active
+After=hexagonrpcd-sdsp.service
+Wants=hexagonrpcd-sdsp.service
+
+[Service]
+ExecStart=/bin/sh /usr/local/bin/ois-gyro
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

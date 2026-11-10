@@ -1,24 +1,17 @@
-From 233438e49e406309dea1ec1bed5ab6875def2d18 Mon Sep 17 00:00:00 2001
+From b58e25d99766e39cb08d81b494d1224d93944417 Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
-Date: Mon, 2 Nov 2026 22:46:28 +0100
-Subject: [PATCH 7/7] ipa: simple: af: Shorten the scan
+Date: Mon, 9 Nov 2026 23:32:38 +0100
+Subject: [PATCH 4/4] ipa: softisp: af: Shorten the scan
 
-Make the early stop of the coarse scan tunable, so that lenses with a
-flat curve past the peak stop as well, and only search half a coarse step
-around the peak in the fine scan. The coarse scan already measured the
-outer positions. Only stop early after a clear peak, the noise on a flat
-part of the curve looks like falling sharpness.
-
-Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
 ---
- src/ipa/simple/algorithms/af.cpp | 22 +++++++++++++++++-----
- src/ipa/simple/algorithms/af.h   |  4 ++++
+ src/ipa/softisp/algorithms/af.cpp | 22 +++++++++++++++++-----
+ src/ipa/softisp/algorithms/af.h   |  4 ++++
  2 files changed, 21 insertions(+), 5 deletions(-)
 
-diff --git a/src/ipa/simple/algorithms/af.cpp b/src/ipa/simple/algorithms/af.cpp
-index 4c2aa79..691da17 100755
---- a/src/ipa/simple/algorithms/af.cpp
-+++ b/src/ipa/simple/algorithms/af.cpp
+diff --git a/src/ipa/softisp/algorithms/af.cpp b/src/ipa/softisp/algorithms/af.cpp
+index 97b0cbe..59a555e 100755
+--- a/src/ipa/softisp/algorithms/af.cpp
++++ b/src/ipa/softisp/algorithms/af.cpp
 @@ -47,6 +47,9 @@ int Af::init(IPAContext &context, const ValueNode &tuningData)
  	changeThreshold_ = tuningData["changeThreshold"].get<double>(changeThreshold_);
  	changeCount_ = tuningData["changeCount"].get<uint32_t>(changeCount_);
@@ -80,10 +73,10 @@ index 4c2aa79..691da17 100755
  		return;
  
  	case State::Fine:
-diff --git a/src/ipa/simple/algorithms/af.h b/src/ipa/simple/algorithms/af.h
-index e7bcfa3..8e636b8 100755
---- a/src/ipa/simple/algorithms/af.h
-+++ b/src/ipa/simple/algorithms/af.h
+diff --git a/src/ipa/softisp/algorithms/af.h b/src/ipa/softisp/algorithms/af.h
+index 978100a..4864e61 100755
+--- a/src/ipa/softisp/algorithms/af.h
++++ b/src/ipa/softisp/algorithms/af.h
 @@ -46,6 +46,10 @@ private:
  	double changeThreshold_ = 0.3;
  	unsigned int changeCount_ = 3;

@@ -19,10 +19,11 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 | GPS | works, fix without SIM |
 | NFC | reading tags works |
 | Main, ultrawide, telephoto and front camera, colour filter camera | works, autofocus on main, ultrawide and telephoto |
-| Accelerometer, light, proximity, gyroscope | works, sensor files included since v2026.11.08, see [Sensors](#sensors) |
-| Magnetometer and compass | works in your own build with kernel 0046–0047 and the [compass fix](#compass); not in the image yet |
-| Video decoding and encoding in hardware (Venus: H.264, HEVC, VP9 and more) | works in your own build with [`firmware/`](firmware/); not in the image yet, see [Video](#video) |
-| Optical image stabilisation (OIS), main camera | works in your own build with kernel 0053–0054; not in the image yet |
+| Accelerometer, light, proximity, gyroscope | works, see [Sensors](#sensors) |
+| Magnetometer and compass | works since v2026.11.10, see [Compass](#compass) |
+| Automatic screen rotation (Phosh, Plasma Mobile) | works since v2026.11.10 |
+| Video decoding and encoding in hardware (Venus: H.264, HEVC, VP9 and more) | works since v2026.11.10, see [Video](#video) |
+| Optical image stabilisation (OIS), main camera | works since v2026.11.10 |
 | Calls, OIS of the telephoto camera | not done |
 
 Tested on one IN2023 (EU) with the Samsung AMS678UW01 panel. With another panel the screen
@@ -67,7 +68,8 @@ Then update with `apk update`, but read [Known issues](#known-issues) before `ap
 
 The image is console only. It contains no Wi-Fi networks, SSH keys, personal data or modem
 data. At first boot it fills the storage and copies the modem firmware from your phone's
-own partitions. Since v2026.11.08 it also contains OnePlus' sensor files, see [Sensors](#sensors).
+own partitions, since v2026.11.10 also the firmware of the sensor, video and compute DSPs.
+Since v2026.11.08 it contains OnePlus' sensor files, see [Sensors](#sensors).
 
 Windows does not set up the USB network? In Device Manager: right-click the device →
 **Update driver** → **Browse my computer** → **Let me pick** → **Network adapters** →
@@ -112,13 +114,14 @@ For apps: `apk add gpsd && gpsd -n /dev/gnss-sdx55`
 
 ### Sensors
 
-Since v2026.11.08 the image contains the files the sensor DSP needs: the DSP libraries and
-the sensor configuration from OxygenOS (SLPI firmware `SLPI.HY.3.0-00262`). These are
-proprietary OnePlus/Qualcomm files. The sensors work right after flashing, check with
+The image contains the sensor configuration from OxygenOS, proprietary OnePlus/Qualcomm
+files. Since v2026.11.10 the sensor DSP firmware (SLPI), its libraries and the proximity
+calibration come from your phone's own partitions at first boot, so they match the
+OxygenOS version your phone had. The sensors work right after flashing, check with
 `monitor-sensor`.
 
 Some bootloaders expose a 4684-byte sensor-information item and need kernel patch 0049,
-which is not in v2026.11.08. Without it, the kernel reports
+which images have since v2026.11.10. Without it, the kernel reports
 `unexpected SMEM item size 4684` and the accelerometer is unavailable.
 
 On an IN2023 with older stock firmware, the packaged SLPI firmware also prevented the
@@ -159,19 +162,9 @@ do not copy it from another unit.
 
 #### Compass
 
-The magnetometer needs kernel patches 0046–0047, which are not in an image yet. The compass
-heading (`monitor-sensor --compass`) also needs the gyro calibration in the sensor DSP, and
-OnePlus switches off the software motion detector that it depends on
-(`kona_amd_sw_disabled.json`). `setup-sensors` keeps it on. On v2026.11.08, as root:
-
-```sh
-C=/usr/share/qcom/sm8250/OnePlus/instantnoodlep/sensors/config
-rm $C/kona_amd_sw_disabled.json
-printf '{"config":{"hw_platform":["MTP"],"soc_id":["356"]},"sns_amd":{"owner":"sns_amd","enabled":{"ver":"0","type":"int","data":"1"}}}
-' > $C/mainline_amd_sw_enabled.json
-sed -i 's/"enabled":{"type":"int","ver":"0","data":"0"}/"enabled":{"type":"int","ver":"0","data":"1"}/' /var/lib/hexagonrpcd/sensors-registry/registry/sns_amd
-reboot
-```
+Since v2026.11.10 the compass works out of the box (`monitor-sensor --compass`). It needs the
+gyro calibration in the sensor DSP, which OnePlus switches off on SM8250
+(`kona_amd_sw_disabled.json`); the image and `setup-sensors` keep it on.
 
 The heading becomes accurate after the calibration has seen the phone moved around (a
 figure eight).
@@ -212,7 +205,7 @@ version you had. The `firmware/` service does the same at boot.
 The video codec (Venus) decodes H.264, HEVC, VP8, VP9 and more and encodes H.264 and HEVC,
 which saves a lot of CPU and battery. It needs firmware signed for this phone, which is on
 your phone's active `modem_a` or `modem_b` partition but may not be passed on.
-Images after v2026.11.08 copy it at first boot. On older images, as root:
+Since v2026.11.10 the image copies it at first boot. On older images, as root:
 
 ```sh
 apk add pil-squasher
@@ -271,24 +264,15 @@ Using the phone as a small server (screen off, charge limit, sleep):
 
 ## Known issues
 
-- **`apk upgrade` can remove fixes.** The patched kernel and ModemManager can be replaced when
-  Nura publishes a higher version. If modem or data break afterwards, this is the first thing
+- **`apk upgrade` can remove fixes.** The patched kernel, ModemManager, libcamera and
+  iio-sensor-proxy can be replaced when Nura publishes a higher version. If modem or data break afterwards, this is the first thing
   to check: `apk policy modemmanager`.
-- The screen does not rotate under Phosh or Plasma Mobile: iio-sensor-proxy 3.9 loses a
-  claim that arrives while it opens the sensors at boot, so the accelerometer never starts.
-  Fixed by [`iio-sensor-proxy-patches/`](iio-sensor-proxy-patches/), not in an image yet.
-  Build iio-sensor-proxy 3.9 with the patch and `-Dssc-support=enabled`.
 - Under Plasma Mobile the keyboard did not always open in the SIM PIN popup. Enter the PIN
   in the settings or with `mmcli`.
 - The front camera is too dark.
-- At some boots the front camera failed and all cameras were missing. Fixed by kernel
-  patches 0050–0051, which are not in an image yet. Until then:
-  `echo 23-0010 > /sys/bus/i2c/drivers/imx471/bind`
-- Ultrawide autofocus sometimes failed at boot and then stayed off until the next reboot
-  (`Lens initialisation failed` in libcamera). Fixed by kernel patch 0048, which is not in an
-  image yet.
-- Main and ultrawide camera: one mode each (4000x3000 at 30 fps) and contrast autofocus only,
-  which takes about 3 seconds and is not always right. Bright areas clip.
+- Main and ultrawide camera: one mode each (4000x3000 at 30 fps) and contrast autofocus only.
+  A scan takes about 4 seconds and moves the lens 11 to 14 times, which you can feel. It is
+  not always right. Bright areas clip.
 - After testing with `cam` or `media-ctl`, run `media-ctl -d /dev/media0 -r` (`apk add v4l-utils`),
   otherwise apps fail with `Resource busy`.
 - After a new libcamera: `systemctl --user restart pipewire wireplumber`
@@ -316,7 +300,8 @@ pmbootstrap flasher flash_kernel
 
 The pmaports patches already contain the kernel and libcamera patches. Your own image also
 needs the services from [`modem/`](modem/) and [`firmware/`](firmware/) (with `pil-squasher`) and the
-script from [`sensors/`](sensors/), which the prebuilt image already has (`firmware/` from the next image). Repository layout and how to change the kernel:
+script from [`sensors/`](sensors/), which the prebuilt image already has, and the files in
+[`system/`](system/). Repository layout and how to change the kernel:
 [`docs/patches.md`](docs/patches.md).
 
 ## License

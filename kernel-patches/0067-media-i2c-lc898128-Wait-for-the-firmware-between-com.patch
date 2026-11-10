@@ -1,0 +1,105 @@
+From bcb7f344eee90b490fcb79c215209cff061d6264 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 19:57:19 +0100
+Subject: [PATCH] media: i2c: lc898128: Wait for the firmware between commands
+
+The firmware works on the servo command for up to about two seconds and
+drops commands that arrive meanwhile, so the OIS enable that followed
+100 ms later never took effect. Poll the busy bit of the status register
+after every command instead of waiting a fixed time.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/media/i2c/lc898128.c | 50 +++++++++++++++++++++++++-----------
+ 1 file changed, 35 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/media/i2c/lc898128.c b/drivers/media/i2c/lc898128.c
+index a2af6a55c..06d9f6af2 100644
+--- a/drivers/media/i2c/lc898128.c
++++ b/drivers/media/i2c/lc898128.c
+@@ -17,6 +17,7 @@
+ #include <linux/device.h>
+ #include <linux/devm-helpers.h>
+ #include <linux/i2c.h>
++#include <linux/jiffies.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/pm_runtime.h>
+@@ -30,9 +31,12 @@
+ #define LC898128_SERVO_BOTH_ON		3
+ #define LC898128_CMD_OIS_ENABLE		0xf012
+ #define LC898128_CMD_GYRO_INIT		0xf015
++#define LC898128_REG_STATUS		0xf100
++#define LC898128_STATUS_BUSY		0x01000000
+ 
+ #define LC898128_READY_RETRIES		10
+ #define LC898128_START_DELAY_MS		1500
++#define LC898128_BUSY_TIMEOUT_MS	3000
+ 
+ static bool enable = true;
+ module_param(enable, bool, 0644);
+@@ -112,30 +116,46 @@ static int lc898128_wait_ready(struct lc898128 *ois, u32 *version)
+ 	return ret;
+ }
+ 
+-static int lc898128_start(struct lc898128 *ois)
++/* The firmware works on a command for up to about 2 s and drops new ones meanwhile */
++static int lc898128_wait_idle(struct lc898128 *ois)
+ {
+-	u32 val;
++	unsigned long timeout = jiffies + msecs_to_jiffies(LC898128_BUSY_TIMEOUT_MS);
++	u32 status;
+ 	int ret;
+ 
+-	ret = lc898128_write(ois, LC898128_CMD_GYRO_INIT, ois->gyro);
+-	if (ret)
+-		return ret;
+-	usleep_range(5000, 6000);
++	do {
++		msleep(20);
++		ret = lc898128_read(ois, LC898128_REG_STATUS, &status);
++		if (ret)
++			return ret;
++		if (!(status & LC898128_STATUS_BUSY))
++			return 0;
++	} while (time_before(jiffies, timeout));
+ 
+-	ret = lc898128_write(ois, LC898128_CMD_SERVO, LC898128_SERVO_BOTH_ON);
+-	if (ret)
+-		return ret;
++	return -ETIMEDOUT;
++}
+ 
+-	/* The servo takes about 50 ms to settle, earlier OIS commands are lost */
+-	msleep(100);
++static int lc898128_start(struct lc898128 *ois)
++{
++	u32 val;
++	int ret;
+ 
+-	ret = lc898128_write(ois, LC898128_CMD_OIS_ENABLE, enable);
++	ret = lc898128_write(ois, LC898128_CMD_GYRO_INIT, ois->gyro);
++	if (!ret)
++		ret = lc898128_wait_idle(ois);
++	if (!ret)
++		ret = lc898128_write(ois, LC898128_CMD_SERVO, LC898128_SERVO_BOTH_ON);
++	if (!ret)
++		ret = lc898128_wait_idle(ois);
++	if (!ret)
++		ret = lc898128_write(ois, LC898128_CMD_OIS_ENABLE, enable);
++	if (!ret)
++		ret = lc898128_wait_idle(ois);
++	if (!ret)
++		ret = lc898128_read(ois, LC898128_CMD_OIS_ENABLE, &val);
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = lc898128_read(ois, LC898128_CMD_OIS_ENABLE, &val);
+-	if (ret)
+-		return ret;
+ 	if (val != enable)
+ 		dev_warn(&ois->client->dev, "OIS enable not taken: %u\n", val);
+ 
+-- 
+2.43.0
+

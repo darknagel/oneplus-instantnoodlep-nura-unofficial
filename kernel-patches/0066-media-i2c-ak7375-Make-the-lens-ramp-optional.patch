@@ -1,0 +1,99 @@
+From df5dd162022d87108da3fb796d6e61001e648277 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 19:45:36 +0100
+Subject: [PATCH] media: i2c: ak7375: Make the lens ramp optional
+
+The lens is moved to and from its rest position in steps of 64 when the
+actuator is powered up and down. On the OnePlus 8 Pro the AK7377 buzzes
+audibly and visibly during these 40 ms; the vendor kernel instead just
+removes the power and lets the lens return on its own.
+
+Add module parameters to turn the ramp off and to change the time
+between the steps.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/media/i2c/ak7375.c | 26 ++++++++++++++++++++++----
+ 1 file changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/media/i2c/ak7375.c b/drivers/media/i2c/ak7375.c
+index d61cb8ab2..6720dd7d6 100644
+--- a/drivers/media/i2c/ak7375.c
++++ b/drivers/media/i2c/ak7375.c
+@@ -5,6 +5,7 @@
+ #include <linux/delay.h>
+ #include <linux/i2c.h>
+ #include <linux/module.h>
++#include <linux/moduleparam.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regulator/consumer.h>
+ #include <media/v4l2-ctrls.h>
+@@ -13,6 +14,14 @@
+ #define AK7375_RESUME_RETRIES		20
+ #define AK7375_RESUME_RETRY_US		2000
+ 
++static bool ramp = true;
++module_param(ramp, bool, 0644);
++MODULE_PARM_DESC(ramp, "Move the lens to and from its rest position in steps");
++
++static unsigned int ramp_delay_us;
++module_param(ramp_delay_us, uint, 0644);
++MODULE_PARM_DESC(ramp_delay_us, "Time between the steps, 0 for the chip default");
++
+ struct ak73xx_chipdef {
+ 	u8 reg_position;
+ 	u8 reg_cont;
+@@ -247,6 +256,13 @@ static void ak7375_remove(struct i2c_client *client)
+  * The lens position is gradually moved in units of ctrl_steps,
+  * to make the movements smoothly.
+  */
++static void ak7375_step_delay(const struct ak73xx_chipdef *cdef)
++{
++	unsigned int us = ramp_delay_us ? ramp_delay_us : cdef->ctrl_delay_us;
++
++	usleep_range(us, us + 10);
++}
++
+ static int __maybe_unused ak7375_vcm_suspend(struct device *dev)
+ {
+ 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+@@ -257,14 +273,15 @@ static int __maybe_unused ak7375_vcm_suspend(struct device *dev)
+ 	if (!ak7375_dev->active)
+ 		return 0;
+ 
++	/* Without the ramp, the lens returns to its rest position on its own */
+ 	for (val = ak7375_dev->focus->val & ~(cdef->ctrl_steps - 1);
+-	     val >= 0; val -= cdef->ctrl_steps) {
++	     ramp && val >= 0; val -= cdef->ctrl_steps) {
+ 		ret = ak7375_i2c_write(ak7375_dev, cdef->reg_position,
+ 				       val << cdef->shift_pos, 2);
+ 		if (ret)
+ 			dev_err_once(dev, "%s I2C failure: %d\n",
+ 				     __func__, ret);
+-		usleep_range(cdef->ctrl_delay_us, cdef->ctrl_delay_us + 10);
++		ak7375_step_delay(cdef);
+ 	}
+ 
+ 	if (cdef->has_standby) {
+@@ -333,7 +350,8 @@ static int __maybe_unused ak7375_vcm_resume(struct device *dev)
+ 	/* The first position write right after leaving standby can be NACKed */
+ 	usleep_range(cdef->ctrl_delay_us, cdef->ctrl_delay_us + 10);
+ 
+-	for (val = ak7375_dev->focus->val % cdef->ctrl_steps;
++	for (val = ramp ? ak7375_dev->focus->val % cdef->ctrl_steps
++		       : ak7375_dev->focus->val;
+ 	     val <= ak7375_dev->focus->val;
+ 	     val += cdef->ctrl_steps) {
+ 		ret = ak7375_i2c_write(ak7375_dev, cdef->reg_position,
+@@ -341,7 +359,7 @@ static int __maybe_unused ak7375_vcm_resume(struct device *dev)
+ 		if (ret)
+ 			dev_err_ratelimited(dev, "%s I2C failure: %d\n",
+ 						__func__, ret);
+-		usleep_range(cdef->ctrl_delay_us, cdef->ctrl_delay_us + 10);
++		ak7375_step_delay(cdef);
+ 	}
+ 
+ 	ak7375_dev->active = true;
+-- 
+2.43.0
+

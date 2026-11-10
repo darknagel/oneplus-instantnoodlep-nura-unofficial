@@ -1,26 +1,21 @@
-From 985fa3d2fead7bb237921d521bbb5db37d72979e Mon Sep 17 00:00:00 2001
+From b3ebf74b0e02eb041c332f9b6dbec9ed0072b082 Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
-Date: Tue, 27 Oct 2026 18:04:59 +0100
-Subject: [PATCH 4/5] libcamera: simple: Pass focus lens controls to and from
+Date: Mon, 9 Nov 2026 23:31:59 +0100
+Subject: [PATCH 2/4] libcamera: simple: Pass focus lens controls to and from
  the soft IPA
 
-Give the soft IPA the controls of the focus lens of the sensor, if there is
-one, and apply the lens controls it returns along with the sensor
-controls.
-
-Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
 ---
  .../libcamera/internal/software_isp/software_isp.h  |  5 +++--
- include/libcamera/ipa/soft.mojom                    |  4 +++-
+ include/libcamera/ipa/softisp.mojom                 |  4 +++-
  src/libcamera/pipeline/simple/simple.cpp            | 13 +++++++++++--
  src/libcamera/software_isp/software_isp.cpp         |  9 +++++----
  4 files changed, 22 insertions(+), 9 deletions(-)
 
 diff --git a/include/libcamera/internal/software_isp/software_isp.h b/include/libcamera/internal/software_isp/software_isp.h
-index 4f72dce..2d0dba9 100644
+index 12e70ec..10e5aa5 100644
 --- a/include/libcamera/internal/software_isp/software_isp.h
 +++ b/include/libcamera/internal/software_isp/software_isp.h
-@@ -86,11 +86,12 @@ public:
+@@ -87,11 +87,12 @@ public:
  	Signal<FrameBuffer *> outputBufferReady;
  	Signal<uint32_t, uint32_t> ispStatsReady;
  	Signal<uint32_t, const ControlList &> metadataReady;
@@ -28,17 +23,17 @@ index 4f72dce..2d0dba9 100644
 +	Signal<const ControlList &, const ControlList &> setSensorControls;
  
  private:
- 	void saveIspParams();
+ 	void saveIspParams(uint32_t frame);
 -	void setSensorCtrls(const ControlList &sensorControls);
 +	void setSensorCtrls(const ControlList &sensorControls,
 +			    const ControlList &lensControls);
  	void statsReady(uint32_t frame, uint32_t bufferId);
  	void inputReady(FrameBuffer *input);
  	void outputReady(FrameBuffer *output);
-diff --git a/include/libcamera/ipa/soft.mojom b/include/libcamera/ipa/soft.mojom
-index 77328c5..a6e3ed5 100644
---- a/include/libcamera/ipa/soft.mojom
-+++ b/include/libcamera/ipa/soft.mojom
+diff --git a/include/libcamera/ipa/softisp.mojom b/include/libcamera/ipa/softisp.mojom
+index 52f60d9..ad67aa3 100644
+--- a/include/libcamera/ipa/softisp.mojom
++++ b/include/libcamera/ipa/softisp.mojom
 @@ -10,6 +10,7 @@ import "include/libcamera/ipa/core.mojom";
  
  struct IPAConfigInfo {
@@ -46,22 +41,22 @@ index 77328c5..a6e3ed5 100644
 +	libcamera.ControlInfoMap lensControls;
  };
  
- interface IPASoftInterface {
-@@ -32,7 +33,8 @@ interface IPASoftInterface {
+ interface IPASoftIspInterface {
+@@ -35,7 +36,8 @@ interface IPASoftIspInterface {
  };
  
- interface IPASoftEventInterface {
+ interface IPASoftIspEventInterface {
 -	setSensorControls(libcamera.ControlList sensorControls);
 +	setSensorControls(libcamera.ControlList sensorControls,
 +			  libcamera.ControlList lensControls);
- 	setIspParams();
+ 	paramsComputed(uint32 frame);
  	metadataReady(uint32 frame, libcamera.ControlList metadata);
  };
 diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
-index e26f438..5ae8d70 100644
+index 35e0664..002b222 100644
 --- a/src/libcamera/pipeline/simple/simple.cpp
 +++ b/src/libcamera/pipeline/simple/simple.cpp
-@@ -33,6 +33,7 @@
+@@ -34,6 +34,7 @@
  #include <libcamera/stream.h>
  
  #include "libcamera/internal/camera.h"
@@ -69,7 +64,7 @@ index e26f438..5ae8d70 100644
  #include "libcamera/internal/camera_manager.h"
  #include "libcamera/internal/camera_sensor.h"
  #include "libcamera/internal/camera_sensor_properties.h"
-@@ -371,7 +372,8 @@ private:
+@@ -374,7 +375,8 @@ private:
  
  	void ispStatsReady(uint32_t frame, uint32_t bufferId);
  	void metadataReady(uint32_t frame, const ControlList &metadata);
@@ -79,7 +74,7 @@ index e26f438..5ae8d70 100644
  };
  
  class SimpleCameraConfiguration : public CameraConfiguration
-@@ -1041,8 +1043,13 @@ void SimpleCameraData::metadataReady(uint32_t frame, const ControlList &metadata
+@@ -1046,8 +1048,13 @@ void SimpleCameraData::metadataReady(uint32_t frame, const ControlList &metadata
  	tryCompleteRequest(info->request);
  }
  
@@ -94,17 +89,17 @@ index e26f438..5ae8d70 100644
  	delayedCtrls_->push(sensorControls);
  	/*
  	 * Directly apply controls now if there is no frameStart signal.
-@@ -1605,6 +1612,8 @@ int SimplePipelineHandler::configure(Camera *camera, CameraConfiguration *c)
+@@ -1652,6 +1659,8 @@ int SimplePipelineHandler::configure(Camera *camera, CameraConfiguration *c)
  	} else {
- 		ipa::soft::IPAConfigInfo configInfo;
+ 		ipa::softisp::IPAConfigInfo configInfo;
  		configInfo.sensorControls = data->sensor_->controls();
 +		if (CameraLens *lens = data->sensor_->focusLens())
 +			configInfo.lensControls = lens->controls();
- 		return data->swIsp_->configure(inputCfg, outputCfgs, configInfo);
+ 		return data->swIsp_->configure(inputCfg, outputCfgs, configInfo, &data->controlInfo_);
  	}
  }
 diff --git a/src/libcamera/software_isp/software_isp.cpp b/src/libcamera/software_isp/software_isp.cpp
-index 74973d9..c3b2d7e 100644
+index 71b95a1..8ba8cad 100644
 --- a/src/libcamera/software_isp/software_isp.cpp
 +++ b/src/libcamera/software_isp/software_isp.cpp
 @@ -69,8 +69,8 @@ LOG_DEFINE_CATEGORY(SoftwareIsp)
@@ -118,7 +113,7 @@ index 74973d9..c3b2d7e 100644
   */
  
  /**
-@@ -445,9 +445,10 @@ void SoftwareIsp::saveIspParams()
+@@ -456,9 +456,10 @@ void SoftwareIsp::saveIspParams([[maybe_unused]] uint32_t frame)
  	debayerParams_ = *sharedParams_;
  }
  
