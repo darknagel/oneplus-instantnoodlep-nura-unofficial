@@ -1,0 +1,46 @@
+From 24b5eb6ac4de5fd45937259cdf05254440ff0b03 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 10:33:14 +0000
+Subject: [PATCH] temp/modemmanager: do not build the MediaTek and Rolling
+ plugins
+
+The MTK shared module references Fibocom symbols, but shared modules
+are loaded in filesystem enumeration order. On musl, loading MTK first
+fails symbol resolution and subsequently prevents the MTK and Rolling
+plugins from loading.
+
+This phone has a Qualcomm modem. Leave out the three plugins that pull
+in the MTK shared module instead of changing the loader. Advance to
+release 4.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ temp/modemmanager/APKBUILD | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/temp/modemmanager/APKBUILD b/temp/modemmanager/APKBUILD
+index 1383f9c401..7c52c17517 100644
+--- a/temp/modemmanager/APKBUILD
++++ b/temp/modemmanager/APKBUILD
+@@ -3,7 +3,7 @@
+ maintainer="Achill Gilgenast <achill@achill.org>"
+ pkgname=modemmanager
+ pkgver=1.25.95_git20261005
+-pkgrel=3
++pkgrel=4
+ _commit=7f0bf17ab518cd78925cf7e53cc0d5c42f88b41a
+ pkgdesc="ModemManager library"
+ url="https://www.freedesktop.org/wiki/Software/ModemManager"
+@@ -67,6 +67,9 @@ build() {
+ 		-Dsystemd_journal=false \
+ 		-Dsystemd_suspend_resume=true \
+ 		-Dvapi=true \
++		-Dplugin_mtk=disabled \
++		-Dplugin_mtk_legacy=disabled \
++		-Dplugin_rolling=disabled \
+ 		. output
+ 	meson compile -C output
+ }
+-- 
+2.51.2
+
