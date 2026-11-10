@@ -140,6 +140,23 @@ letting the kernel restart it forever, which used to break most of the phone
 ([#1](../../issues/1)). The sensors are then off until the next reboot,
 `journalctl -u slpi-guard` shows if it stepped in.
 
+#### Proximity
+
+If proximity stays "far" when covered, the generated sensor registry may have zeroed
+calibration offsets. `setup-sensors` now imports this phone's factory calibration from
+the preserved Android `persist` partition, mounted read-only without journal replay.
+For an existing installation, download the updated script and run as root:
+
+```sh
+wget -O /tmp/setup-sensors.sh https://raw.githubusercontent.com/darknagel/oneplus-instantnoodlep-nura-unofficial/main/sensors/setup-sensors.sh
+sh /tmp/setup-sensors.sh --proximity-calibration && reboot
+```
+
+This backs up the current proximity calibration and leaves other sensor settings intact;
+the sensor service stays stopped until reboot. Check with `monitor-sensor --proximity`
+while covering and uncovering the earpiece area. Calibration is specific to each phone;
+do not copy it from another unit.
+
 #### Compass
 
 The magnetometer needs kernel patches 0046–0047, which are not in an image yet. The compass
