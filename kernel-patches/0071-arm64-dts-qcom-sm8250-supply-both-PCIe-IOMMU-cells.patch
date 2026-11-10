@@ -1,0 +1,55 @@
+From a03b296c8ac225a86163d377f10ee4f05596678b Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 10:08:51 +0000
+Subject: [PATCH] arm64: dts: qcom: sm8250: supply both PCIe IOMMU cells
+
+The application SMMU declares two IOMMU cells, but the PCIe maps
+supply only the stream ID. Add an explicit zero stream-match mask
+to each mapping, preserving the existing IDs and single-RID ranges.
+This avoids the malformed-map compatibility fallback at boot.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ arch/arm64/boot/dts/qcom/sm8250.dtsi | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250.dtsi b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+index 20764b606..30c37adaa 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+@@ -2197,8 +2197,8 @@ pcie0: pcie@1c00000 {
+ 				      "tbu",
+ 				      "ddrss_sf_tbu";
+ 
+-			iommu-map = <0x0   &apps_smmu 0x1c00 0x1>,
+-				    <0x100 &apps_smmu 0x1c01 0x1>;
++			iommu-map = <0x0   &apps_smmu 0x1c00 0x0 0x1>,
++				    <0x100 &apps_smmu 0x1c01 0x0 0x1>;
+ 
+ 			resets = <&gcc GCC_PCIE_0_BCR>;
+ 			reset-names = "pci";
+@@ -2324,8 +2324,8 @@ pcie1: pcie@1c08000 {
+ 			assigned-clocks = <&gcc GCC_PCIE_1_AUX_CLK>;
+ 			assigned-clock-rates = <19200000>;
+ 
+-			iommu-map = <0x0   &apps_smmu 0x1c80 0x1>,
+-				    <0x100 &apps_smmu 0x1c81 0x1>;
++			iommu-map = <0x0   &apps_smmu 0x1c80 0x0 0x1>,
++				    <0x100 &apps_smmu 0x1c81 0x0 0x1>;
+ 
+ 			resets = <&gcc GCC_PCIE_1_BCR>;
+ 			reset-names = "pci";
+@@ -2451,8 +2451,8 @@ pcie2: pcie@1c10000 {
+ 			assigned-clocks = <&gcc GCC_PCIE_2_AUX_CLK>;
+ 			assigned-clock-rates = <19200000>;
+ 
+-			iommu-map = <0x0   &apps_smmu 0x1d00 0x1>,
+-				    <0x100 &apps_smmu 0x1d01 0x1>;
++			iommu-map = <0x0   &apps_smmu 0x1d00 0x0 0x1>,
++				    <0x100 &apps_smmu 0x1d01 0x0 0x1>;
+ 
+ 			resets = <&gcc GCC_PCIE_2_BCR>;
+ 			reset-names = "pci";
+-- 
+2.51.2
+

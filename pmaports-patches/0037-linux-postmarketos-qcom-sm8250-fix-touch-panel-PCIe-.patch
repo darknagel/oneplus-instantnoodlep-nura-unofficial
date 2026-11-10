@@ -1,0 +1,329 @@
+From 521ae5dbb1e24d8a99d810972ba85c2856e643e2 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 10:33:14 +0000
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: fix touch, panel, PCIe, fbdev
+ and USB telemetry
+
+Add kernel patches 0069-0073: correct the touchscreen axis check, panel
+brightness ordering, PCIe IOMMU cells, the fbdev mapping flag and USB
+input readings while charging is paused. Advance to release 69. Apply
+after 0036.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ ...lidate-the-initialized-multitouch-ax.patch | 33 ++++++++
+ ...g-ams678uw01-defer-brightness-access.patch | 75 +++++++++++++++++++
+ ...-sm8250-supply-both-PCIe-IOMMU-cells.patch | 55 ++++++++++++++
+ ...e-fbdev-GEM-mapping-as-system-memory.patch | 30 ++++++++
+ ...m_pm8150b-read-USB-telemetry-while-o.patch | 42 +++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   | 12 ++-
+ 6 files changed, 246 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0069-Input-s6sy761-validate-the-initialized-multitouch-ax.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0070-drm-panel-samsung-ams678uw01-defer-brightness-access.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0071-arm64-dts-qcom-sm8250-supply-both-PCIe-IOMMU-cells.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0072-drm-msm-mark-the-fbdev-GEM-mapping-as-system-memory.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0073-power-supply-qcom_pm8150b-read-USB-telemetry-while-o.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0069-Input-s6sy761-validate-the-initialized-multitouch-ax.patch b/device/testing/linux-postmarketos-qcom-sm8250/0069-Input-s6sy761-validate-the-initialized-multitouch-ax.patch
+new file mode 100644
+index 0000000000..f8618a26e9
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0069-Input-s6sy761-validate-the-initialized-multitouch-ax.patch
+@@ -0,0 +1,33 @@
++From e47ddb4bc0b954f35be7fb1a6b9a12a0a38df9a2 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 10:00:31 +0000
++Subject: [PATCH] Input: s6sy761 - validate the initialized multitouch axes
++
++The driver initializes ABS_MT_POSITION_X/Y before parsing touchscreen
++properties. ABS_X/Y are populated later by input_mt_init_slots, so
++checking them before that call emits a warning even when both dimensions
++are valid. Check the multitouch axes that were actually initialized.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/input/touchscreen/s6sy761.c | 4 ++--
++ 1 file changed, 2 insertions(+), 2 deletions(-)
++
++diff --git a/drivers/input/touchscreen/s6sy761.c b/drivers/input/touchscreen/s6sy761.c
++index 0f24a9b73..3d8fcfa7f 100644
++--- a/drivers/input/touchscreen/s6sy761.c
+++++ b/drivers/input/touchscreen/s6sy761.c
++@@ -439,8 +439,8 @@ static int s6sy761_probe(struct i2c_client *client)
++ 
++ 	touchscreen_parse_properties(sdata->input, true, &sdata->prop);
++ 
++-	if (!input_abs_get_max(sdata->input, ABS_X) ||
++-	    !input_abs_get_max(sdata->input, ABS_Y)) {
+++	if (!input_abs_get_max(sdata->input, ABS_MT_POSITION_X) ||
+++	    !input_abs_get_max(sdata->input, ABS_MT_POSITION_Y)) {
++ 		dev_warn(&client->dev, "the axis have not been set\n");
++ 	}
++ 
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0070-drm-panel-samsung-ams678uw01-defer-brightness-access.patch b/device/testing/linux-postmarketos-qcom-sm8250/0070-drm-panel-samsung-ams678uw01-defer-brightness-access.patch
+new file mode 100644
+index 0000000000..eb1cde0757
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0070-drm-panel-samsung-ams678uw01-defer-brightness-access.patch
+@@ -0,0 +1,75 @@
++From 9838910fc4eeb5f7c44263f4f5fb80c33b4a6592 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 10:00:31 +0000
++Subject: [PATCH] drm/panel: samsung-ams678uw01: defer brightness access until
++ prepared
++
++Backlight sysfs can be accessed as soon as the device is registered,
++before the DSI host and panel are ready. Cache early brightness writes
++and let drm_panel_enable apply them through the backlight core. Return
++the cached brightness while unprepared instead of issuing a DCS read.
++
++Restore the original DSI mode flags after both successful and failed
++brightness transfers; a failed transfer must not leave LPM disabled.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ .../gpu/drm/panel/panel-samsung-ams678uw01.c  | 23 +++++++++++--------
++ 1 file changed, 14 insertions(+), 9 deletions(-)
++
++diff --git a/drivers/gpu/drm/panel/panel-samsung-ams678uw01.c b/drivers/gpu/drm/panel/panel-samsung-ams678uw01.c
++index 6229e41a7..200774717 100644
++--- a/drivers/gpu/drm/panel/panel-samsung-ams678uw01.c
+++++ b/drivers/gpu/drm/panel/panel-samsung-ams678uw01.c
++@@ -330,34 +330,39 @@ static const struct drm_panel_funcs ams678uw01_panel_funcs = {
++ static int ams678uw01_bl_update_status(struct backlight_device *bl)
++ {
++ 	struct mipi_dsi_device *dsi = bl_get_data(bl);
+++	struct ams678uw01 *ctx = mipi_dsi_get_drvdata(dsi);
+++	unsigned long mode_flags = dsi->mode_flags;
++ 	u16 brightness = backlight_get_brightness(bl);
++ 	int ret;
++ 
++-	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+++	/* The backlight core applies the cached value when enabling the panel. */
+++	if (!ctx->panel.prepared)
+++		return 0;
++ 
+++	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++ 	ret = mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
++-	if (ret < 0)
++-		return ret;
++-
++-	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+++	dsi->mode_flags = mode_flags;
++ 
++-	return 0;
+++	return ret;
++ }
++ 
++ static int ams678uw01_bl_get_brightness(struct backlight_device *bl)
++ {
++ 	struct mipi_dsi_device *dsi = bl_get_data(bl);
+++	struct ams678uw01 *ctx = mipi_dsi_get_drvdata(dsi);
+++	unsigned long mode_flags = dsi->mode_flags;
++ 	u16 brightness;
++ 	int ret;
++ 
++-	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+++	if (!ctx->panel.prepared)
+++		return bl->props.brightness;
++ 
+++	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++ 	ret = mipi_dsi_dcs_get_display_brightness_large(dsi, &brightness);
+++	dsi->mode_flags = mode_flags;
++ 	if (ret < 0)
++ 		return ret;
++ 
++-	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++-
++ 	return brightness;
++ }
++ 
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0071-arm64-dts-qcom-sm8250-supply-both-PCIe-IOMMU-cells.patch b/device/testing/linux-postmarketos-qcom-sm8250/0071-arm64-dts-qcom-sm8250-supply-both-PCIe-IOMMU-cells.patch
+new file mode 100644
+index 0000000000..4f41476db0
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0071-arm64-dts-qcom-sm8250-supply-both-PCIe-IOMMU-cells.patch
+@@ -0,0 +1,55 @@
++From a03b296c8ac225a86163d377f10ee4f05596678b Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 10:08:51 +0000
++Subject: [PATCH] arm64: dts: qcom: sm8250: supply both PCIe IOMMU cells
++
++The application SMMU declares two IOMMU cells, but the PCIe maps
++supply only the stream ID. Add an explicit zero stream-match mask
++to each mapping, preserving the existing IDs and single-RID ranges.
++This avoids the malformed-map compatibility fallback at boot.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ arch/arm64/boot/dts/qcom/sm8250.dtsi | 12 ++++++------
++ 1 file changed, 6 insertions(+), 6 deletions(-)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250.dtsi b/arch/arm64/boot/dts/qcom/sm8250.dtsi
++index 20764b606..30c37adaa 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250.dtsi
+++++ b/arch/arm64/boot/dts/qcom/sm8250.dtsi
++@@ -2197,8 +2197,8 @@ pcie0: pcie@1c00000 {
++ 				      "tbu",
++ 				      "ddrss_sf_tbu";
++ 
++-			iommu-map = <0x0   &apps_smmu 0x1c00 0x1>,
++-				    <0x100 &apps_smmu 0x1c01 0x1>;
+++			iommu-map = <0x0   &apps_smmu 0x1c00 0x0 0x1>,
+++				    <0x100 &apps_smmu 0x1c01 0x0 0x1>;
++ 
++ 			resets = <&gcc GCC_PCIE_0_BCR>;
++ 			reset-names = "pci";
++@@ -2324,8 +2324,8 @@ pcie1: pcie@1c08000 {
++ 			assigned-clocks = <&gcc GCC_PCIE_1_AUX_CLK>;
++ 			assigned-clock-rates = <19200000>;
++ 
++-			iommu-map = <0x0   &apps_smmu 0x1c80 0x1>,
++-				    <0x100 &apps_smmu 0x1c81 0x1>;
+++			iommu-map = <0x0   &apps_smmu 0x1c80 0x0 0x1>,
+++				    <0x100 &apps_smmu 0x1c81 0x0 0x1>;
++ 
++ 			resets = <&gcc GCC_PCIE_1_BCR>;
++ 			reset-names = "pci";
++@@ -2451,8 +2451,8 @@ pcie2: pcie@1c10000 {
++ 			assigned-clocks = <&gcc GCC_PCIE_2_AUX_CLK>;
++ 			assigned-clock-rates = <19200000>;
++ 
++-			iommu-map = <0x0   &apps_smmu 0x1d00 0x1>,
++-				    <0x100 &apps_smmu 0x1d01 0x1>;
+++			iommu-map = <0x0   &apps_smmu 0x1d00 0x0 0x1>,
+++				    <0x100 &apps_smmu 0x1d01 0x0 0x1>;
++ 
++ 			resets = <&gcc GCC_PCIE_2_BCR>;
++ 			reset-names = "pci";
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0072-drm-msm-mark-the-fbdev-GEM-mapping-as-system-memory.patch b/device/testing/linux-postmarketos-qcom-sm8250/0072-drm-msm-mark-the-fbdev-GEM-mapping-as-system-memory.patch
+new file mode 100644
+index 0000000000..903c4356eb
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0072-drm-msm-mark-the-fbdev-GEM-mapping-as-system-memory.patch
+@@ -0,0 +1,30 @@
++From a056c0f9008f4d1dd2a51e38421bb262b703bef1 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 10:23:14 +0000
++Subject: [PATCH] drm/msm: mark the fbdev GEM mapping as system memory
++
++The fbdev buffer is mapped with msm_gem_get_vaddr and uses the
++system-memory deferred drawing helpers. Set FBINFO_VIRTFB to describe
++that mapping, as the other DRM system-memory fbdev helpers do.
++This avoids the framebuffer address-space warning during console draws.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/gpu/drm/msm/msm_fbdev.c | 1 +
++ 1 file changed, 1 insertion(+)
++
++diff --git a/drivers/gpu/drm/msm/msm_fbdev.c b/drivers/gpu/drm/msm/msm_fbdev.c
++index fd19995b1..d05234bdd 100644
++--- a/drivers/gpu/drm/msm/msm_fbdev.c
+++++ b/drivers/gpu/drm/msm/msm_fbdev.c
++@@ -132,6 +132,7 @@ int msm_fbdev_driver_fbdev_probe(struct drm_fb_helper *helper,
++ 	helper->fb = fb;
++ 
++ 	fbi->fbops = &msm_fb_ops;
+++	fbi->flags |= FBINFO_VIRTFB; /* GEM buffer mapped into system memory */
++ 
++ 	drm_fb_helper_fill_info(fbi, helper, sizes);
++ 
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0073-power-supply-qcom_pm8150b-read-USB-telemetry-while-o.patch b/device/testing/linux-postmarketos-qcom-sm8250/0073-power-supply-qcom_pm8150b-read-USB-telemetry-while-o.patch
+new file mode 100644
+index 0000000000..e60d2d4954
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0073-power-supply-qcom_pm8150b-read-USB-telemetry-while-o.patch
+@@ -0,0 +1,42 @@
++From 6a146d2ac110c3302efc151d7dce174c9cff2c19 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 10:14:03 +0000
++Subject: [PATCH] power: supply: qcom_pm8150b: read USB telemetry while online
++
++USB input voltage and current are meaningful even when battery
++charging is inhibited, terminated or disabled. Gating ADC reads on
++the battery charging state reports false zero readings while the
++adapter supplies the system. Check USB presence instead, and
++propagate status-read errors instead of returning a fabricated zero.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/power/supply/qcom_pm8150b_charger.c | 11 ++++++-----
++ 1 file changed, 6 insertions(+), 5 deletions(-)
++
++diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
++index eb63a6a19..d4b8f94cc 100644
++--- a/drivers/power/supply/qcom_pm8150b_charger.c
+++++ b/drivers/power/supply/qcom_pm8150b_charger.c
++@@ -538,12 +538,13 @@ static void smb5_status_change_work(struct work_struct *work)
++ static int smb5_get_iio_chan(struct smb5_chip *chip, struct iio_channel *chan,
++ 			     int *val)
++ {
++-	int rc;
++-	union power_supply_propval status;
+++	int online, rc;
++ 
++-	rc = power_supply_get_property(chip->chg_psy, POWER_SUPPLY_PROP_STATUS,
++-				       &status);
++-	if (rc < 0 || status.intval != POWER_SUPPLY_STATUS_CHARGING) {
+++	/* USB may power the system while battery charging is inhibited or full. */
+++	rc = smb5_get_prop_usb_online(chip, &online);
+++	if (rc)
+++		return rc;
+++	if (!online) {
++ 		*val = 0;
++ 		return 0;
++ 	}
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 8742b12f5c..6dc48516a8 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=68
++pkgrel=69
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -107,6 +107,11 @@ source="
+ 	0066-media-i2c-ak7375-Make-the-lens-ramp-optional.patch
+ 	0067-media-i2c-lc898128-Wait-for-the-firmware-between-com.patch
+ 	0068-power-supply-qcom_pm8150b-Fix-the-float-voltage-enco.patch
++	0069-Input-s6sy761-validate-the-initialized-multitouch-ax.patch
++	0070-drm-panel-samsung-ams678uw01-defer-brightness-access.patch
++	0071-arm64-dts-qcom-sm8250-supply-both-PCIe-IOMMU-cells.patch
++	0072-drm-msm-mark-the-fbdev-GEM-mapping-as-system-memory.patch
++	0073-power-supply-qcom_pm8150b-read-USB-telemetry-while-o.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -221,4 +226,9 @@ b07c37ddbe5df4bf69ca9209de22563ee5283b26ea13198fa85dc0297f5ecce11abf33d8700c37e4
+ 9f80f586745e43679c74301ae49bd8c8b59d40577956d161e2d71076350351df571ddbb059c71f8e261f2adb00595560a8de7e8df793944ea9e9bc226720344e  0066-media-i2c-ak7375-Make-the-lens-ramp-optional.patch
+ 5993b3c0c6173ee375f521a8ba290aec7bb9799f25be721e4025c220a855640bbfc639846abe197e1db8105344567745ecbde2bf5aa5b2e6bb5daf4afeabdfae  0067-media-i2c-lc898128-Wait-for-the-firmware-between-com.patch
+ a14ab6531222003aef04beb71eed214aaf75d0701363f951db83e9b286efafd74c7857a0264f5bcc679a581e49554f8ea9f4aef49dc861f86d7c35fa54e31487  0068-power-supply-qcom_pm8150b-Fix-the-float-voltage-enco.patch
++859e92891589720ce8d9779a08a71de62e026337859998d68de21bb78a6dd747ef1b1cc16713382a72a706304512866d35bc2d8e6587fdb7dda9197fb8bfcf8c  0069-Input-s6sy761-validate-the-initialized-multitouch-ax.patch
++15fda8eb5cb6fb9f8651bff122b08484381d9c468e691fefd62c5aa8576875ef5a4b90861b3dd9b5ab7865417f1aeb19e021d451651132953a97aa6b83fed927  0070-drm-panel-samsung-ams678uw01-defer-brightness-access.patch
++1ee87e9e3ddd5659ad2516688fd43f59f331829415b715f56be0f5786fadb2e5c0082ac0430dc6a460514770a19fed901774af2d3d2e60f4eb1f177298562a85  0071-arm64-dts-qcom-sm8250-supply-both-PCIe-IOMMU-cells.patch
++f3b7bd3f94643193e28a65e5591f35a2fe346e97d69c991e8b57cee4acaee11d6a7824226c44f5028cb5e35aa2b999b167c6e622243022cbae54566816369372  0072-drm-msm-mark-the-fbdev-GEM-mapping-as-system-memory.patch
++9ef7e90336f5c418ce27c7ae67311ec23bac85045643d4d7b528297f7a575f5482686ed4059405fdc10670c005079cc83bf1afe0ac71d0b007c30da93592faab  0073-power-supply-qcom_pm8150b-read-USB-telemetry-while-o.patch
+ "
+-- 
+2.51.2
+

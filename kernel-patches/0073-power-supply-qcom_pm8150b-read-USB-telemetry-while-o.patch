@@ -1,0 +1,42 @@
+From 6a146d2ac110c3302efc151d7dce174c9cff2c19 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 10:14:03 +0000
+Subject: [PATCH] power: supply: qcom_pm8150b: read USB telemetry while online
+
+USB input voltage and current are meaningful even when battery
+charging is inhibited, terminated or disabled. Gating ADC reads on
+the battery charging state reports false zero readings while the
+adapter supplies the system. Check USB presence instead, and
+propagate status-read errors instead of returning a fabricated zero.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/power/supply/qcom_pm8150b_charger.c | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
+index eb63a6a19..d4b8f94cc 100644
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -538,12 +538,13 @@ static void smb5_status_change_work(struct work_struct *work)
+ static int smb5_get_iio_chan(struct smb5_chip *chip, struct iio_channel *chan,
+ 			     int *val)
+ {
+-	int rc;
+-	union power_supply_propval status;
++	int online, rc;
+ 
+-	rc = power_supply_get_property(chip->chg_psy, POWER_SUPPLY_PROP_STATUS,
+-				       &status);
+-	if (rc < 0 || status.intval != POWER_SUPPLY_STATUS_CHARGING) {
++	/* USB may power the system while battery charging is inhibited or full. */
++	rc = smb5_get_prop_usb_online(chip, &online);
++	if (rc)
++		return rc;
++	if (!online) {
+ 		*val = 0;
+ 		return 0;
+ 	}
+-- 
+2.51.2
+
