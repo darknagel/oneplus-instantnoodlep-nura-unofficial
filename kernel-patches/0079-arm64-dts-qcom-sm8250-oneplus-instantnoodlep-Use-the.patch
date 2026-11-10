@@ -1,0 +1,48 @@
+From 113adc1ed7c19a27116fa45415248eabf0db5195 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 21:40:25 +0100
+Subject: [PATCH 79/81] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Use
+ the stock flash limits
+
+The vendor kernel limits each PM8150L flash channel to 1500 mA for up
+to 1280 ms and the torch to 500 mA, and the stock camera drives both
+channels together. Use the same limits instead of the conservative
+test values.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ .../boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts  | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 3e47dd0b3..8eca70cf5 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -2312,9 +2312,9 @@ led-0 {
+ 		color = <LED_COLOR_ID_WHITE>;
+ 		function-enumerator = <0>;
+ 		led-sources = <1>;
+-		led-max-microamp = <100000>;
+-		flash-max-microamp = <500000>;
+-		flash-max-timeout-us = <200000>;
++		led-max-microamp = <500000>;
++		flash-max-microamp = <1500000>;
++		flash-max-timeout-us = <1280000>;
+ 	};
+ 
+ 	led-1 {
+@@ -2322,8 +2322,8 @@ led-1 {
+ 		color = <LED_COLOR_ID_WHITE>;
+ 		function-enumerator = <1>;
+ 		led-sources = <2>;
+-		led-max-microamp = <100000>;
+-		flash-max-microamp = <500000>;
+-		flash-max-timeout-us = <200000>;
++		led-max-microamp = <500000>;
++		flash-max-microamp = <1500000>;
++		flash-max-timeout-us = <1280000>;
+ 	};
+ };
+-- 
+2.43.0
+

@@ -1,0 +1,50 @@
+From 0d924200b985abdb1b2c367d00b5f9e781697eb7 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 22:50:09 +0100
+Subject: [PATCH 80/81] misc: fastrpc: Do not restart invocations when the
+ system suspends
+
+User space invocations wait interruptibly for the reply of the DSP. The
+freezer wakes such a task with a fake signal, the wait returns
+-ERESTARTSYS and the system call is restarted on resume. The context of
+the first attempt stays pending, so the DSP receives the same invocation
+twice.
+
+For a daemon that serves the DSP (adsp_listener next2) the second
+invocation carries the result of the previous request again. On the
+OnePlus 8 Pro the sensor DSP takes an exception in its FastRPC thread at
+every resume:
+
+  PDM: service 'sensor_process' crash: 'EX:sensor_process:0x1:frpc_dsp:0x73:PC=0xb20955ac'
+  remoteproc remoteproc0: crash detected in slpi: type fatal error
+
+Make the wait freezable, so that the task is frozen in place and simply
+continues to wait after resume.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/misc/fastrpc.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+index 8a2a5414f..94657dccf 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -1278,7 +1278,13 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
+ 		if (!wait_for_completion_timeout(&ctx->work, 10 * HZ))
+ 			err = -ETIMEDOUT;
+ 	} else {
+-		err = wait_for_completion_interruptible(&ctx->work);
++		/*
++		 * Freezable: the freezer otherwise interrupts the wait, the
++		 * system call is restarted on resume and sends the invocation
++		 * a second time while the first one is still pending.
++		 */
++		err = wait_for_completion_state(&ctx->work,
++						TASK_INTERRUPTIBLE | TASK_FREEZABLE);
+ 	}
+ 
+ 	if (err)
+-- 
+2.43.0
+

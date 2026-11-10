@@ -1,0 +1,98 @@
+From 30d93570ee8016684566836ad91d295678920914 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 23:06:22 +0100
+Subject: [PATCH 42/43] linux-postmarketos-qcom-sm8250: stock flash limits on
+ the OnePlus 8 Pro
+
+Kernel patch 0079: 1500 mA flash for up to 1280 ms and 500 mA torch per
+channel, as in the vendor device tree.
+---
+ ...m8250-oneplus-instantnoodlep-Use-the.patch | 48 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  4 +-
+ 2 files changed, 51 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0079-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Use-the.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0079-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Use-the.patch b/device/testing/linux-postmarketos-qcom-sm8250/0079-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Use-the.patch
+new file mode 100644
+index 0000000000..722a1df5b4
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0079-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Use-the.patch
+@@ -0,0 +1,48 @@
++From 113adc1ed7c19a27116fa45415248eabf0db5195 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 10 Nov 2026 21:40:25 +0100
++Subject: [PATCH 79/81] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Use
++ the stock flash limits
++
++The vendor kernel limits each PM8150L flash channel to 1500 mA for up
++to 1280 ms and the torch to 500 mA, and the stock camera drives both
++channels together. Use the same limits instead of the conservative
++test values.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++ .../boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts  | 12 ++++++------
++ 1 file changed, 6 insertions(+), 6 deletions(-)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 3e47dd0b3..8eca70cf5 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -2312,9 +2312,9 @@ led-0 {
++ 		color = <LED_COLOR_ID_WHITE>;
++ 		function-enumerator = <0>;
++ 		led-sources = <1>;
++-		led-max-microamp = <100000>;
++-		flash-max-microamp = <500000>;
++-		flash-max-timeout-us = <200000>;
+++		led-max-microamp = <500000>;
+++		flash-max-microamp = <1500000>;
+++		flash-max-timeout-us = <1280000>;
++ 	};
++ 
++ 	led-1 {
++@@ -2322,8 +2322,8 @@ led-1 {
++ 		color = <LED_COLOR_ID_WHITE>;
++ 		function-enumerator = <1>;
++ 		led-sources = <2>;
++-		led-max-microamp = <100000>;
++-		flash-max-microamp = <500000>;
++-		flash-max-timeout-us = <200000>;
+++		led-max-microamp = <500000>;
+++		flash-max-microamp = <1500000>;
+++		flash-max-timeout-us = <1280000>;
++ 	};
++ };
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index f7a76ce1d3..793f7bf958 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=72
++pkgrel=73
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -117,6 +117,7 @@ source="
+ 	0076-arm64-dts-qcom-instantnoodlep-stop-matching-the-wron.patch
+ 	0077-drm-msm-dsi-release-PLL-bias-references-after-a-lock.patch
+ 	0078-drm-msm-dsi-keep-the-digital-top-powered-for-PLL-and.patch
++	0079-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Use-the.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -241,4 +242,5 @@ afe7b20f3bbde0ce93b5ef7884551fdb19a50b9affe16a6a040337d7398c534bf7ff9d7eed437040
+ d0a4df4a7f7825b5f7efca63d0c22b0cfcbd387de6f939aaca543b3b99037f99ffbc1ef38d09e77491233749a0fcd9c9e8ea644ff928febf5e8938e72d80db4b  0076-arm64-dts-qcom-instantnoodlep-stop-matching-the-wron.patch
+ 97c18d9e77f3209d1b9856d46d3016fced27c1279115c5c245a742dfcb5a445bd94b99c268be6d5744289e4069295ab76abb9a19f217d4616afd2744efe5e8e1  0077-drm-msm-dsi-release-PLL-bias-references-after-a-lock.patch
+ 5b3f56c25576abca5a4cd0c5962d3d124a819a0a592f7f07ba6f487026198bf133fc1318e6ea80fb75f99a39c912b9557a317895a49c7a1eb6fe9efc925f3fc7  0078-drm-msm-dsi-keep-the-digital-top-powered-for-PLL-and.patch
++4c48e0326fd249b2fa854287d1a107ba2ce60cf27b7bb6a70dc311db43efcc41d28f08ee95c298fdf08004d8f401547417fe87726ec58bc5e10e8ab1a066a3a2  0079-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Use-the.patch
+ "
+-- 
+2.43.0
+
