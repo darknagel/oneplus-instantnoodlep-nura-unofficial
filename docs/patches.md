@@ -36,7 +36,7 @@
 | Automatic screen rotation: iio-sensor-proxy 3.9 opens the SSC sensors synchronously at startup; a claim in that window (KWin, Phosh) is stored but the sensor is never started | works | iio-sensor-proxy 0001 |
 | Reboot modes: `reboot bootloader` / `reboot recovery`; the unused PM8009 PON registered a second `qcom-pon` reboot mode (-EEXIST warning at boot) | works | kernel 0052, pmaports 0028 |
 | OIS of the main camera: onsemi LC898128 at 0x24, runs from its own firmware and reads the module gyroscope itself; new driver starts it whenever the sensor is powered, PM8009 L5 added for its supply | works | kernel 0053–0054, pmaports 0029 |
-| QRTR forwarded client deletions: accept notifications from a remote router for clients reached through the same transport endpoint | tested on IN2023, see [packet captures](qrtr.md) | kernel 0064, pmaports 0032 |
+| QRTR forwarded client deletions: accept notifications from a remote router for clients reached through the same transport endpoint | tested on IN2023 | kernel 0064, pmaports 0032 |
 | OIS of the telephoto camera (second LC898128, gets the gyroscope data from the main one), colour tuning of the front camera, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
