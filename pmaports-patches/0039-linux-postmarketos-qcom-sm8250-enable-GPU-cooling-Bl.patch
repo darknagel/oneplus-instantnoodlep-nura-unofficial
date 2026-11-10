@@ -1,0 +1,81 @@
+From eef94b9591f21702faaf79ab19ebe63713d5d8b1 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 10:33:14 +0000
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: enable GPU cooling, Bluetooth
+ PAN and QCE
+
+Enable devfreq cooling for the GPU, the Bluetooth network encapsulation
+protocol and the Qualcomm crypto engine. Advance to release 71.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ .../linux-postmarketos-qcom-sm8250/APKBUILD      |  4 ++--
+ .../config-postmarketos-qcom-sm8250.aarch64      | 16 +++++++++++++---
+ 2 files changed, 15 insertions(+), 5 deletions(-)
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 6796ba109f..35332ac6f6 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=70
++pkgrel=71
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -161,7 +161,7 @@ package() {
+ 
+ sha512sums="
+ 05df1589411d2817fecc403402f1dea2c405c5de102bf92e23089e430fc2c623702bd778fbea5b87f70ea02e9eff7f02a7de292f895d47ff40ae88dafdfbab58  linux-postmarketos-qcom-sm8250-sm8250-7.2.0_git20261010.tar.gz
+-114803ff975c4f9c18dd7e5c3b160ffa035495e1a1147e94adefc0ccb5ffb721a8029256aba95209f17810782201b8a815d20f6947a3067ace033893e31da1fd  config-postmarketos-qcom-sm8250.aarch64
++2c2c2e5cb896eeb7c86213a4364ad2bb34daf575ea8733d212cfd0875279ac5ad583578bdd4624e951a957ff74874369ab2c4e7ead1d4932a60ddf6e56fafdb4  config-postmarketos-qcom-sm8250.aarch64
+ eef6a7ba3d4e68bbe1d5ae272358be3fbfc3330fc703bde256e5264121e882e15c5413428099d6ae7e8225a459a6f6f91e799100a4714281b2cda3f4e2a0b5d2  0001-dt-bindings-display-panel-Add-Samsung-AMS678UW01.patch
+ 795607277f4b1ce4c26455166dc2e16a2279a3adc1c060982aebb773908ed6aa3e8c10f385f07dff1432c3959eee2b322bb77b601e40e2b5b2e13dcc247d1b1e  0002-drm-panel-Add-Samsung-AMS678UW01-panel-driver.patch
+ b71d3793b063c8bc0a437b24a00c71290b5599aa1a6a4d2533a8c8dd05683a27919585d2694f99288cdc016d3746cdc435a7085e3fd61255869eaf6dec7795f8  0003-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Enable-.patch
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64 b/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
+index 0bb55c37df..61c1fe6c07 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
++++ b/device/testing/linux-postmarketos-qcom-sm8250/config-postmarketos-qcom-sm8250.aarch64
+@@ -1681,7 +1681,9 @@ CONFIG_CAN_GW=m
+ CONFIG_BT=m
+ CONFIG_BT_BREDR=y
+ # CONFIG_BT_RFCOMM is not set
+-# CONFIG_BT_BNEP is not set
++CONFIG_BT_BNEP=m
++CONFIG_BT_BNEP_MC_FILTER=y
++CONFIG_BT_BNEP_PROTO_FILTER=y
+ CONFIG_BT_HIDP=m
+ # CONFIG_BT_LE is not set
+ CONFIG_BT_LEDS=y
+@@ -4037,7 +4039,7 @@ CONFIG_THERMAL_GOV_STEP_WISE=y
+ CONFIG_THERMAL_GOV_POWER_ALLOCATOR=y
+ CONFIG_CPU_THERMAL=y
+ CONFIG_CPU_FREQ_THERMAL=y
+-# CONFIG_DEVFREQ_THERMAL is not set
++CONFIG_DEVFREQ_THERMAL=y
+ # CONFIG_PCIE_THERMAL is not set
+ CONFIG_THERMAL_EMULATION=y
+ # CONFIG_THERMAL_MMIO is not set
+@@ -8563,7 +8565,15 @@ CONFIG_CRYPTO_HW=y
+ # CONFIG_CRYPTO_DEV_QAT_DH895xCCVF is not set
+ # CONFIG_CRYPTO_DEV_QAT_C3XXXVF is not set
+ # CONFIG_CRYPTO_DEV_QAT_C62XVF is not set
+-# CONFIG_CRYPTO_DEV_QCE is not set
++CONFIG_CRYPTO_DEV_QCE=m
++CONFIG_CRYPTO_DEV_QCE_SKCIPHER=y
++CONFIG_CRYPTO_DEV_QCE_SHA=y
++CONFIG_CRYPTO_DEV_QCE_AEAD=y
++CONFIG_CRYPTO_DEV_QCE_ENABLE_ALL=y
++# CONFIG_CRYPTO_DEV_QCE_ENABLE_SKCIPHER is not set
++# CONFIG_CRYPTO_DEV_QCE_ENABLE_SHA is not set
++# CONFIG_CRYPTO_DEV_QCE_ENABLE_AEAD is not set
++CONFIG_CRYPTO_DEV_QCE_SW_MAX_LEN=512
+ CONFIG_CRYPTO_DEV_QCOM_RNG=m
+ # CONFIG_CRYPTO_DEV_VIRTIO is not set
+ # CONFIG_CRYPTO_DEV_SAFEXCEL is not set
+-- 
+2.51.2
+

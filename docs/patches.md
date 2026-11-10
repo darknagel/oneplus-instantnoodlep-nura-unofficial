@@ -44,6 +44,14 @@
 | Camera names (Main, Ultrawide, Telephoto, Colour Filter, Front) for PipeWire apps | works | `system/60-oneplus-instantnoodlep-cameras.conf` |
 | Proximity calibration from the Android `persist` partition, at first boot | works | `firmware/dsp-firmware.sh`, `sensors/setup-sensors.sh` |
 | Charging: the PM8150B float voltage register counts from 3.6 V in 10 mV steps, as in the vendor driver; the old encoding selected 4.76 V for the 4.35 V battery. Found by naorunaoru | works | kernel 0068, pmaports 0036 |
+| Haptics: AW8697 on I2C11 with the stock LRA0619 tuning (170 Hz, drive level 54) | works | kernel 0074, pmaports 0038 |
+| Flash LEDs: both PM8150L channels, limited to 100 mA torch and 500 mA flash for 200 ms | works | kernel 0075, pmaports 0038 |
+| Wireless charge pump: the stock part is a BQ2597x, not a BQ25980; the node is corrected and stays disabled until wireless charging is integrated | disabled | kernel 0076, pmaports 0038 |
+| Boot warnings: touchscreen axis check, panel brightness access before the panel is ready, PCIe IOMMU map cells, fbdev mapping flag | fixed | kernel 0069–0072, pmaports 0037 |
+| USB input voltage and current stay readable while battery charging is paused or finished | fixed | kernel 0073, pmaports 0037 |
+| DSI PHY: digital top kept powered for PLL and PHY users, bias references released after a failed PLL lock; startup timeouts fell from 3 to 0 on one IN2023 | works | kernel 0077–0078, pmaports 0040 |
+| GPU cooling, Bluetooth PAN and the Qualcomm crypto engine enabled in the kernel config | enabled | pmaports 0039 |
+| ModemManager without the MediaTek and Rolling plugins, whose shared module fails to load on musl | builds, not yet run on the phone | pmaports 0041 |
 | OIS of the telephoto camera (second LC898128), colour tuning of the front camera, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
@@ -96,6 +104,10 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   client deletions from nodes on the same transport endpoint. 0033 adds kernel patches
   0065–0067, 0034 updates `temp/libcamera` to 0.8.0 with the autofocus series, and 0035
   adds `temp/iio-sensor-proxy` 3.9 with the rotation fix and SSC support. 0036 adds kernel patch 0068 (charger float voltage).
+  0037 adds kernel patches 0069–0073 (boot warnings and USB telemetry), 0038 adds
+  0074–0076 (haptics, flash LEDs and the charge pump), 0039 enables GPU cooling,
+  Bluetooth PAN and QCE, 0040 adds the DSI PHY fixes 0077–0078, and 0041 builds
+  ModemManager without the MediaTek and Rolling plugins.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `firmware/` – boot service that copies SLPI, Venus and CDSP firmware from your own phone.

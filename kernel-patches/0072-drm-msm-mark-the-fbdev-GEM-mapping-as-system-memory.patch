@@ -1,0 +1,30 @@
+From a056c0f9008f4d1dd2a51e38421bb262b703bef1 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 10:23:14 +0000
+Subject: [PATCH] drm/msm: mark the fbdev GEM mapping as system memory
+
+The fbdev buffer is mapped with msm_gem_get_vaddr and uses the
+system-memory deferred drawing helpers. Set FBINFO_VIRTFB to describe
+that mapping, as the other DRM system-memory fbdev helpers do.
+This avoids the framebuffer address-space warning during console draws.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/gpu/drm/msm/msm_fbdev.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/gpu/drm/msm/msm_fbdev.c b/drivers/gpu/drm/msm/msm_fbdev.c
+index fd19995b1..d05234bdd 100644
+--- a/drivers/gpu/drm/msm/msm_fbdev.c
++++ b/drivers/gpu/drm/msm/msm_fbdev.c
+@@ -132,6 +132,7 @@ int msm_fbdev_driver_fbdev_probe(struct drm_fb_helper *helper,
+ 	helper->fb = fb;
+ 
+ 	fbi->fbops = &msm_fb_ops;
++	fbi->flags |= FBINFO_VIRTFB; /* GEM buffer mapped into system memory */
+ 
+ 	drm_fb_helper_fill_info(fbi, helper, sizes);
+ 
+-- 
+2.51.2
+

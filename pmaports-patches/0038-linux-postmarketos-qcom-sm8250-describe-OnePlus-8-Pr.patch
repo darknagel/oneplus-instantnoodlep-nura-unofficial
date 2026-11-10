@@ -1,0 +1,253 @@
+From f20b885c1f7cc4d59fc67bc0d43be3658f91a5c2 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 10:33:14 +0000
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: describe OnePlus 8 Pro
+ haptics and flash LEDs
+
+Add kernel patches 0074-0076: describe stock haptics and flash wiring,
+and leave the mismatched secondary charge-pump driver disabled. Advance
+to release 70.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ ...nstantnoodlep-describe-the-AW8697-ha.patch | 73 +++++++++++++++++++
+ ...nstantnoodlep-expose-the-two-flash-L.patch | 53 ++++++++++++++
+ ...nstantnoodlep-stop-matching-the-wron.patch | 54 ++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  8 +-
+ 4 files changed, 187 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0074-arm64-dts-qcom-instantnoodlep-describe-the-AW8697-ha.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0075-arm64-dts-qcom-instantnoodlep-expose-the-two-flash-L.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0076-arm64-dts-qcom-instantnoodlep-stop-matching-the-wron.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0074-arm64-dts-qcom-instantnoodlep-describe-the-AW8697-ha.patch b/device/testing/linux-postmarketos-qcom-sm8250/0074-arm64-dts-qcom-instantnoodlep-describe-the-AW8697-ha.patch
+new file mode 100644
+index 0000000000..9bca16a351
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0074-arm64-dts-qcom-instantnoodlep-describe-the-AW8697-ha.patch
+@@ -0,0 +1,73 @@
++From ea12e177d7f3e21b33350cb5afd4c9b7628df770 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 10:08:51 +0000
++Subject: [PATCH] arm64: dts: qcom: instantnoodlep: describe the AW8697 haptics
++
++Wire the AW8697 on QUP I2C11 using reset GPIO72 and interrupt
++GPIO118 from the stock project-19811 overlay. Use the 170 Hz
++LRA0619 tuning from the OnePlus driver, including drive level 54.
++The existing common OnePlus tree uses the same controller and pins.
++
++This enables the existing force-feedback driver for hardware testing;
++probe-time calibration and vibration still need device validation.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 37 +++++++++++++++++++
++ 1 file changed, 37 insertions(+)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 00008acaf..d1a0a0184 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -2,6 +2,7 @@
++ 
++ #include <dt-bindings/media/video-interfaces.h>
++ #include <dt-bindings/gpio/gpio.h>
+++#include <dt-bindings/leds/common.h>
++ #include <dt-bindings/arm/qcom,ids.h>
++ #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
++ #include <dt-bindings/phy/phy.h>
++@@ -2264,3 +2265,39 @@ &vamacro {
++ 	vdd-micb-supply = <&vreg_bob>;
++ 	qcom,dmic-sample-rate = <2400000>;
++ };
+++
+++&i2c11 {
+++	status = "okay";
+++
+++	haptics@5a {
+++		compatible = "awinic,aw8697";
+++		reg = <0x5a>;
+++		interrupts-extended = <&tlmm 118 IRQ_TYPE_EDGE_FALLING>;
+++		reset-gpios = <&tlmm 72 GPIO_ACTIVE_HIGH>;
+++		pinctrl-names = "default";
+++		pinctrl-0 = <&haptics_irq_default>;
+++		awinic,f0-preset = <1700>;
+++		awinic,f0-coefficient = <260>;
+++		awinic,f0-calibration-percent = <7>;
+++		awinic,drive-level = <54>;
+++		awinic,f0-detection-play-time = <5>;
+++		awinic,f0-detection-wait-time = <3>;
+++		awinic,f0-detection-repeat = <2>;
+++		awinic,f0-detection-trace = <15>;
+++		awinic,boost-debug = /bits/ 8 <0x30 0xeb 0xd4>;
+++		awinic,tset = /bits/ 8 <0x12>;
+++		awinic,r-spare = /bits/ 8 <0x68>;
+++		awinic,bemf-upper-threshold = <4104>;
+++		awinic,bemf-lower-threshold = <1016>;
+++	};
+++};
+++
+++&tlmm {
+++	haptics_irq_default: haptics-irq-default-state {
+++		pins = "gpio118";
+++		function = "gpio";
+++		drive-strength = <2>;
+++		input-enable;
+++		bias-pull-up;
+++	};
+++};
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0075-arm64-dts-qcom-instantnoodlep-expose-the-two-flash-L.patch b/device/testing/linux-postmarketos-qcom-sm8250/0075-arm64-dts-qcom-instantnoodlep-expose-the-two-flash-L.patch
+new file mode 100644
+index 0000000000..6c84a5bfa2
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0075-arm64-dts-qcom-instantnoodlep-expose-the-two-flash-L.patch
+@@ -0,0 +1,53 @@
++From e5dd4b8368fc397c33ef0c56d26cea918cc39e34 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 10:08:51 +0000
++Subject: [PATCH] arm64: dts: qcom: instantnoodlep: expose the two flash LEDs
++
++The stock camera flash uses PM8150L channels 0 and 1, corresponding
++to the mainline binding indices 1 and 2. Expose both channels through
++the existing flash driver without a default trigger.
++
++Start hardware validation with conservative limits of 100 mA torch,
++500 mA flash and 200 ms duration per channel. Camera synchronization
++and maximum output remain unvalidated.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 24 +++++++++++++++++++
++ 1 file changed, 24 insertions(+)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index d1a0a0184..79e125810 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -2301,3 +2301,27 @@ haptics_irq_default: haptics-irq-default-state {
++ 		bias-pull-up;
++ 	};
++ };
+++
+++&pm8150l_flash {
+++	status = "okay";
+++
+++	led-0 {
+++		function = LED_FUNCTION_FLASH;
+++		color = <LED_COLOR_ID_WHITE>;
+++		function-enumerator = <0>;
+++		led-sources = <1>;
+++		led-max-microamp = <100000>;
+++		flash-max-microamp = <500000>;
+++		flash-max-timeout-us = <200000>;
+++	};
+++
+++	led-1 {
+++		function = LED_FUNCTION_FLASH;
+++		color = <LED_COLOR_ID_WHITE>;
+++		function-enumerator = <1>;
+++		led-sources = <2>;
+++		led-max-microamp = <100000>;
+++		flash-max-microamp = <500000>;
+++		flash-max-timeout-us = <200000>;
+++	};
+++};
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0076-arm64-dts-qcom-instantnoodlep-stop-matching-the-wron.patch b/device/testing/linux-postmarketos-qcom-sm8250/0076-arm64-dts-qcom-instantnoodlep-stop-matching-the-wron.patch
+new file mode 100644
+index 0000000000..fe46671530
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0076-arm64-dts-qcom-instantnoodlep-stop-matching-the-wron.patch
+@@ -0,0 +1,54 @@
++From e9647bb9f55ca418aa58e5c0e469ce6686ddca1c Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 10:08:51 +0000
++Subject: [PATCH] arm64: dts: qcom: instantnoodlep: stop matching the wrong
++ charge pump
++
++The stock project-19811 overlay identifies the device at I2C5:0x66
++as a BQ2597x wireless charge pump. The BQ25980 driver has a different
++register layout and is already blacklisted on the test device.
++
++Correct the compatible and disable the node until wireless receiver
++control and the required charging limits are integrated. This avoids
++relying on a userspace blacklist to prevent the wrong driver binding.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 20 ++++++++++---------
++ 1 file changed, 11 insertions(+), 9 deletions(-)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 79e125810..3e47dd0b3 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -1233,16 +1233,18 @@ nfc@28 {
++ };
++ 
++ &i2c5 {
++-    status = "okay";
+++	status = "okay";
++ 
++-    charger@66 {
++-        compatible = "ti,bq25980";
++-        status = "ok";
++-        reg = <0x66>;
++-        interrupt-parent = <&tlmm>;
++-        interrupts = <0x0f 0x00>;
++-        monitored-battery = <&battery>;
++-    };
+++	charger@66 {
+++		/* Stock uses a BQ2597x wireless charge pump, not a BQ25980. */
+++		compatible = "ti,bq2597x-standalone";
+++		/* Requires the wireless receiver and validated charge limits. */
+++		status = "disabled";
+++		reg = <0x66>;
+++		interrupt-parent = <&tlmm>;
+++		interrupts = <0x0f 0x00>;
+++		monitored-battery = <&battery>;
+++	};
++ };
++ 
++ &i2c16 {
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 6dc48516a8..6796ba109f 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=69
++pkgrel=70
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -112,6 +112,9 @@ source="
+ 	0071-arm64-dts-qcom-sm8250-supply-both-PCIe-IOMMU-cells.patch
+ 	0072-drm-msm-mark-the-fbdev-GEM-mapping-as-system-memory.patch
+ 	0073-power-supply-qcom_pm8150b-read-USB-telemetry-while-o.patch
++	0074-arm64-dts-qcom-instantnoodlep-describe-the-AW8697-ha.patch
++	0075-arm64-dts-qcom-instantnoodlep-expose-the-two-flash-L.patch
++	0076-arm64-dts-qcom-instantnoodlep-stop-matching-the-wron.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -231,4 +234,7 @@ a14ab6531222003aef04beb71eed214aaf75d0701363f951db83e9b286efafd74c7857a0264f5bcc
+ 1ee87e9e3ddd5659ad2516688fd43f59f331829415b715f56be0f5786fadb2e5c0082ac0430dc6a460514770a19fed901774af2d3d2e60f4eb1f177298562a85  0071-arm64-dts-qcom-sm8250-supply-both-PCIe-IOMMU-cells.patch
+ f3b7bd3f94643193e28a65e5591f35a2fe346e97d69c991e8b57cee4acaee11d6a7824226c44f5028cb5e35aa2b999b167c6e622243022cbae54566816369372  0072-drm-msm-mark-the-fbdev-GEM-mapping-as-system-memory.patch
+ 9ef7e90336f5c418ce27c7ae67311ec23bac85045643d4d7b528297f7a575f5482686ed4059405fdc10670c005079cc83bf1afe0ac71d0b007c30da93592faab  0073-power-supply-qcom_pm8150b-read-USB-telemetry-while-o.patch
++be5fbaa6d335ad4c96ab529aee8ee7b8ef3dc026200e90af97945cbfec4d1f82eb958a2860dff66ac8114b44128a3ff2c93d0481cea586fd70f9dea91fed4c93  0074-arm64-dts-qcom-instantnoodlep-describe-the-AW8697-ha.patch
++afe7b20f3bbde0ce93b5ef7884551fdb19a50b9affe16a6a040337d7398c534bf7ff9d7eed4370405f9a971733425ca8fea8a3f9422cd363e0c834725b83ef1e  0075-arm64-dts-qcom-instantnoodlep-expose-the-two-flash-L.patch
++d0a4df4a7f7825b5f7efca63d0c22b0cfcbd387de6f939aaca543b3b99037f99ffbc1ef38d09e77491233749a0fcd9c9e8ea644ff928febf5e8938e72d80db4b  0076-arm64-dts-qcom-instantnoodlep-stop-matching-the-wron.patch
+ "
+-- 
+2.51.2
+
