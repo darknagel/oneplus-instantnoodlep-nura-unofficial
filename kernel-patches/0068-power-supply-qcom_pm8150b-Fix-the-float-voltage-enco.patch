@@ -1,0 +1,61 @@
+From 917983639ab6a289af42755d70773cb7a1898a87 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 22:11:50 +0100
+Subject: [PATCH] power: supply: qcom_pm8150b: Fix the float voltage encoding
+
+The float voltage register counts from 3.6 V in 10 mV steps, as the
+vendor smb5 driver programs it. The old formula assumed 3.4875 V and
+7.5 mV steps and wrote 0x74 for a 4.35 V battery, which selects 4.76 V
+and charges the battery far beyond its rated voltage.
+
+Found by naorunaoru.
+---
+ drivers/power/supply/qcom_pm8150b_charger.c | 15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
+index a923abd6f..eb63a6a19 100644
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -75,6 +75,9 @@
+ 
+ #define FLOAT_VOLTAGE_CFG			0x70
+ #define FLOAT_VOLTAGE_SETTING_MASK		GENMASK(7, 0)
++#define FLOAT_VOLTAGE_MIN_UV			3600000
++#define FLOAT_VOLTAGE_MAX_UV			4790000
++#define FLOAT_VOLTAGE_STEP_UV			10000
+ 
+ #define CHARGE_RCHG_SOC_THRESHOLD_CFG_REG	0x7D
+ #define CHARGE_RCHG_SOC_THRESHOLD_CFG_MASK	GENMASK(7, 0)
+@@ -844,7 +847,7 @@ static int smb5_probe(struct platform_device *pdev)
+ 	struct power_supply_config supply_config = {};
+ 	struct power_supply_desc *desc;
+ 	struct smb5_chip *chip;
+-	int rc, irq;
++	int rc, irq, fv_uv;
+ 
+ 	chip = devm_kzalloc(&pdev->dev, sizeof(*chip), GFP_KERNEL);
+ 	if (!chip)
+@@ -908,11 +911,17 @@ static int smb5_probe(struct platform_device *pdev)
+ 		return dev_err_probe(chip->dev, rc,
+ 				     "Failed to init status change work\n");
+ 
+-	rc = (chip->batt_info->voltage_max_design_uv - 3487500) / 7500 + 1;
++	/* 3.6 V plus 10 mV per step, as in the vendor smb5 driver */
++	fv_uv = chip->batt_info->voltage_max_design_uv;
++	if (fv_uv < FLOAT_VOLTAGE_MIN_UV || fv_uv > FLOAT_VOLTAGE_MAX_UV)
++		return dev_err_probe(chip->dev, -EINVAL,
++				     "Invalid battery voltage %d uV\n", fv_uv);
+ 	rc = regmap_update_bits(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG,
+-				FLOAT_VOLTAGE_SETTING_MASK, rc);
++				FLOAT_VOLTAGE_SETTING_MASK,
++				(fv_uv - FLOAT_VOLTAGE_MIN_UV) / FLOAT_VOLTAGE_STEP_UV);
+ 	if (rc < 0)
+ 		return dev_err_probe(chip->dev, rc, "Couldn't set vbat max\n");
++	dev_info(chip->dev, "float voltage %d uV\n", fv_uv);
+ 
+ 	rc = smb5_init_irq(chip, &irq, "bat-ov", smb5_handle_batt_overvoltage);
+ 	if (rc < 0)
+-- 
+2.43.0
+

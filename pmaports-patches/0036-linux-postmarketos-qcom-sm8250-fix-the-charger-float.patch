@@ -1,0 +1,111 @@
+From 5e7a09574c5ab3436711772aabc61a1a8e87e096 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 22:16:48 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: fix the charger float voltage
+
+The PM8150B float voltage register counts from 3.6 V in 10 mV steps.
+The old encoding selected 4.76 V for the 4.35 V battery. Found by
+naorunaoru.
+---
+ ...m_pm8150b-Fix-the-float-voltage-enco.patch | 61 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  4 +-
+ 2 files changed, 64 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0068-power-supply-qcom_pm8150b-Fix-the-float-voltage-enco.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0068-power-supply-qcom_pm8150b-Fix-the-float-voltage-enco.patch b/device/testing/linux-postmarketos-qcom-sm8250/0068-power-supply-qcom_pm8150b-Fix-the-float-voltage-enco.patch
+new file mode 100644
+index 0000000000..487562b3d7
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0068-power-supply-qcom_pm8150b-Fix-the-float-voltage-enco.patch
+@@ -0,0 +1,61 @@
++From 917983639ab6a289af42755d70773cb7a1898a87 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 10 Nov 2026 22:11:50 +0100
++Subject: [PATCH] power: supply: qcom_pm8150b: Fix the float voltage encoding
++
++The float voltage register counts from 3.6 V in 10 mV steps, as the
++vendor smb5 driver programs it. The old formula assumed 3.4875 V and
++7.5 mV steps and wrote 0x74 for a 4.35 V battery, which selects 4.76 V
++and charges the battery far beyond its rated voltage.
++
++Found by naorunaoru.
++---
++ drivers/power/supply/qcom_pm8150b_charger.c | 15 ++++++++++++---
++ 1 file changed, 12 insertions(+), 3 deletions(-)
++
++diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
++index a923abd6f..eb63a6a19 100644
++--- a/drivers/power/supply/qcom_pm8150b_charger.c
+++++ b/drivers/power/supply/qcom_pm8150b_charger.c
++@@ -75,6 +75,9 @@
++ 
++ #define FLOAT_VOLTAGE_CFG			0x70
++ #define FLOAT_VOLTAGE_SETTING_MASK		GENMASK(7, 0)
+++#define FLOAT_VOLTAGE_MIN_UV			3600000
+++#define FLOAT_VOLTAGE_MAX_UV			4790000
+++#define FLOAT_VOLTAGE_STEP_UV			10000
++ 
++ #define CHARGE_RCHG_SOC_THRESHOLD_CFG_REG	0x7D
++ #define CHARGE_RCHG_SOC_THRESHOLD_CFG_MASK	GENMASK(7, 0)
++@@ -844,7 +847,7 @@ static int smb5_probe(struct platform_device *pdev)
++ 	struct power_supply_config supply_config = {};
++ 	struct power_supply_desc *desc;
++ 	struct smb5_chip *chip;
++-	int rc, irq;
+++	int rc, irq, fv_uv;
++ 
++ 	chip = devm_kzalloc(&pdev->dev, sizeof(*chip), GFP_KERNEL);
++ 	if (!chip)
++@@ -908,11 +911,17 @@ static int smb5_probe(struct platform_device *pdev)
++ 		return dev_err_probe(chip->dev, rc,
++ 				     "Failed to init status change work\n");
++ 
++-	rc = (chip->batt_info->voltage_max_design_uv - 3487500) / 7500 + 1;
+++	/* 3.6 V plus 10 mV per step, as in the vendor smb5 driver */
+++	fv_uv = chip->batt_info->voltage_max_design_uv;
+++	if (fv_uv < FLOAT_VOLTAGE_MIN_UV || fv_uv > FLOAT_VOLTAGE_MAX_UV)
+++		return dev_err_probe(chip->dev, -EINVAL,
+++				     "Invalid battery voltage %d uV\n", fv_uv);
++ 	rc = regmap_update_bits(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG,
++-				FLOAT_VOLTAGE_SETTING_MASK, rc);
+++				FLOAT_VOLTAGE_SETTING_MASK,
+++				(fv_uv - FLOAT_VOLTAGE_MIN_UV) / FLOAT_VOLTAGE_STEP_UV);
++ 	if (rc < 0)
++ 		return dev_err_probe(chip->dev, rc, "Couldn't set vbat max\n");
+++	dev_info(chip->dev, "float voltage %d uV\n", fv_uv);
++ 
++ 	rc = smb5_init_irq(chip, &irq, "bat-ov", smb5_handle_batt_overvoltage);
++ 	if (rc < 0)
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 4888972fda..8742b12f5c 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=64
++pkgrel=68
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -106,6 +106,7 @@ source="
+ 	0065-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Restore.patch
+ 	0066-media-i2c-ak7375-Make-the-lens-ramp-optional.patch
+ 	0067-media-i2c-lc898128-Wait-for-the-firmware-between-com.patch
++	0068-power-supply-qcom_pm8150b-Fix-the-float-voltage-enco.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -219,4 +220,5 @@ b07c37ddbe5df4bf69ca9209de22563ee5283b26ea13198fa85dc0297f5ecce11abf33d8700c37e4
+ 3b67423fdba0bf8d0b997d5661f556ae301d93ef583380ae8eb46dbb5d8cdaae63ebb9ab40b011474a645fc3f84bea1bab346389b4f39eaa41283ba8c2adb932  0065-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Restore.patch
+ 9f80f586745e43679c74301ae49bd8c8b59d40577956d161e2d71076350351df571ddbb059c71f8e261f2adb00595560a8de7e8df793944ea9e9bc226720344e  0066-media-i2c-ak7375-Make-the-lens-ramp-optional.patch
+ 5993b3c0c6173ee375f521a8ba290aec7bb9799f25be721e4025c220a855640bbfc639846abe197e1db8105344567745ecbde2bf5aa5b2e6bb5daf4afeabdfae  0067-media-i2c-lc898128-Wait-for-the-firmware-between-com.patch
++a14ab6531222003aef04beb71eed214aaf75d0701363f951db83e9b286efafd74c7857a0264f5bcc679a581e49554f8ea9f4aef49dc861f86d7c35fa54e31487  0068-power-supply-qcom_pm8150b-Fix-the-float-voltage-enco.patch
+ "
+-- 
+2.43.0
+

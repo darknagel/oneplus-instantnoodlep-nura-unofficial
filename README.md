@@ -1,7 +1,7 @@
 # OnePlus 8 Pro (instantnoodlep) – unofficial Nura mainline port
 
 > [!WARNING]
-> **Charging voltage bug in all images up to v2026.11.10.** The charger driver programs the battery's end-of-charge voltage wrongly: 4.76 V instead of 4.35 V (the cell is rated 4.45 V). The battery pack has its own protection circuit, which most likely stops charging well before that, but better be safe: do not leave the phone charging unattended or overnight until you run a fixed kernel. A fixed image (v2026.11.11) follows today; if you already flashed an older image, flash its `boot.img` or install its kernel package. `apk upgrade` does not fix it. Thanks to naorunaoru for finding it.
+> **Charging voltage bug in all images up to v2026.11.10, fixed in v2026.11.11.** The old charger driver programs the battery's end-of-charge voltage to 4.76 V instead of 4.35 V (the cell is rated 4.45 V). The battery pack has its own protection circuit, which most likely stops charging well before that, but better be safe: update to v2026.11.11 (install its kernel package, see the release notes, or flash the whole image), and do not leave an older image charging unattended. `apk upgrade` does not fix it. Thanks to naorunaoru for finding it.
 
 Patches and a ready-to-flash image that turn the OnePlus 8 Pro (IN2023, Snapdragon 865) into
 a Linux phone running [Nura](https://nura.eco) (formerly postmarketOS) on a mainline kernel.

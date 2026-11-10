@@ -43,6 +43,7 @@
 | libcamera 0.8.0: autofocus series ported to the renamed softisp IPA, IMX471 helper now upstream; autofocus rescans only after a 25 % change in four frames, so low light noise no longer makes the lens hunt | works | libcamera 0001–0006, pmaports 0034 |
 | Camera names (Main, Ultrawide, Telephoto, Colour Filter, Front) for PipeWire apps | works | `system/60-oneplus-instantnoodlep-cameras.conf` |
 | Proximity calibration from the Android `persist` partition, at first boot | works | `firmware/dsp-firmware.sh`, `sensors/setup-sensors.sh` |
+| Charging: the PM8150B float voltage register counts from 3.6 V in 10 mV steps, as in the vendor driver; the old encoding selected 4.76 V for the 4.35 V battery. Found by naorunaoru | works | kernel 0068, pmaports 0036 |
 | OIS of the telephoto camera (second LC898128), colour tuning of the front camera, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
@@ -94,7 +95,7 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   starts the OIS only once the camera stays on, and 0032 accepts forwarded QRTR
   client deletions from nodes on the same transport endpoint. 0033 adds kernel patches
   0065–0067, 0034 updates `temp/libcamera` to 0.8.0 with the autofocus series, and 0035
-  adds `temp/iio-sensor-proxy` 3.9 with the rotation fix and SSC support.
+  adds `temp/iio-sensor-proxy` 3.9 with the rotation fix and SSC support. 0036 adds kernel patch 0068 (charger float voltage).
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `firmware/` – boot service that copies SLPI, Venus and CDSP firmware from your own phone.
