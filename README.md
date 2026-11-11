@@ -8,7 +8,7 @@ package names still say `postmarketos`, so the commands here do too.
 Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-linux-nura-formerly-postmarketos-for-oneplus-8-pro-instantnoodlep.4807386/)
 
 > [!WARNING]
-> **Images up to v2026.11.10 charge the battery to 4.76 V instead of 4.35 V.** Fixed in
+> **Images up to v2026.11.10 charge the battery to 4.76 V instead of 4.35 V.** Fixed since
 > v2026.11.11. If you run an older image, [update the kernel](#update-an-older-image) and do not
 > leave the phone charging unattended until then. `apk upgrade` does not fix it.
 > Thanks to naorunaoru for finding it.
@@ -31,9 +31,9 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 | Cameras: main, ultrawide, telephoto, front, colour filter | work; autofocus on main, ultrawide and telephoto; optical stabilisation on main |
 | Sensors: accelerometer, gyroscope, light, proximity, compass | work; automatic screen rotation in Phosh and Plasma Mobile |
 | Hardware video decoding and encoding (H.264, HEVC, VP9, …) | works |
-| Charging over USB-C PD and USB-A | works; detection of a charger plugged in at boot and of USB-A chargers in `main`, next image, see [`docs/charging.md`](docs/charging.md) |
-| Vibration, torch | work, in `main`, next image |
-| External display and audio over USB-C (DisplayPort) | works, in `main`, next image; see [`docs/displayport.md`](docs/displayport.md) |
+| Charging over USB-C PD and USB-A | works, see [`docs/charging.md`](docs/charging.md) |
+| Vibration, torch (also the Plasma Mobile torch switch) | work |
+| External display and audio over USB-C (DisplayPort), with USB hub and charging | works, see [`docs/displayport.md`](docs/displayport.md) |
 | Calls, OIS of the telephoto camera, fingerprint reader, fast and wireless charging | not done |
 
 Tested on IN2023 phones (EU) with the Samsung AMS678UW01 panel. With another panel the
@@ -172,8 +172,8 @@ Reading tags works. Writing and card emulation are not tested. There is no app f
 
 ### External display
 
-USB-C to DisplayPort or HDMI with video, audio, a USB hub and charging at the same time, in
-`main` and the next image. Details and tested monitors: [`docs/displayport.md`](docs/displayport.md).
+USB-C to DisplayPort or HDMI with video, audio, a USB hub and charging at the same time.
+Details and tested monitors: [`docs/displayport.md`](docs/displayport.md).
 
 ## Update an older image
 

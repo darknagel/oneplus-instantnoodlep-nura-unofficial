@@ -6,7 +6,7 @@
 |---|---|---|
 | Display (Samsung AMS678UW01, new panel driver, 1440×3168 @ 120 Hz) | works | kernel 0001–0003, pmaports 0001 |
 | GPU (Adreno 650, Mesa freedreno), Phosh accelerated | works | kernel 0004, pmaports 0001 |
-| USB-C DisplayPort video/audio, USB2 hub/touch and power delivery | draft: 2880×1800 at 120 Hz, touch and power swap in both orientations; stereo audio and restart recovery pass; PHY/VBUS timeout fixes tested in both orientations | kernel 0088–0103, pmaports 0045–0047; [integration notes](displayport.md) |
+| USB-C DisplayPort video/audio, USB2 hub/touch and power delivery | works: 2880×1800 at 120 Hz, touch and power swap in both orientations; stereo audio and restart recovery pass; PHY/VBUS timeout fixes tested in both orientations | kernel 0088–0103, pmaports 0045–0047; [integration notes](displayport.md) |
 | USB-A charger detection and battery charge current | tested on IN2023: standalone USB-A detects as DCP at 1.5 A input; PD charges the battery at 1.99 A with a 2 A ceiling | kernel 0082–0087, pmaports 0044; [charging results](charging.md) |
 | Speakers + 3 microphones (VA macro, mic bias as in vendor DT) | works | kernel 0005, pmaports 0002, 0007 |
 | False headset detection with an ordinary USB cable, codec runtime-PM errors and unsorted RX register defaults | fixed on the test IN2023; analog USB-C headsets untested | kernel 0055–0060, pmaports 0030; [audio notes](audio.md) |
