@@ -1,0 +1,935 @@
+From 4ba28075881fb122dc60f7924c80ed1a9090e00d Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 19:56:11 +0000
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: follow USB-C limits in the
+ PM8150B charger
+
+Add kernel patches 0082-0087: the wake-IRQ, input-current and health fixes,
+TCPM-following input limits with fresh USB-A detection, the charger's
+link to the Type-C port and this board's 2 A battery current limit.
+Advance to release 75.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ ...m_pm8150b-release-the-wake-IRQ-on-de.patch |  30 +
+ ...m_pm8150b-scale-the-USB-input-curren.patch |  43 ++
+ ...m_pm8150b-report-battery-over-voltag.patch |  31 +
+ ...m_pm8150b-follow-TCPM-limits-and-ref.patch | 649 ++++++++++++++++++
+ ...m8150b-add-the-charger-source-change.patch |  38 +
+ ...nstantnoodlep-link-the-charger-to-th.patch |  40 ++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  14 +-
+ 7 files changed, 844 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0082-power-supply-qcom_pm8150b-release-the-wake-IRQ-on-de.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0083-power-supply-qcom_pm8150b-scale-the-USB-input-curren.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0084-power-supply-qcom_pm8150b-report-battery-over-voltag.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0085-power-supply-qcom_pm8150b-follow-TCPM-limits-and-ref.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0086-arm64-dts-qcom-pm8150b-add-the-charger-source-change.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0087-arm64-dts-qcom-instantnoodlep-link-the-charger-to-th.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0082-power-supply-qcom_pm8150b-release-the-wake-IRQ-on-de.patch b/device/testing/linux-postmarketos-qcom-sm8250/0082-power-supply-qcom_pm8150b-release-the-wake-IRQ-on-de.patch
+new file mode 100644
+index 0000000000..fef5d5c225
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0082-power-supply-qcom_pm8150b-release-the-wake-IRQ-on-de.patch
+@@ -0,0 +1,30 @@
++From cde3cbc51a70274dea3721540cc8126588e848bc Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 00:07:10 +0000
++Subject: [PATCH] power: supply: qcom_pm8150b: release the wake IRQ on detach
++
++A charger rebind fails with -EEXIST because the previous probe left its
++wake IRQ attached. Use the managed helper so driver detach and failed
++probe unwind clear it before the next probe.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/power/supply/qcom_pm8150b_charger.c | 2 +-
++ 1 file changed, 1 insertion(+), 1 deletion(-)
++
++diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
++index d4b8f94cc..9c0aec030 100644
++--- a/drivers/power/supply/qcom_pm8150b_charger.c
+++++ b/drivers/power/supply/qcom_pm8150b_charger.c
++@@ -941,7 +941,7 @@ static int smb5_probe(struct platform_device *pdev)
++ 	if (rc < 0)
++ 		return rc;
++ 
++-	rc = dev_pm_set_wake_irq(chip->dev, chip->cable_irq);
+++	rc = devm_pm_set_wake_irq(chip->dev, chip->cable_irq);
++ 	if (rc < 0)
++ 		return dev_err_probe(chip->dev, rc, "Couldn't set wake irq\n");
++ 
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0083-power-supply-qcom_pm8150b-scale-the-USB-input-curren.patch b/device/testing/linux-postmarketos-qcom-sm8250/0083-power-supply-qcom_pm8150b-scale-the-USB-input-curren.patch
+new file mode 100644
+index 0000000000..28183e3886
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0083-power-supply-qcom_pm8150b-scale-the-USB-input-curren.patch
+@@ -0,0 +1,43 @@
++From a5681309bdb9f349205e3528b6f5bd2f16afed31 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Mon, 9 Nov 2026 22:50:44 +0000
++Subject: [PATCH] power: supply: qcom_pm8150b: scale the USB input current
++ reading
++
++The USB input current channel reads a 0.2 V/A sense voltage in
++microvolts; multiply it by five to report microamps.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/power/supply/qcom_pm8150b_charger.c | 8 ++++++--
++ 1 file changed, 6 insertions(+), 2 deletions(-)
++
++diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
++index 9c0aec030..b84f298e9 100644
++--- a/drivers/power/supply/qcom_pm8150b_charger.c
+++++ b/drivers/power/supply/qcom_pm8150b_charger.c
++@@ -599,6 +599,7 @@ static int smb5_get_property(struct power_supply *psy,
++ 			     union power_supply_propval *val)
++ {
++ 	struct smb5_chip *chip = power_supply_get_drvdata(psy);
+++	int ret;
++ 
++ 	switch (psp) {
++ 	case POWER_SUPPLY_PROP_MANUFACTURER:
++@@ -610,8 +611,11 @@ static int smb5_get_property(struct power_supply *psy,
++ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
++ 		return smb5_get_current_limit(chip, &val->intval);
++ 	case POWER_SUPPLY_PROP_CURRENT_NOW:
++-		return smb5_get_iio_chan(chip, chip->usb_in_i_chan,
++-					 &val->intval);
+++		ret = smb5_get_iio_chan(chip, chip->usb_in_i_chan, &val->intval);
+++		/* The current-sense channel is 0.2 V/A, reported in microvolts. */
+++		if (!ret)
+++			val->intval *= 5;
+++		return ret;
++ 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
++ 		return smb5_get_iio_chan(chip, chip->usb_in_v_chan,
++ 					 &val->intval);
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0084-power-supply-qcom_pm8150b-report-battery-over-voltag.patch b/device/testing/linux-postmarketos-qcom-sm8250/0084-power-supply-qcom_pm8150b-report-battery-over-voltag.patch
+new file mode 100644
+index 0000000000..e2d234bff9
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0084-power-supply-qcom_pm8150b-report-battery-over-voltag.patch
+@@ -0,0 +1,31 @@
++From e64f1301702d7ccb1e1917aecdb66e5ef3ba84a8 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Mon, 9 Nov 2026 22:50:44 +0000
++Subject: [PATCH] power: supply: qcom_pm8150b: report battery over-voltage
++ health
++
++Report battery over-voltage as POWER_SUPPLY_HEALTH_OVERVOLTAGE instead
++of only logging it.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/power/supply/qcom_pm8150b_charger.c | 3 ++-
++ 1 file changed, 2 insertions(+), 1 deletion(-)
++
++diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
++index b84f298e9..b65ff5417 100644
++--- a/drivers/power/supply/qcom_pm8150b_charger.c
+++++ b/drivers/power/supply/qcom_pm8150b_charger.c
++@@ -570,7 +570,8 @@ static int smb5_get_prop_health(struct smb5_chip *chip, int *val)
++ 	}
++ 
++ 	if (stat & CHARGER_ERROR_STATUS_BAT_OV_BIT) {
++-		dev_err(chip->dev, "battery over-voltage");
+++		*val = POWER_SUPPLY_HEALTH_OVERVOLTAGE;
+++		return 0;
++ 	}
++ 
++ 	rc = regmap_read(chip->regmap, chip->base + BATTERY_CHARGER_STATUS_7_REG,
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0085-power-supply-qcom_pm8150b-follow-TCPM-limits-and-ref.patch b/device/testing/linux-postmarketos-qcom-sm8250/0085-power-supply-qcom_pm8150b-follow-TCPM-limits-and-ref.patch
+new file mode 100644
+index 0000000000..3b93cabd45
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0085-power-supply-qcom_pm8150b-follow-TCPM-limits-and-ref.patch
+@@ -0,0 +1,649 @@
++From 7c802beb40575145a821ac99419e905e37361d63 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 19:20:56 +0000
++Subject: [PATCH] power: supply: qcom_pm8150b: follow TCPM limits and refresh
++ legacy detection
++
++Use negotiated Type-C current while PD is active, suspend input when the
++source is unavailable, and bound legacy APSD retries. Stop charger policy
++from overwriting Type-C state owned by TCPM.
++
++Treat a zero TCPM limit as unknown for non-PD sources so default
++Rp and legacy cables reach BC1.2 detection. Preserve zero-current
++suspension for PD contracts and validate the input voltage before
++using a fallback limit.
++
++Start a fresh APSD cycle after enabling detection and invalidate the cached
++result on cable changes and PD transitions. A completed empty result is
++Unknown, not SDP; bounded polling and the optional source-change IRQ handle
++late completion without a restart loop. Keep unknown and SDP inputs at
++500 mA.
++
++Keep charging disabled until limits are installed, but leave USB input
++powering the system at 500 mA while probing waits for the Type-C
++supplier. Keep VBUS sourcing under software control as before. Program
++the battery's constant-charge current, falling back to 1.5 A when the
++device tree gives none.
++
++On an IN2023, the previously failing USB-A charger now detects as DCP and
++draws 1.48 A, including after PD; a computer hub still detects as SDP at
++500 mA.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/power/supply/qcom_pm8150b_charger.c | 418 +++++++++++++++-----
++ 1 file changed, 317 insertions(+), 101 deletions(-)
++
++diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
++index b65ff5417..73c7abfcf 100644
++--- a/drivers/power/supply/qcom_pm8150b_charger.c
+++++ b/drivers/power/supply/qcom_pm8150b_charger.c
++@@ -16,6 +16,7 @@
++ #include <linux/kernel.h>
++ #include <linux/minmax.h>
++ #include <linux/module.h>
+++#include <linux/mutex.h>
++ #include <linux/platform_device.h>
++ #include <linux/pm_wakeirq.h>
++ #include <linux/of.h>
++@@ -255,11 +256,13 @@
++ #define AICL_RERUN_TIME_MASK			GENMASK(1, 0)
++ 
++ #define SDP_CURRENT_UA			500000
++-#define CDP_CURRENT_UA			3000000
++-#define DCP_CURRENT_UA			3300000
++-#define CURRENT_MAX_UA			DCP_CURRENT_UA
+++#define CDP_CURRENT_UA			1500000
+++#define DCP_CURRENT_UA			1500000
+++#define CURRENT_MAX_UA			3000000
+++#define FAST_CHARGE_CURRENT_MAX_UA		8000000
+++#define APSD_MAX_RETRIES			3
++ 
++-/* pmi8150b registers represent current in increments of 1/40th of an amp */
+++/* PM8150B current registers use 50 mA steps. */
++ #define CURRENT_SCALE_FACTOR		50000
++ /* clang-format on */
++ 
++@@ -309,12 +312,21 @@ struct smb5_chip {
++ 	struct iio_channel *usb_in_v_chan;
++ 
++ 	struct power_supply *chg_psy;
+++	struct mutex lock;
+++	bool ready;
+++	bool has_tcpm;
+++	bool apsd_started;
+++	unsigned int apsd_retries;
+++	unsigned int user_current_limit;
+++	unsigned int source_current_limit;
+++	enum power_supply_usb_type usb_type;
++ };
++ 
++ static enum power_supply_property smb5_properties[] = {
++ 	POWER_SUPPLY_PROP_MANUFACTURER,
++ 	POWER_SUPPLY_PROP_MODEL_NAME,
++ 	POWER_SUPPLY_PROP_CURRENT_MAX,
+++	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
++ 	POWER_SUPPLY_PROP_CURRENT_NOW,
++ 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
++ 	POWER_SUPPLY_PROP_STATUS,
++@@ -361,7 +373,6 @@ static int smb5_apsd_get_charger_type(struct smb5_chip *chip, int *val)
++ 		return rc;
++ 	}
++ 	if (!(apsd_stat & APSD_DTC_STATUS_DONE_BIT)) {
++-		dev_err(chip->dev, "Apsd not ready");
++ 		return -EAGAIN;
++ 	}
++ 
++@@ -373,20 +384,25 @@ static int smb5_apsd_get_charger_type(struct smb5_chip *chip, int *val)
++ 
++ 	stat &= APSD_RESULT_STATUS_MASK;
++ 
++-	if (stat & CDP_CHARGER_BIT){
+++	switch (stat) {
+++	case SDP_CHARGER_BIT:
+++		*val = POWER_SUPPLY_USB_TYPE_SDP;
+++		break;
+++	case CDP_CHARGER_BIT:
++ 		*val = POWER_SUPPLY_USB_TYPE_CDP;
++-	} else if (stat & DCP_CHARGER_BIT){
++-		*val = POWER_SUPPLY_USB_TYPE_DCP;
++-	} else if (stat & OCP_CHARGER_BIT){
++-		*val = POWER_SUPPLY_USB_TYPE_DCP;
++-	} else if (stat & FLOAT_CHARGER_BIT){
++-		*val = POWER_SUPPLY_USB_TYPE_DCP;
++-	} else if (stat & QC_2P0_BIT){
++-		*val = POWER_SUPPLY_USB_TYPE_DCP;
++-	} else if (stat & QC_3P0_BIT){
+++		break;
+++	case DCP_CHARGER_BIT:
+++	case OCP_CHARGER_BIT:
+++	case QC_2P0_BIT:
+++	case QC_3P0_BIT:
+++	case DCP_CHARGER_BIT | QC_2P0_BIT:
+++	case DCP_CHARGER_BIT | QC_3P0_BIT:
++ 		*val = POWER_SUPPLY_USB_TYPE_DCP;
++-	} else {
++-		*val = POWER_SUPPLY_USB_TYPE_SDP;
+++		break;
+++	default:
+++		/* Empty, floating and unrecognised results are not an SDP. */
+++		*val = POWER_SUPPLY_USB_TYPE_UNKNOWN;
+++		break;
++ 	}
++ 
++ 	return 0;
++@@ -466,73 +482,230 @@ static int smb5_set_current_limit(struct smb5_chip *chip, unsigned int val)
++ {
++ 	unsigned char val_raw;
++ 
++-	if (val > 4950000) {
++-		dev_err(chip->dev,
++-			"Can't set current limit higher than 4950000uA");
+++	if (val > CURRENT_MAX_UA)
++ 		return -EINVAL;
++-	}
++ 	val_raw = val / CURRENT_SCALE_FACTOR;
++ 
++ 	return regmap_write(chip->regmap, chip->base + USBIN_CURRENT_LIMIT_CFG,
++ 		val_raw);
++ }
++ 
+++static int smb5_set_charge_current(struct smb5_chip *chip, int current_ua)
+++{
+++	/* Retain the bring-up default only for boards without a battery limit. */
+++	if (current_ua <= 0)
+++		current_ua = 1500000;
+++	if (current_ua < CURRENT_SCALE_FACTOR ||
+++	    current_ua > FAST_CHARGE_CURRENT_MAX_UA)
+++		return -EINVAL;
+++
+++	return regmap_write(chip->regmap, chip->base + FAST_CHARGE_CURRENT_CFG,
+++			    current_ua / CURRENT_SCALE_FACTOR);
+++}
+++
++ static int smb5_set_prop_charging_enabled(struct smb5_chip *chip, unsigned int val)
++ {
++ 	return regmap_update_bits(chip->regmap, chip->base + CHARGING_ENABLE_CMD,
++ 					CHARGING_ENABLE_CMD_BIT, val ? CHARGING_ENABLE_CMD_BIT : 0);
++ }
++ 
++-static void smb5_status_change_work(struct work_struct *work)
+++static void smb5_queue_status_work(struct smb5_chip *chip)
++ {
++-	unsigned int charger_type, current_ua;
++-	int usb_online = 0;
++-	int count, rc;
++-	struct smb5_chip *chip;
+++	mutex_lock(&chip->lock);
+++	if (chip->ready)
+++		mod_delayed_work(system_wq, &chip->status_change_work, 0);
+++	mutex_unlock(&chip->lock);
+++}
++ 
++-	chip = container_of(work, struct smb5_chip, status_change_work.work);
+++static void smb5_external_power_changed(struct power_supply *psy)
+++{
+++	smb5_queue_status_work(power_supply_get_drvdata(psy));
+++}
++ 
++-	smb5_get_prop_usb_online(chip, &usb_online);
++-	if (!usb_online)
++-		return;
+++static int smb5_supplier_property(struct smb5_chip *chip,
+++				 enum power_supply_property prop, int *value)
+++{
+++	union power_supply_propval val;
+++	int ret;
++ 
++-	for (count = 0; count < 3; count++) {
++-		dev_dbg(chip->dev, "get charger type retry %d\n", count);
++-		rc = smb5_apsd_get_charger_type(chip, &charger_type);
++-		if (rc != -EAGAIN)
++-			break;
++-		msleep(100);
+++	ret = power_supply_get_property_from_supplier(chip->chg_psy, prop, &val);
+++	if (!ret)
+++		*value = val.intval;
+++	return ret;
+++}
+++
+++static int smb5_apply_input_limit(struct smb5_chip *chip, unsigned int current_ua,
+++				 bool apsd)
+++{
+++	int ret;
+++
+++	/* Suspend before disabling input; never leave a stale large limit. */
+++	if (!current_ua) {
+++		ret = regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
+++					 USBIN_SUSPEND_BIT, USBIN_SUSPEND_BIT);
+++		if (ret)
+++			return ret;
++ 	}
++ 
++-	if (rc < 0 && rc != -EAGAIN) {
++-		dev_err(chip->dev, "get charger type failed: %d\n", rc);
++-		return;
+++	ret = smb5_set_current_limit(chip, current_ua);
+++	if (ret)
+++		return ret;
+++	ret = regmap_update_bits(chip->regmap, chip->base + USBIN_OPTIONS_1_CFG,
+++				 BC1P2_SRC_DETECT_BIT, apsd ? BC1P2_SRC_DETECT_BIT : 0);
+++	if (ret)
+++		return ret;
+++
+++	/* Software high-current mode, also used by downstream for PD. */
+++	ret = regmap_update_bits(chip->regmap, chip->base + USBIN_ICL_OPTIONS,
+++				 USBIN_MODE_CHG_BIT, USBIN_MODE_CHG_BIT);
+++	if (ret)
+++		return ret;
+++	ret = regmap_update_bits(chip->regmap, chip->base + CMD_ICL_OVERRIDE,
+++				 ICL_OVERRIDE_BIT, 0);
+++	if (ret)
+++		return ret;
+++	ret = regmap_update_bits(chip->regmap, chip->base + USBIN_LOAD_CFG,
+++				 ICL_OVERRIDE_AFTER_APSD_BIT, ICL_OVERRIDE_AFTER_APSD_BIT);
+++	if (ret)
+++		return ret;
+++
+++	return regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
+++				  USBIN_SUSPEND_BIT, current_ua ? 0 : USBIN_SUSPEND_BIT);
+++}
+++
+++static void smb5_status_change_work(struct work_struct *work)
+++{
+++	struct smb5_chip *chip = container_of(work, struct smb5_chip,
+++					     status_change_work.work);
+++	int online, type = POWER_SUPPLY_USB_TYPE_UNKNOWN, current_ua = 0;
+++	int voltage_uv, ret;
+++	bool apsd = false, start_apsd = false, retry = false;
+++
+++	mutex_lock(&chip->lock);
+++	if (!chip->ready)
+++		goto unlock;
+++
+++	if (chip->has_tcpm) {
+++		ret = smb5_supplier_property(chip, POWER_SUPPLY_PROP_ONLINE, &online);
+++		if (ret)
+++			goto fail;
+++		if (!online) {
+++			chip->apsd_retries = 0;
+++			goto apply;
+++		}
+++		ret = smb5_supplier_property(chip, POWER_SUPPLY_PROP_CURRENT_NOW,
+++					     &current_ua);
+++		if (ret)
+++			goto fail;
+++		ret = smb5_supplier_property(chip, POWER_SUPPLY_PROP_USB_TYPE, &type);
+++		if (ret)
+++			goto fail;
+++		ret = smb5_supplier_property(chip, POWER_SUPPLY_PROP_VOLTAGE_NOW,
+++					     &voltage_uv);
+++		if (ret)
+++			goto fail;
+++
+++		/* Default Rp is reported as zero when TCPM has no BC1.2 limit. */
+++		if (current_ua < 0)
+++			goto apply;
+++		/* This board advertises only fixed 5 V PDOs. */
+++		if (voltage_uv < 4500000 || voltage_uv > 5500000) {
+++			ret = -ERANGE;
+++			goto fail;
+++		}
+++		if (type == POWER_SUPPLY_USB_TYPE_PD ||
+++		    type == POWER_SUPPLY_USB_TYPE_PD_PPS || current_ua > SDP_CURRENT_UA) {
+++			if (type != POWER_SUPPLY_USB_TYPE_PD &&
+++			    type != POWER_SUPPLY_USB_TYPE_PD_PPS)
+++				type = POWER_SUPPLY_USB_TYPE_C;
+++			chip->apsd_retries = 0;
+++			goto apply;
+++		}
+++	} else {
+++		ret = smb5_get_prop_usb_online(chip, &online);
+++		if (ret)
+++			goto fail;
+++		if (!online) {
+++			chip->apsd_retries = 0;
+++			goto apply;
+++		}
++ 	}
++ 
++-	if (rc < 0) {
++-		rc = regmap_update_bits(chip->regmap, chip->base + CMD_APSD,
++-					APSD_RERUN_BIT, APSD_RERUN_BIT);
++-		schedule_delayed_work(&chip->status_change_work,
++-				      msecs_to_jiffies(1000));
++-		dev_dbg(chip->dev, "get charger type failed, rerun apsd\n");
++-		return;
+++	/* Default Rp or a legacy cable: start with a conservative BC1.2 limit. */
+++	apsd = true;
+++	current_ua = SDP_CURRENT_UA;
+++	if (!chip->apsd_started) {
+++		/* Ignore any result left by the previous connection or PD mode. */
+++		type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
+++		start_apsd = true;
+++		retry = true;
+++		goto apply;
++ 	}
++ 
++-	switch (charger_type) {
++-	case POWER_SUPPLY_USB_TYPE_CDP:
+++	ret = smb5_apsd_get_charger_type(chip, &type);
+++	if (ret == -EAGAIN)
+++		type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
+++	else if (ret)
+++		goto fail;
+++	else if (type == POWER_SUPPLY_USB_TYPE_CDP)
++ 		current_ua = CDP_CURRENT_UA;
++-		break;
++-	case POWER_SUPPLY_USB_TYPE_DCP:
+++	else if (type == POWER_SUPPLY_USB_TYPE_DCP)
++ 		current_ua = DCP_CURRENT_UA;
++-		break;
++-	case POWER_SUPPLY_USB_TYPE_SDP:
++-	default:
++-		current_ua = SDP_CURRENT_UA;
++-		break;
+++
+++	/* Also recheck early completed results; old DTs have no source-change IRQ. */
+++	if (chip->apsd_retries < APSD_MAX_RETRIES) {
+++		chip->apsd_retries++;
+++		retry = true;
++ 	}
++ 
++-	smb5_set_current_limit(chip, current_ua);
+++apply:
+++	chip->source_current_limit = clamp(current_ua, 0, CURRENT_MAX_UA);
+++	ret = smb5_apply_input_limit(chip,
+++		min(chip->source_current_limit, chip->user_current_limit), apsd);
+++	if (ret)
+++		goto fail;
+++	if (start_apsd) {
+++		/* Detection must be enabled before requesting a fresh measurement. */
+++		ret = regmap_update_bits(chip->regmap, chip->base + CMD_APSD,
+++					 APSD_RERUN_BIT, APSD_RERUN_BIT);
+++		if (ret)
+++			goto fail;
+++		chip->apsd_started = true;
+++		chip->apsd_retries = 0;
+++	} else if (!apsd) {
+++		chip->apsd_started = false;
+++		chip->apsd_retries = 0;
+++	}
+++	chip->usb_type = type;
+++	if (retry)
+++		mod_delayed_work(system_wq, &chip->status_change_work, HZ);
++ 	power_supply_changed(chip->chg_psy);
+++	goto unlock;
+++
+++fail:
+++	chip->apsd_started = false;
+++	chip->apsd_retries = 0;
+++	chip->source_current_limit = 0;
+++	chip->usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
+++	regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
+++			   USBIN_SUSPEND_BIT, USBIN_SUSPEND_BIT);
+++	dev_err_ratelimited(chip->dev, "Unable to apply input power limit: %d\n", ret);
+++	mod_delayed_work(system_wq, &chip->status_change_work, HZ);
+++unlock:
+++	mutex_unlock(&chip->lock);
+++}
+++
+++static void smb5_stop(void *data)
+++{
+++	struct smb5_chip *chip = data;
+++
+++	mutex_lock(&chip->lock);
+++	chip->ready = false;
+++	mutex_unlock(&chip->lock);
+++	cancel_delayed_work_sync(&chip->status_change_work);
+++	smb5_set_prop_charging_enabled(chip, 0);
+++	regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
+++			   USBIN_SUSPEND_BIT, USBIN_SUSPEND_BIT);
++ }
++ 
++ static int smb5_get_iio_chan(struct smb5_chip *chip, struct iio_channel *chan,
++@@ -600,6 +773,7 @@ static int smb5_get_property(struct power_supply *psy,
++ 			     union power_supply_propval *val)
++ {
++ 	struct smb5_chip *chip = power_supply_get_drvdata(psy);
+++	unsigned int raw;
++ 	int ret;
++ 
++ 	switch (psp) {
++@@ -611,6 +785,11 @@ static int smb5_get_property(struct power_supply *psy,
++ 		return 0;
++ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
++ 		return smb5_get_current_limit(chip, &val->intval);
+++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
+++		ret = regmap_read(chip->regmap, chip->base + USBIN_CURRENT_LIMIT_CFG, &raw);
+++		if (!ret)
+++			val->intval = raw * CURRENT_SCALE_FACTOR;
+++		return ret;
++ 	case POWER_SUPPLY_PROP_CURRENT_NOW:
++ 		ret = smb5_get_iio_chan(chip, chip->usb_in_i_chan, &val->intval);
++ 		/* The current-sense channel is 0.2 V/A, reported in microvolts. */
++@@ -627,7 +806,8 @@ static int smb5_get_property(struct power_supply *psy,
++ 	case POWER_SUPPLY_PROP_HEALTH:
++ 		return smb5_get_prop_health(chip, &val->intval);
++ 	case POWER_SUPPLY_PROP_USB_TYPE:
++-		return smb5_apsd_get_charger_type(chip, &val->intval);
+++		val->intval = READ_ONCE(chip->usb_type);
+++		return 0;
++ 	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
++ 		return smb5_get_prop_charging_enabled(chip, &val->intval);
++ 	default:
++@@ -642,9 +822,18 @@ static int smb5_set_property(struct power_supply *psy,
++ {
++ 	struct smb5_chip *chip = power_supply_get_drvdata(psy);
++ 
+++	guard(mutex)(&chip->lock);
+++	if (!chip->ready)
+++		return -EAGAIN;
+++
++ 	switch (psp) {
++ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
++-		return smb5_set_current_limit(chip, val->intval);
+++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
+++		if (val->intval < 0 || val->intval > CURRENT_MAX_UA)
+++			return -EINVAL;
+++		chip->user_current_limit = val->intval;
+++		mod_delayed_work(system_wq, &chip->status_change_work, 0);
+++		return 0;
++ 	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
++ 		return smb5_set_prop_charging_enabled(chip, val->intval);
++ 	default:
++@@ -658,6 +847,7 @@ static int smb5_property_is_writable(struct power_supply *psy,
++ {
++ 	switch (psp) {
++ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++ 	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
++ 		return 1;
++ 	default:
++@@ -686,10 +876,24 @@ static irqreturn_t smb5_handle_usb_plugin(int irq, void *data)
++ {
++ 	struct smb5_chip *chip = data;
++ 
+++	/* Keep a quick detach/reattach from reusing the last cable's result. */
+++	mutex_lock(&chip->lock);
+++	chip->apsd_started = false;
+++	chip->apsd_retries = 0;
+++	if (chip->ready)
+++		mod_delayed_work(system_wq, &chip->status_change_work, 0);
+++	mutex_unlock(&chip->lock);
++ 	power_supply_changed(chip->chg_psy);
++ 
++-	schedule_delayed_work(&chip->status_change_work,
++-			      msecs_to_jiffies(1500));
+++	return IRQ_HANDLED;
+++}
+++
+++static irqreturn_t smb5_handle_usb_source_change(int irq, void *data)
+++{
+++	struct smb5_chip *chip = data;
+++
+++	/* A late APSD completion must refresh the cached type and allowance. */
+++	smb5_queue_status_work(chip);
++ 
++ 	return IRQ_HANDLED;
++ }
++@@ -724,46 +928,34 @@ static const struct power_supply_desc smb5_psy_desc = {
++ 	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_SDP) |
++ 		     BIT(POWER_SUPPLY_USB_TYPE_CDP) |
++  		     BIT(POWER_SUPPLY_USB_TYPE_DCP) |
+++		     BIT(POWER_SUPPLY_USB_TYPE_C) |
+++		     BIT(POWER_SUPPLY_USB_TYPE_PD) |
+++		     BIT(POWER_SUPPLY_USB_TYPE_PD_PPS) |
++ 		     BIT(POWER_SUPPLY_USB_TYPE_UNKNOWN),
++ 	.properties = smb5_properties,
++ 	.num_properties = ARRAY_SIZE(smb5_properties),
++ 	.get_property = smb5_get_property,
++ 	.set_property = smb5_set_property,
++ 	.property_is_writeable = smb5_property_is_writable,
+++	.external_power_changed = smb5_external_power_changed,
++ };
++ 
++ /* Init sequence derived from vendor downstream driver */
++ static const struct smb5_register smb5_init_seq[] = {
++-	{ .addr = USBIN_CMD_IL, .mask = USBIN_SUSPEND_BIT, .val = 0 },
++-	{ .addr = AICL_RERUN_TIME_CFG, .mask = AICL_RERUN_TIME_MASK, .val = 0 },
++ 	/*
++-	 * By default configure us as an upstream facing port
++-	 * FIXME: This will be handled by the type-c driver
+++	 * Keep charging off until limits have been programmed, but let USB
+++	 * power the system at the 500 mA default meanwhile: probing can wait
+++	 * on the Type-C supplier, and a nearly empty battery must not carry
+++	 * the boot alone.
++ 	 */
++-	{ .addr = TYPE_C_MODE_CFG,
++-	  .mask = EN_TRY_SNK_BIT | EN_SNK_ONLY_BIT,
++-	  .val = EN_TRY_SNK_BIT },
++-	{ .addr = TYPEC_TYPE_C_VCONN_CONTROL,
++-	  .mask = VCONN_EN_ORIENTATION_BIT | VCONN_EN_SRC_BIT |
++-		  VCONN_EN_VALUE_BIT,
++-	  .val = VCONN_EN_SRC_BIT },
++-	{ .addr = DEBUG_ACCESS_SRC_CFG,
++-	  .mask = EN_UNORIENTED_DEBUG_ACCESS_SRC_BIT,
++-	  .val = EN_UNORIENTED_DEBUG_ACCESS_SRC_BIT },
++-	{ .addr = TYPE_C_EXIT_STATE_CFG,
++-	  .mask = SEL_SRC_UPPER_REF_BIT,
++-	  .val = SEL_SRC_UPPER_REF_BIT },
++-	/*
++-	 * Disable Type-C factory mode and stay in Attached.SRC state when VCONN
++-	 * over-current happens
++-	 */
++-	{ .addr = TYPE_C_CFG,
++-	  .mask = BC1P2_START_ON_CC_BIT,
++-	  .val = 0 },
++-	{ .addr = TYPE_C_DEBUG_ACCESS_SINK,
++-	  .mask = TYPEC_DEBUG_ACCESS_SINK_MASK,
++-	  .val = 0x17 },
++-	/* Configure VBUS for software control */
+++	{ .addr = CHARGING_ENABLE_CMD, .mask = CHARGING_ENABLE_CMD_BIT, .val = 0 },
+++	{ .addr = USBIN_CMD_IL, .mask = USBIN_SUSPEND_BIT, .val = 0 },
+++	{ .addr = USBIN_CURRENT_LIMIT_CFG, .mask = USBIN_CURRENT_LIMIT_MASK,
+++	  .val = SDP_CURRENT_UA / CURRENT_SCALE_FACTOR },
+++	{ .addr = AICL_RERUN_TIME_CFG, .mask = AICL_RERUN_TIME_MASK, .val = 0 },
+++	/* TCPM owns the Type-C and VCONN configuration. */
+++	{ .addr = TYPE_C_CFG, .mask = BC1P2_START_ON_CC_BIT, .val = 0 },
+++	/* Keep VBUS sourcing under software control, whichever supply provides it. */
++ 	{ .addr = OTG_CFG, .mask = OTG_EN_SRC_CFG_BIT, .val = 0 },
++ 	/*
++ 	 * Use VBAT to determine the recharge threshold when battery is full
++@@ -772,14 +964,12 @@ static const struct smb5_register smb5_init_seq[] = {
++ 	{ .addr = CHARGE_RCHG_SOC_THRESHOLD_CFG_REG,
++ 	  .mask = CHARGE_RCHG_SOC_THRESHOLD_CFG_MASK,
++ 	  .val = 98 },
++-	/* Enable charging */
++-	{ .addr = CHARGING_ENABLE_CMD,
++-	  .mask = CHARGING_ENABLE_CMD_BIT,
++-	  .val = CHARGING_ENABLE_CMD_BIT },
++-	/* Enable BC1P2 Src detect */
+++	/* The input policy enables BC1.2 only when TCPM has no better limit. */
++ 	{ .addr = USBIN_OPTIONS_1_CFG,
++-	  .mask = BC1P2_SRC_DETECT_BIT,
++-	  .val = BC1P2_SRC_DETECT_BIT },
+++	  .mask = BC1P2_SRC_DETECT_BIT | HVDCP_AUTH_ALG_EN_CFG_BIT |
+++		  HVDCP_AUTONOMOUS_MODE_EN_CFG_BIT | HVDCP_EN_BIT |
+++		  HVDCP_NO_AUTH_QC3_CFG_BIT,
+++	  .val = 0 },
++ 	/* Set the default SDP charger type to a 500ma USB 2.0 port */
++ 	{ .addr = USBIN_ICL_OPTIONS,
++ 	  .mask = USBIN_MODE_CHG_BIT,
++@@ -861,6 +1051,9 @@ static int smb5_probe(struct platform_device *pdev)
++ 
++ 	chip->dev = &pdev->dev;
++ 	chip->name = pdev->name;
+++	mutex_init(&chip->lock);
+++	chip->has_tcpm = device_property_present(chip->dev, "power-supplies");
+++	chip->user_current_limit = CURRENT_MAX_UA;
++ 
++ 	chip->regmap = dev_get_regmap(pdev->dev.parent, NULL);
++ 	if (!chip->regmap)
++@@ -911,11 +1104,10 @@ static int smb5_probe(struct platform_device *pdev)
++ 		return dev_err_probe(chip->dev, rc,
++ 				     "Failed to get battery info\n");
++ 
++-	rc = devm_delayed_work_autocancel(chip->dev, &chip->status_change_work,
++-					  smb5_status_change_work);
+++	INIT_DELAYED_WORK(&chip->status_change_work, smb5_status_change_work);
+++	rc = devm_add_action_or_reset(chip->dev, smb5_stop, chip);
++ 	if (rc)
++-		return dev_err_probe(chip->dev, rc,
++-				     "Failed to init status change work\n");
+++		return rc;
++ 
++ 	/* 3.6 V plus 10 mV per step, as in the vendor smb5 driver */
++ 	fv_uv = chip->batt_info->voltage_max_design_uv;
++@@ -929,6 +1121,11 @@ static int smb5_probe(struct platform_device *pdev)
++ 		return dev_err_probe(chip->dev, rc, "Couldn't set vbat max\n");
++ 	dev_info(chip->dev, "float voltage %d uV\n", fv_uv);
++ 
+++	rc = smb5_set_charge_current(chip,
+++		chip->batt_info->constant_charge_current_max_ua);
+++	if (rc)
+++		return dev_err_probe(chip->dev, rc, "Couldn't set battery current limit\n");
+++
++ 	rc = smb5_init_irq(chip, &irq, "bat-ov", smb5_handle_batt_overvoltage);
++ 	if (rc < 0)
++ 		return rc;
++@@ -942,6 +1139,19 @@ static int smb5_probe(struct platform_device *pdev)
++ 			   smb5_handle_usb_icl_change);
++ 	if (rc < 0)
++ 		return rc;
+++	/* Optional for compatibility with DTs predating source-change support. */
+++	irq = platform_get_irq_byname_optional(pdev, "usbin-src-change");
+++	if (irq >= 0) {
+++		rc = devm_request_threaded_irq(chip->dev, irq, NULL,
+++					       smb5_handle_usb_source_change,
+++					       IRQF_ONESHOT, "usbin-src-change", chip);
+++		if (rc)
+++			return dev_err_probe(chip->dev, rc,
+++					     "Couldn't request source-change IRQ\n");
+++	} else if (irq != -ENXIO) {
+++		return irq;
+++	}
+++
++ 	rc = smb5_init_irq(chip, &irq, "wdog-bark", smb5_handle_wdog_bark);
++ 	if (rc < 0)
++ 		return rc;
++@@ -952,8 +1162,14 @@ static int smb5_probe(struct platform_device *pdev)
++ 
++ 	platform_set_drvdata(pdev, chip);
++ 
++-	/* Initialise charger state */
++-	schedule_delayed_work(&chip->status_change_work, 0);
+++	rc = smb5_set_prop_charging_enabled(chip, 1);
+++	if (rc)
+++		return rc;
+++
+++	mutex_lock(&chip->lock);
+++	chip->ready = true;
+++	mutex_unlock(&chip->lock);
+++	smb5_queue_status_work(chip);
++ 
++ 	return 0;
++ }
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0086-arm64-dts-qcom-pm8150b-add-the-charger-source-change.patch b/device/testing/linux-postmarketos-qcom-sm8250/0086-arm64-dts-qcom-pm8150b-add-the-charger-source-change.patch
+new file mode 100644
+index 0000000000..c201541b4c
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0086-arm64-dts-qcom-pm8150b-add-the-charger-source-change.patch
+@@ -0,0 +1,38 @@
++From 76245ebc69f4464c393917e4ef6e389aef6a9f7a Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 19:20:56 +0000
++Subject: [PATCH] arm64: dts: qcom: pm8150b: add the charger source-change
++ interrupt
++
++Describe the USB input source-change interrupt so the charger driver can
++refresh its cached type and allowance when APSD completes late. The
++driver treats the interrupt as optional.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ arch/arm64/boot/dts/qcom/pm8150b.dtsi | 6 ++++--
++ 1 file changed, 4 insertions(+), 2 deletions(-)
++
++diff --git a/arch/arm64/boot/dts/qcom/pm8150b.dtsi b/arch/arm64/boot/dts/qcom/pm8150b.dtsi
++index a1a703520..9f14113fa 100644
++--- a/arch/arm64/boot/dts/qcom/pm8150b.dtsi
+++++ b/arch/arm64/boot/dts/qcom/pm8150b.dtsi
++@@ -113,11 +113,13 @@ pm8150b_charger: charger@1000 {
++ 			interrupts = <0x2 0x13 0x4 IRQ_TYPE_EDGE_BOTH>,
++ 				     <0x2 0x12 0x2 IRQ_TYPE_EDGE_BOTH>,
++ 				     <0x2 0x16 0x1 IRQ_TYPE_EDGE_RISING>,
++-				     <0x2 0x13 0x7 IRQ_TYPE_EDGE_RISING>;
+++				     <0x2 0x13 0x7 IRQ_TYPE_EDGE_RISING>,
+++				     <0x2 0x13 0x6 IRQ_TYPE_EDGE_RISING>;
++ 			interrupt-names = "usbin-plugin",
++ 					  "bat-ov",
++ 					  "wdog-bark",
++-					  "usbin-icl-change";
+++					  "usbin-icl-change",
+++					  "usbin-src-change";
++ 
++ 			io-channels = <&pm8150b_adc 7>,
++ 				      <&pm8150b_adc 8>;
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0087-arm64-dts-qcom-instantnoodlep-link-the-charger-to-th.patch b/device/testing/linux-postmarketos-qcom-sm8250/0087-arm64-dts-qcom-instantnoodlep-link-the-charger-to-th.patch
+new file mode 100644
+index 0000000000..35fb3b920a
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0087-arm64-dts-qcom-instantnoodlep-link-the-charger-to-th.patch
+@@ -0,0 +1,40 @@
++From 97fe5a93dcd96f15a75c3e6a15c2aa272494dde8 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 19:20:56 +0000
++Subject: [PATCH] arm64: dts: qcom: instantnoodlep: link the charger to the
++ Type-C port
++
++Name the Type-C port as the charger's supplier so that the charger takes
++its input limit from TCPM, and set this board to the stock normal 2 A
++battery limit while retaining the 4.35 V battery ceiling and 5 V USB
++input policy.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 3 +++
++ 1 file changed, 3 insertions(+)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 8eca70cf5..6c3ae98fe 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -555,6 +555,8 @@ battery: battery {
++ 		charge-full-design-microamp-hours = <4410000>;
++ 		energy-full-design-microwatt-hours = <17060000>;
++ 		voltage-max-design-microvolt = <4350000>;
+++		/* Stock normal-temperature limit for the PM8150B charging path. */
+++		constant-charge-current-max-microamp = <2000000>;
++ 	};
++ 
++ 	wcd938x: audio-codec {
++@@ -1415,6 +1417,7 @@ vol_down_n: vol-down-n-state {
++ &pm8150b_charger {
++ 	status = "okay";
++ 	monitored-battery = <&battery>;
+++	power-supplies = <&pm8150b_typec>;
++ };
++ 
++ &pm8150b_typec {
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 1fda51a3a5..3174f09fb7 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=74
++pkgrel=75
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -120,6 +120,12 @@ source="
+ 	0079-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Use-the.patch
+ 	0080-misc-fastrpc-Do-not-restart-invocations-when-the-sys.patch
+ 	0081-Input-s6sy761-set-the-controller-up-again-on-resume.patch
++	0082-power-supply-qcom_pm8150b-release-the-wake-IRQ-on-de.patch
++	0083-power-supply-qcom_pm8150b-scale-the-USB-input-curren.patch
++	0084-power-supply-qcom_pm8150b-report-battery-over-voltag.patch
++	0085-power-supply-qcom_pm8150b-follow-TCPM-limits-and-ref.patch
++	0086-arm64-dts-qcom-pm8150b-add-the-charger-source-change.patch
++	0087-arm64-dts-qcom-instantnoodlep-link-the-charger-to-th.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -247,4 +253,10 @@ d0a4df4a7f7825b5f7efca63d0c22b0cfcbd387de6f939aaca543b3b99037f99ffbc1ef38d09e774
+ 4c48e0326fd249b2fa854287d1a107ba2ce60cf27b7bb6a70dc311db43efcc41d28f08ee95c298fdf08004d8f401547417fe87726ec58bc5e10e8ab1a066a3a2  0079-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Use-the.patch
+ 8e20e3767f1a2584e96fccfea7cdc44f0fdecd72c81b766d197950935047e256e059022b074e8cfff09f2a76529ecb08e5fd0986bbc6e96d0270ffaa273eeb25  0080-misc-fastrpc-Do-not-restart-invocations-when-the-sys.patch
+ 072dae3150f47ac4f4576b47d31bf1c8adc9cd91c299c00833b56ef00f605fbfe006066928e8d621e71947510ee83389c5c31d34553c6c1a9f6f266706cfc39d  0081-Input-s6sy761-set-the-controller-up-again-on-resume.patch
++e1b735afaa5297be4e82a0abb12d2e258427b37b6a3b9e623ad5a6a98893923c20e8d27c5eb87b571e3ce2bb96bcb4de6c912e0da37cb417e2c7bf4dde10f871  0082-power-supply-qcom_pm8150b-release-the-wake-IRQ-on-de.patch
++9e39b662798af0ab088cbc8baa4e09c9ab16450bd1dd6a89afdb21b2f5c12ff32ec4ad7991ea7126561cd37cce87aaa401ac1018f38b4a4012d052b92df20a4e  0083-power-supply-qcom_pm8150b-scale-the-USB-input-curren.patch
++05ddb165c5feecf0d5d43af00affdd5befa012cb4031772e561947818d59fffaffed3b267e7454c2faccc2abb14ac8994420fde2da111024860a345fe7be9fd0  0084-power-supply-qcom_pm8150b-report-battery-over-voltag.patch
++e5831cfa276a167964e8e4f512018eb6d92b2f0828e8102d08864ad68f81aca9a172466509a81e3c6144fe9ff5c48900b397d4ed2f3ab2980e420b12d58dd717  0085-power-supply-qcom_pm8150b-follow-TCPM-limits-and-ref.patch
++51584c620a04a8a390edb7b858fb58e159115dd921a64e0c048273b5e2222ccd04215a91dc950b3816a00cafb6951602e1582752c4f7fcf5e3a2e6dbdaa9a9ce  0086-arm64-dts-qcom-pm8150b-add-the-charger-source-change.patch
++78732ef745acd6865647aecfb668bd35fced71b657ebc569a838f282937a153d38cefffaa189390e257d93c65e0a1c8ee62a77788fe6592fd0b43a2ee2c1b9ca  0087-arm64-dts-qcom-instantnoodlep-link-the-charger-to-th.patch
+ "
+-- 
+2.51.2
+

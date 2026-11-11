@@ -6,6 +6,7 @@
 |---|---|---|
 | Display (Samsung AMS678UW01, new panel driver, 1440×3168 @ 120 Hz) | works | kernel 0001–0003, pmaports 0001 |
 | GPU (Adreno 650, Mesa freedreno), Phosh accelerated | works | kernel 0004, pmaports 0001 |
+| USB-A charger detection and battery charge current | tested on IN2023: standalone USB-A detects as DCP at 1.5 A input; PD charges the battery at 1.99 A with a 2 A ceiling | kernel 0082–0087, pmaports 0044; [charging results](charging.md) |
 | Speakers + 3 microphones (VA macro, mic bias as in vendor DT) | works | kernel 0005, pmaports 0002, 0007 |
 | False headset detection with an ordinary USB cable, codec runtime-PM errors and unsorted RX register defaults | fixed on the test IN2023; analog USB-C headsets untested | kernel 0055–0060, pmaports 0030; [audio notes](audio.md) |
 | A/B boot counter (qbootctl marks boot successful) | works | pmaports 0003 |
@@ -110,7 +111,9 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   0074–0076 (haptics, flash LEDs and the charge pump), 0039 enables GPU cooling,
   Bluetooth PAN and QCE, 0040 adds the DSI PHY fixes 0077–0078, and 0041 builds
   ModemManager without the MediaTek and Rolling plugins. 0042 adds kernel patch 0079 (stock flash
-  limits) and 0043 adds 0080–0081 (resume from suspend).
+  limits) and 0043 adds 0080–0081 (resume from suspend). 0044 makes the PM8150B
+  charger follow USB-C limits, with USB-A detection and this board's 2 A battery
+  charge-current ceiling.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `firmware/` – boot service that copies SLPI, Venus and CDSP firmware from your own phone.
