@@ -1,0 +1,69 @@
+From f24ec08c432525890741d2341ecee86b331813c1 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 01:42:13 +0000
+Subject: [PATCH] ASoC: qcom: q6afe-dai: stop the DisplayPort port before codec
+ shutdown
+
+q6afe_dai_prepare() starts the AFE port and q6afe_dai_shutdown() stops
+it, after the DP codec's shutdown has disabled its audio clock. Stop
+DISPLAY_PORT_RX in hw_free instead, and clear the started state after
+the stop in prepare so that a failed restart is not stopped twice.
+
+With display audio configured from hw_params by the previous patch, an
+IN2023 passed 24 playback starts, including 12 with a 20 ms buffer,
+plus pause/resume and same-handle restart without the AFE timeout.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ sound/soc/qcom/qdsp6/q6afe-dai.c | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/sound/soc/qcom/qdsp6/q6afe-dai.c b/sound/soc/qcom/qdsp6/q6afe-dai.c
+index a0d21034a..8109db1b4 100644
+--- a/sound/soc/qcom/qdsp6/q6afe-dai.c
++++ b/sound/soc/qcom/qdsp6/q6afe-dai.c
+@@ -397,6 +397,7 @@ static int q6afe_dai_prepare(struct snd_pcm_substream *substream,
+ 			dev_err(dai->dev, "fail to close AFE port (%d)\n", rc);
+ 			return rc;
+ 		}
++		dai_data->is_port_started[dai->id] = false;
+ 	}
+ 
+ 	switch (dai->id) {
+@@ -446,6 +447,25 @@ static int q6afe_dai_prepare(struct snd_pcm_substream *substream,
+ 	return 0;
+ }
+ 
++static int q6hdmi_dai_hw_free(struct snd_pcm_substream *substream,
++			      struct snd_soc_dai *dai)
++{
++	struct q6afe_dai_data *dai_data = dev_get_drvdata(dai->dev);
++	int ret;
++
++	if (dai->id != DISPLAY_PORT_RX || !dai_data->is_port_started[dai->id])
++		return 0;
++
++	/* Stop AFE before the DP codec's shutdown disables its audio clock. */
++	ret = q6afe_port_stop(dai_data->port[dai->id]);
++	if (ret < 0)
++		return ret;
++
++	dai_data->is_port_started[dai->id] = false;
++
++	return 0;
++}
++
+ static int q6slim_set_channel_map(struct snd_soc_dai *dai,
+ 				  unsigned int tx_num,
+ 				  const unsigned int *tx_slot,
+@@ -714,6 +734,7 @@ static const struct snd_soc_dai_ops q6hdmi_ops = {
+ 	.remove			= msm_dai_q6_dai_remove,
+ 	.prepare		= q6afe_dai_prepare,
+ 	.hw_params		= q6hdmi_hw_params,
++	.hw_free		= q6hdmi_dai_hw_free,
+ 	.shutdown		= q6afe_dai_shutdown,
+ };
+ 
+-- 
+2.51.2
+

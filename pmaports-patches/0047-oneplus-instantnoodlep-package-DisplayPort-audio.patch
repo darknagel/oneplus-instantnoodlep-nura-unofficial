@@ -1,0 +1,325 @@
+From e1a85b87d54601d2367fd1126e999c094d677877 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 19:51:01 +0000
+Subject: [PATCH] oneplus-instantnoodlep: package DisplayPort audio
+
+Add kernel patches 0100-0103 for display audio and playback restart.
+Expose 48 kHz stereo playback as the HDMI UCM device. Advance the
+kernel package to release 78 and UCM to release 4.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ .../APKBUILD                                  |  4 +-
+ .../HiFi.conf                                 | 20 ++++++
+ ...nstantnoodlep-connect-DisplayPort-au.patch | 43 ++++++++++++
+ ...hw_params-callback-function-to-drm_c.patch | 52 ++++++++++++++
+ ...dai-stop-the-DisplayPort-port-before.patch | 69 +++++++++++++++++++
+ ...dai-reset-the-PCM-queue-pointer-on-s.patch | 30 ++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   | 10 ++-
+ 7 files changed, 225 insertions(+), 3 deletions(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0100-arm64-dts-qcom-instantnoodlep-connect-DisplayPort-au.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0101-drm-display-add-hw_params-callback-function-to-drm_c.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0102-ASoC-qcom-q6afe-dai-stop-the-DisplayPort-port-before.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0103-ASoC-qcom-q6asm-dai-reset-the-PCM-queue-pointer-on-s.patch
+
+diff --git a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD
+index 475764b9fa..83af6326ce 100644
+--- a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD
++++ b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD
+@@ -1,6 +1,6 @@
+ pkgname=alsa-ucm-conf-oneplus-instantnoodlep
+ pkgver=1
+-pkgrel=3
++pkgrel=4
+ pkgdesc="ALSA UCM configuration for OnePlus 8 Pro"
+ url="https://postmarketos.org"
+ arch="aarch64"
+@@ -19,5 +19,5 @@ package() {
+ }
+ sha512sums="
+ 3fcef09550eca80d37edf813d842057379338897d36cfcd02b13b553050fc2f3b00aceae5777781c5c4307b533d2dac779b533edd7c0c03bbacd496eafa0a98a  OnePlus8Pro.conf
+-78cb1afe80d03342599b65d3cccc9dde41873b0acc246119d833bfcbc52503a8c78850659b5f010cac86c25bc3fe59fdf27fefb091c15a19e950bfff16e8fc86  HiFi.conf
++01babeec2deb8c24cda00ab9072c4728bed210302eb848078dc3f994b42452965a12d914c3e0072fed3921f6e794f81f2c8daa2d8c9c6ec7f16c0e8833c37b17  HiFi.conf
+ "
+diff --git a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/HiFi.conf b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/HiFi.conf
+index f1d56d15e3..ac1e9804c7 100644
+--- a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/HiFi.conf
++++ b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/HiFi.conf
+@@ -57,3 +57,23 @@ SectionDevice."Mic" {
+ 		CaptureChannels 2
+ 	}
+ }
++
++SectionDevice."HDMI" {
++	Comment "DisplayPort stereo playback"
++
++	EnableSequence [
++		cset "name='DISPLAY_PORT_RX Audio Mixer MultiMedia8' 1"
++	]
++
++	DisableSequence [
++		cset "name='DISPLAY_PORT_RX Audio Mixer MultiMedia8' 0"
++	]
++
++	Value {
++		PlaybackPriority 200
++		PlaybackPCM "hw:${CardId},7"
++		PlaybackChannels 2
++		PlaybackRate 48000
++		JackControl "DP0 Jack"
++	}
++}
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0100-arm64-dts-qcom-instantnoodlep-connect-DisplayPort-au.patch b/device/testing/linux-postmarketos-qcom-sm8250/0100-arm64-dts-qcom-instantnoodlep-connect-DisplayPort-au.patch
+new file mode 100644
+index 0000000000..ae36ade5d7
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0100-arm64-dts-qcom-instantnoodlep-connect-DisplayPort-au.patch
+@@ -0,0 +1,43 @@
++From 6d89474a00070923117efb2d4990aef29e0e3ed9 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 00:07:10 +0000
++Subject: [PATCH] arm64: dts: qcom: instantnoodlep: connect DisplayPort audio
++
++Connect the existing DISPLAY_PORT_RX AFE port to the DP codec and Q6
++routing platform so the sound card exposes the display playback backend.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ .../dts/qcom/sm8250-oneplus-instantnoodlep.dts   | 16 ++++++++++++++++
++ 1 file changed, 16 insertions(+)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 8cab9fa30..45ab66e56 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -2229,6 +2229,22 @@ cpu {
++ 		};
++ 	};
++ 
+++	displayport-dai-link {
+++		link-name = "DisplayPort Playback";
+++
+++		codec {
+++			sound-dai = <&mdss_dp>;
+++		};
+++
+++		cpu {
+++			sound-dai = <&q6afedai DISPLAY_PORT_RX>;
+++		};
+++
+++		platform {
+++			sound-dai = <&q6routing>;
+++		};
+++	};
+++
++ 	speaker-dai-link {
++ 		link-name = "Speaker Playback";
++ 
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0101-drm-display-add-hw_params-callback-function-to-drm_c.patch b/device/testing/linux-postmarketos-qcom-sm8250/0101-drm-display-add-hw_params-callback-function-to-drm_c.patch
+new file mode 100644
+index 0000000000..1e63432e9b
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0101-drm-display-add-hw_params-callback-function-to-drm_c.patch
+@@ -0,0 +1,52 @@
++From a49ed81ae4e7df1bca3dc0b370aa5d799b491977 Mon Sep 17 00:00:00 2001
++From: Jianfeng Liu <liujianfeng1994@gmail.com>
++Date: Thu, 25 Sep 2025 12:05:09 +0800
++Subject: [PATCH] drm/display: add hw_params callback function to
++ drm_connector_hdmi_audio_ops
++
++After reusing drm_hdmi_audio_* helpers and drm_bridge_connector
++integration in drm/msm/dp, we have dropped msm_dp_audio_hw_params and
++use msm_dp_audio_prepare instead. While userspace is still calling
++hw_params to do audio initialization, and we get the following errors:
++
++q6apm-lpass-dais 3700000.remoteproc:glink-edge:gpr:service@1:bedais: q6apm_lpass_dai_prepare() started
++q6apm-lpass-dais 3700000.remoteproc:glink-edge:gpr:service@1:bedais: q6apm_lpass_dai_prepare() started
++q6apm-lpass-dais 3700000.remoteproc:glink-edge:gpr:service@1:bedais: q6apm_lpass_dai_prepare() started
++hdmi-audio-codec hdmi-audio-codec.0.auto: hdmi_codec_hw_params() started
++q6apm-lpass-dais 3700000.remoteproc:glink-edge:gpr:service@1:bedais: q6apm_lpass_dai_prepare() started
++qcom-apm gprsvc:service:2:1: Error (1) Processing 0x01001002 cmd
++qcom-apm gprsvc:service:2:1: DSP returned error[1001002] 1
++q6apm-lpass-dais 3700000.remoteproc:glink-edge:gpr:service@1:bedais: Failed to start APM port 104
++q6apm-lpass-dais 3700000.remoteproc:glink-edge:gpr:service@1:bedais: ASoC error (-22): at snd_soc_dai_prepare() on DISPLAY_PORT_RX_0
++MultiMedia2 Playback: ASoC error (-22): at dpcm_run_update_startup() on MultiMedia2 Playback
++
++msm_dp_audio_prepare is not called because hdmi-codec driver only checks
++and runs hw_params before q6apm_lpass_dai_prepare(). This commit will
++add hw_params callback same as drm_connector_hdmi_audio_prepare, so that
++hdmi-codec driver can work with userspace alsa.
++
++Tested with Radxa Dragon Q6A.
++
++Fixes: 98a8920e7b07 ("drm/msm/dp: reuse generic HDMI codec implementation")
++Signed-off-by: Jianfeng Liu <liujianfeng1994@gmail.com>
++Link: https://lore.kernel.org/r/20250925040530.20731-1-liujianfeng1994@gmail.com
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/gpu/drm/display/drm_hdmi_audio_helper.c | 1 +
++ 1 file changed, 1 insertion(+)
++
++diff --git a/drivers/gpu/drm/display/drm_hdmi_audio_helper.c b/drivers/gpu/drm/display/drm_hdmi_audio_helper.c
++index 7d78b02c1..6ca1c7ad0 100644
++--- a/drivers/gpu/drm/display/drm_hdmi_audio_helper.c
+++++ b/drivers/gpu/drm/display/drm_hdmi_audio_helper.c
++@@ -130,6 +130,7 @@ EXPORT_SYMBOL(drm_connector_hdmi_audio_plugged_notify);
++ 
++ static const struct hdmi_codec_ops drm_connector_hdmi_audio_ops = {
++ 	.audio_startup = drm_connector_hdmi_audio_startup,
+++	.hw_params = drm_connector_hdmi_audio_prepare,
++ 	.prepare = drm_connector_hdmi_audio_prepare,
++ 	.audio_shutdown = drm_connector_hdmi_audio_shutdown,
++ 	.mute_stream = drm_connector_hdmi_audio_mute_stream,
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0102-ASoC-qcom-q6afe-dai-stop-the-DisplayPort-port-before.patch b/device/testing/linux-postmarketos-qcom-sm8250/0102-ASoC-qcom-q6afe-dai-stop-the-DisplayPort-port-before.patch
+new file mode 100644
+index 0000000000..9b47ce266f
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0102-ASoC-qcom-q6afe-dai-stop-the-DisplayPort-port-before.patch
+@@ -0,0 +1,69 @@
++From f24ec08c432525890741d2341ecee86b331813c1 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 01:42:13 +0000
++Subject: [PATCH] ASoC: qcom: q6afe-dai: stop the DisplayPort port before codec
++ shutdown
++
++q6afe_dai_prepare() starts the AFE port and q6afe_dai_shutdown() stops
++it, after the DP codec's shutdown has disabled its audio clock. Stop
++DISPLAY_PORT_RX in hw_free instead, and clear the started state after
++the stop in prepare so that a failed restart is not stopped twice.
++
++With display audio configured from hw_params by the previous patch, an
++IN2023 passed 24 playback starts, including 12 with a 20 ms buffer,
++plus pause/resume and same-handle restart without the AFE timeout.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ sound/soc/qcom/qdsp6/q6afe-dai.c | 21 +++++++++++++++++++++
++ 1 file changed, 21 insertions(+)
++
++diff --git a/sound/soc/qcom/qdsp6/q6afe-dai.c b/sound/soc/qcom/qdsp6/q6afe-dai.c
++index a0d21034a..8109db1b4 100644
++--- a/sound/soc/qcom/qdsp6/q6afe-dai.c
+++++ b/sound/soc/qcom/qdsp6/q6afe-dai.c
++@@ -397,6 +397,7 @@ static int q6afe_dai_prepare(struct snd_pcm_substream *substream,
++ 			dev_err(dai->dev, "fail to close AFE port (%d)\n", rc);
++ 			return rc;
++ 		}
+++		dai_data->is_port_started[dai->id] = false;
++ 	}
++ 
++ 	switch (dai->id) {
++@@ -446,6 +447,25 @@ static int q6afe_dai_prepare(struct snd_pcm_substream *substream,
++ 	return 0;
++ }
++ 
+++static int q6hdmi_dai_hw_free(struct snd_pcm_substream *substream,
+++			      struct snd_soc_dai *dai)
+++{
+++	struct q6afe_dai_data *dai_data = dev_get_drvdata(dai->dev);
+++	int ret;
+++
+++	if (dai->id != DISPLAY_PORT_RX || !dai_data->is_port_started[dai->id])
+++		return 0;
+++
+++	/* Stop AFE before the DP codec's shutdown disables its audio clock. */
+++	ret = q6afe_port_stop(dai_data->port[dai->id]);
+++	if (ret < 0)
+++		return ret;
+++
+++	dai_data->is_port_started[dai->id] = false;
+++
+++	return 0;
+++}
+++
++ static int q6slim_set_channel_map(struct snd_soc_dai *dai,
++ 				  unsigned int tx_num,
++ 				  const unsigned int *tx_slot,
++@@ -714,6 +734,7 @@ static const struct snd_soc_dai_ops q6hdmi_ops = {
++ 	.remove			= msm_dai_q6_dai_remove,
++ 	.prepare		= q6afe_dai_prepare,
++ 	.hw_params		= q6hdmi_hw_params,
+++	.hw_free		= q6hdmi_dai_hw_free,
++ 	.shutdown		= q6afe_dai_shutdown,
++ };
++ 
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0103-ASoC-qcom-q6asm-dai-reset-the-PCM-queue-pointer-on-s.patch b/device/testing/linux-postmarketos-qcom-sm8250/0103-ASoC-qcom-q6asm-dai-reset-the-PCM-queue-pointer-on-s.patch
+new file mode 100644
+index 0000000000..e0da714f08
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0103-ASoC-qcom-q6asm-dai-reset-the-PCM-queue-pointer-on-s.patch
+@@ -0,0 +1,30 @@
++From 3687b7d30ad11fcf7475d6f8f8a83a8923dd145f Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 00:07:10 +0000
++Subject: [PATCH] ASoC: qcom: q6asm-dai: reset the PCM queue pointer on stop
++
++ALSA resets the application pointer for a new prepare cycle, but the
++driver retains the previous queued-frame count. Reusing the PCM handle
++after STOP can therefore stall with an I/O error. Reset queue_ptr on
++STOP while retaining the existing stream cleanup and pause behavior.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ sound/soc/qcom/qdsp6/q6asm-dai.c | 1 +
++ 1 file changed, 1 insertion(+)
++
++diff --git a/sound/soc/qcom/qdsp6/q6asm-dai.c b/sound/soc/qcom/qdsp6/q6asm-dai.c
++index 4f09fdd40..1c0326db9 100644
++--- a/sound/soc/qcom/qdsp6/q6asm-dai.c
+++++ b/sound/soc/qcom/qdsp6/q6asm-dai.c
++@@ -349,6 +349,7 @@ static int q6asm_dai_trigger(struct snd_soc_component *component,
++ 	case SNDRV_PCM_TRIGGER_STOP:
++ 		ret = q6asm_cmd_nowait(prtd->audio_client, prtd->stream_id,
++ 				       CMD_EOS);
+++		prtd->queue_ptr = 0;
++ 		break;
++ 	case SNDRV_PCM_TRIGGER_SUSPEND:
++ 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 24b2aa3397..35b6f9fd40 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=77
++pkgrel=78
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -138,6 +138,10 @@ source="
+ 	0097-usb-typec-tcpm-add-an-optional-power-role-swap-callb.patch
+ 	0098-usb-typec-qcom-hold-orientation-and-defer-the-VBUS-c.patch
+ 	0099-arm64-dts-qcom-instantnoodlep-source-VBUS-from-the-e.patch
++	0100-arm64-dts-qcom-instantnoodlep-connect-DisplayPort-au.patch
++	0101-drm-display-add-hw_params-callback-function-to-drm_c.patch
++	0102-ASoC-qcom-q6afe-dai-stop-the-DisplayPort-port-before.patch
++	0103-ASoC-qcom-q6asm-dai-reset-the-PCM-queue-pointer-on-s.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -283,4 +287,8 @@ e80ef8f042c4dfff039953cd39cbd28d148b2677c80fd7f8b7cfefee1d5daaf2cf4fed631a98871a
+ 8317a0f2a5cfb749f1afee6cd8b0c81fbc98655f680c593c0873152b60bb281e8305c1bf7475718b7af8deb355968e7378a22e6c2d3e4756969d96d409e82ced  0097-usb-typec-tcpm-add-an-optional-power-role-swap-callb.patch
+ 66b62a615a2488391b945f61a90b197efcceb12463f2f8bd10eab9945b01fd471dedacdb39d9efa48e2ebbb0c07ff8d2b2b5ed8b8ef971d295a03f81e32ba36a  0098-usb-typec-qcom-hold-orientation-and-defer-the-VBUS-c.patch
+ cd6050235185e6fffc546a10b5133e4d7640710e4f12d9a5020eb21f7939367d1e83ab8e9573bc5f3e15c130906049acf8d5cbaa7235227e46927b58aa4d0fb8  0099-arm64-dts-qcom-instantnoodlep-source-VBUS-from-the-e.patch
++3e4639ff719dcedc3719c2a2f279e47ead4e2ce314ba0f7a5b4d94ddee08d18175208cef926b54203ca1b97ac52c3bea124a42457d8686b374520d104983afd5  0100-arm64-dts-qcom-instantnoodlep-connect-DisplayPort-au.patch
++d7a9c89d083bb7afeecb9a1ebed6c7db2d840dbac2ff67218b83955dc7a75ddee0d9733e7fb056af2fbdd2f81826af6a2d379d8dfc7f7937eac718d2e5c56677  0101-drm-display-add-hw_params-callback-function-to-drm_c.patch
++ef386d3a666be1d9f947471cab78a5670caeeb92bb9db90fcdf64e704e2ac488a0ba2f352374794508b3f14862a6feb9bb3ca30a7effea44633d05ff5dd30b91  0102-ASoC-qcom-q6afe-dai-stop-the-DisplayPort-port-before.patch
++5ec0c66a82c95965aa4e63d83c1d7edff7e0c6c854be381a68f1a671f8a16dbcba51d4881d1306f4196af20c184dafd0f2d17e5180648ee247983343321a7d54  0103-ASoC-qcom-q6asm-dai-reset-the-PCM-queue-pointer-on-s.patch
+ "
+-- 
+2.51.2
+
