@@ -98,7 +98,7 @@ apk update
 adduser -u 10000 -g "" alice                         # pick your own name
 for g in audio input plugdev video netdev feedbackd wheel; do addgroup alice $g 2>/dev/null; done
 apk add xdg-user-dirs && su alice -c xdg-user-dirs-update   # camera apps need ~/Pictures
-apk add postmarketos-base-ui-audio-backend-pipewire     # sound, see below
+apk add postmarketos-base-ui-audio-backend-pipewire xwayland   # sound and X11 apps, see below
 apk add postmarketos-ui-phosh stevia-schemas         # stevia-schemas: Phosh keyboard fix
 apk add doas && echo 'permit persist :wheel' > /etc/doas.d/wheel.conf
 reboot
@@ -107,7 +107,9 @@ reboot
 Install one interface at a time, and the PipeWire audio backend first: the image's sound
 settings are made and tested for PipeWire, and apk may pick PulseAudio for Plasma Mobile
 otherwise. To switch later:
-`apk add postmarketos-base-ui-audio-backend-pipewire && reboot`.
+`apk add postmarketos-base-ui-audio-backend-pipewire && reboot`. Without `xwayland`, Plasma
+Mobile's background services hang at login, and the volume keys and other shortcuts do
+nothing.
 Useful apps: `snapshot` (camera), `spacebar` (SMS in Plasma Mobile). With your own user you
 can switch off root login over SSH:
 `rm /etc/ssh/sshd_config.d/10-oneplus-instantnoodlep-release.conf`
