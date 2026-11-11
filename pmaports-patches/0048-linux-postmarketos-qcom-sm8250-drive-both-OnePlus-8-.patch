@@ -1,0 +1,104 @@
+From 87aa469472ad079d4164e4db75a77da9f5500d88 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 18:55:02 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: drive both OnePlus 8 Pro
+ flash channels as one LED
+
+Kernel patch 0104: the stock camera uses both PM8150L flash channels as
+one flash. One LED with both sources is also named white:flash, which
+the torch switches of Plasma Mobile and Phosh look for.
+---
+ ...plus-instantnoodlep-Drive-both-flash.patch | 53 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  4 +-
+ 2 files changed, 56 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0104-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Drive-both-flash.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0104-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Drive-both-flash.patch b/device/testing/linux-postmarketos-qcom-sm8250/0104-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Drive-both-flash.patch
+new file mode 100644
+index 0000000000..c5f1660c81
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0104-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Drive-both-flash.patch
+@@ -0,0 +1,53 @@
++From 74f51e5d761d8323a228b6c7ebbf4df8744d0bc4 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 10 Nov 2026 21:53:14 +0100
++Subject: [PATCH] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Drive both
++ flash channels as one LED
++
++The stock camera drives both PM8150L flash channels together for the
++one rear flash. Describe it as one LED with both sources, as stock
++does, which also gives it the name white:flash that desktop torch
++switches look for.
++---
++ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 22 +++++++------------
++ 1 file changed, 8 insertions(+), 14 deletions(-)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 8eca70cf5..f30111399 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -2307,23 +2307,17 @@ haptics_irq_default: haptics-irq-default-state {
++ &pm8150l_flash {
++ 	status = "okay";
++ 
+++	/*
+++	 * The stock camera drives channels 0 and 1 (mainline indices 1 and
+++	 * 2) together as one flash, up to 500 mA torch and 1500 mA flash
+++	 * per channel.
+++	 */
++ 	led-0 {
++ 		function = LED_FUNCTION_FLASH;
++ 		color = <LED_COLOR_ID_WHITE>;
++-		function-enumerator = <0>;
++-		led-sources = <1>;
++-		led-max-microamp = <500000>;
++-		flash-max-microamp = <1500000>;
++-		flash-max-timeout-us = <1280000>;
++-	};
++-
++-	led-1 {
++-		function = LED_FUNCTION_FLASH;
++-		color = <LED_COLOR_ID_WHITE>;
++-		function-enumerator = <1>;
++-		led-sources = <2>;
++-		led-max-microamp = <500000>;
++-		flash-max-microamp = <1500000>;
+++		led-sources = <1>, <2>;
+++		led-max-microamp = <1000000>;
+++		flash-max-microamp = <3000000>;
++ 		flash-max-timeout-us = <1280000>;
++ 	};
++ };
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 35b6f9fd40..ce82248d04 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=78
++pkgrel=79
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -142,6 +142,7 @@ source="
+ 	0101-drm-display-add-hw_params-callback-function-to-drm_c.patch
+ 	0102-ASoC-qcom-q6afe-dai-stop-the-DisplayPort-port-before.patch
+ 	0103-ASoC-qcom-q6asm-dai-reset-the-PCM-queue-pointer-on-s.patch
++	0104-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Drive-both-flash.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -291,4 +292,5 @@ cd6050235185e6fffc546a10b5133e4d7640710e4f12d9a5020eb21f7939367d1e83ab8e9573bc5f
+ d7a9c89d083bb7afeecb9a1ebed6c7db2d840dbac2ff67218b83955dc7a75ddee0d9733e7fb056af2fbdd2f81826af6a2d379d8dfc7f7937eac718d2e5c56677  0101-drm-display-add-hw_params-callback-function-to-drm_c.patch
+ ef386d3a666be1d9f947471cab78a5670caeeb92bb9db90fcdf64e704e2ac488a0ba2f352374794508b3f14862a6feb9bb3ca30a7effea44633d05ff5dd30b91  0102-ASoC-qcom-q6afe-dai-stop-the-DisplayPort-port-before.patch
+ 5ec0c66a82c95965aa4e63d83c1d7edff7e0c6c854be381a68f1a671f8a16dbcba51d4881d1306f4196af20c184dafd0f2d17e5180648ee247983343321a7d54  0103-ASoC-qcom-q6asm-dai-reset-the-PCM-queue-pointer-on-s.patch
++e9d98e92be4535451dfa7085e649cf2b1104bda7cf49fa7935e86fd79c33a2c25f549f3efacf0fc6ffdfe8426656f98ddf1eca339762ce74644dd53ff7ab7ce6  0104-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Drive-both-flash.patch
+ "
+-- 
+2.43.0
+
