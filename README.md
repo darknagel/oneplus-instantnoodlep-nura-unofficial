@@ -98,13 +98,18 @@ apk update
 adduser -u 10000 -g "" alice                         # pick your own name
 for g in audio input plugdev video netdev feedbackd wheel; do addgroup alice $g 2>/dev/null; done
 apk add xdg-user-dirs && su alice -c xdg-user-dirs-update   # camera apps need ~/Pictures
+apk add postmarketos-base-ui-audio-backend-pipewire     # sound, see below
 apk add postmarketos-ui-phosh stevia-schemas         # stevia-schemas: Phosh keyboard fix
 apk add doas && echo 'permit persist :wheel' > /etc/doas.d/wheel.conf
 reboot
 ```
 
-Install one interface at a time. Useful apps: `snapshot` (camera), `spacebar` (SMS in Plasma
-Mobile). With your own user you can switch off root login over SSH:
+Install one interface at a time, and the PipeWire audio backend first: the image's sound
+settings are made and tested for PipeWire, and apk may pick PulseAudio for Plasma Mobile
+otherwise. To switch later:
+`apk add postmarketos-base-ui-audio-backend-pipewire && reboot`.
+Useful apps: `snapshot` (camera), `spacebar` (SMS in Plasma Mobile). With your own user you
+can switch off root login over SSH:
 `rm /etc/ssh/sshd_config.d/10-oneplus-instantnoodlep-release.conf`
 
 Using the phone as a small server (screen off, charge limit, sleep): [`docs/server.md`](docs/server.md).
@@ -217,6 +222,8 @@ For the compass and sensor setup on old images see [`docs/sensors.md`](docs/sens
   `unexpected SMEM item size 4684` in `dmesg` means an image older than v2026.11.10.
 - **Apps report `Resource busy` for the camera** after testing with `cam` or `media-ctl`:
   `media-ctl -d /dev/media0 -r` (`apk add v4l-utils`).
+- **No or very quiet sound in a desktop:** switch to PipeWire, see [Desktop](#desktop). `wpctl status`
+  must list "Speaker playback", not only a dummy output.
 - **Cameras missing after a libcamera update:** `systemctl --user restart pipewire wireplumber`
 - **Black screen after flashing:** check the slot (see [Install](#install)) and the panel,
   [`docs/panel-log.md`](docs/panel-log.md).

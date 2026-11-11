@@ -57,6 +57,7 @@
 | Flash limits as in the vendor device tree: 1500 mA flash for up to 1280 ms and 500 mA torch per channel | works | kernel 0079, pmaports 0042 |
 | Resume from suspend: the freezer interrupted the waiting FastRPC call of `hexagonrpcd`, the restarted system call sent it a second time and the sensor DSP crashed (taking iio-sensor-proxy and the rotation with it); the touchscreen driver enabled its interrupt before powering the controller up, so resume failed with -19 and sensing stayed off | works | kernel 0080–0081, pmaports 0043 |
 | Torch: the stock camera drives both PM8150L flash channels together as one flash; describing it as one LED with both sources also gives it the name `white:flash`, which the Plasma Mobile and Phosh torch switches look for | works | kernel 0104, pmaports 0048 |
+| Sound in PipeWire: DisplayPort audio as its own UCM use case, since without a monitor it made PipeWire drop the speakers and microphones; the speaker amplifiers get 16-bit samples, at 24 bit they play far too quietly | works | pmaports 0049, `system/61-oneplus-instantnoodlep-speaker-s16.conf` |
 | OIS of the telephoto camera (second LC898128), colour tuning of the front camera, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
@@ -132,7 +133,7 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   pmaports patch 0034.
 - `system/` – small files the image adds: the `ois-gyro` service, which keeps the
   gyroscope running while the main camera's OIS is active, the AK7375 option without the
-  lens ramp, and camera names for PipeWire.
+  lens ramp, camera names for PipeWire and 16-bit samples for the speakers.
 
 Kernel patches 0033–0041 are not my work either: they are the series "media: camss: Add
 support for C-PHY" v5 by David Heidelberg, with patches by Casey Connolly and Luca Weiss.

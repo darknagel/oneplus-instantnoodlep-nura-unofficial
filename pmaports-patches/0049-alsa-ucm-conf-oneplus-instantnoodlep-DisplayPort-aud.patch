@@ -1,0 +1,131 @@
+From 5552424c7e6dc1d2bfbe105d09a52a3ef718f32e Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 19:45:30 +0100
+Subject: [PATCH] alsa-ucm-conf-oneplus-instantnoodlep: DisplayPort audio as
+ its own use case
+
+Without a monitor the DSP cannot start the DisplayPort port, and a sound
+server that probes it in the HiFi use case drops the whole profile:
+PipeWire then offered no speakers or microphones at all. Move the
+DisplayPort device into a use case of its own.
+---
+ .../APKBUILD                                  | 10 ++++---
+ .../DisplayPort.conf                          | 30 +++++++++++++++++++
+ .../HiFi.conf                                 | 20 -------------
+ .../OnePlus8Pro.conf                          |  5 ++++
+ 4 files changed, 41 insertions(+), 24 deletions(-)
+ create mode 100644 device/testing/alsa-ucm-conf-oneplus-instantnoodlep/DisplayPort.conf
+
+diff --git a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD
+index 83af6326ce..6ed573aa0b 100644
+--- a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD
++++ b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/APKBUILD
+@@ -1,6 +1,6 @@
+ pkgname=alsa-ucm-conf-oneplus-instantnoodlep
+ pkgver=1
+-pkgrel=4
++pkgrel=5
+ pkgdesc="ALSA UCM configuration for OnePlus 8 Pro"
+ url="https://postmarketos.org"
+ arch="aarch64"
+@@ -9,15 +9,17 @@ depends="alsa-ucm-conf"
+ source="
+ 	OnePlus8Pro.conf
+ 	HiFi.conf
++	DisplayPort.conf
+ "
+ options="!check"
+ builddir="$srcdir"
+ 
+ package() {
+ 	install -Dm644 OnePlus8Pro.conf "$pkgdir/usr/share/alsa/ucm2/conf.d/sm8250/OnePlus 8 Pro.conf"
+-	install -Dm644 HiFi.conf -t "$pkgdir/usr/share/alsa/ucm2/OnePlus8Pro"
++	install -Dm644 HiFi.conf DisplayPort.conf -t "$pkgdir/usr/share/alsa/ucm2/OnePlus8Pro"
+ }
+ sha512sums="
+-3fcef09550eca80d37edf813d842057379338897d36cfcd02b13b553050fc2f3b00aceae5777781c5c4307b533d2dac779b533edd7c0c03bbacd496eafa0a98a  OnePlus8Pro.conf
+-01babeec2deb8c24cda00ab9072c4728bed210302eb848078dc3f994b42452965a12d914c3e0072fed3921f6e794f81f2c8daa2d8c9c6ec7f16c0e8833c37b17  HiFi.conf
++414703b065e8596512b5cd3629fe918c6273de67d132c9e00299e7b68c0bb0ec39146cae3c7369f02a21564dab966a97c0db106c7494ea6c874196ae7f535cc3  OnePlus8Pro.conf
++78cb1afe80d03342599b65d3cccc9dde41873b0acc246119d833bfcbc52503a8c78850659b5f010cac86c25bc3fe59fdf27fefb091c15a19e950bfff16e8fc86  HiFi.conf
++cc555c4f2d9b807dc7e74566f27b1f75e0d5fae4f35e859df63f912dceeae6bf32d8b7d03564fd5e6e931d6273fa1f7bb58fb4c425bda6ae9f2118b3bebe3766  DisplayPort.conf
+ "
+diff --git a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/DisplayPort.conf b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/DisplayPort.conf
+new file mode 100644
+index 0000000000..3ac9c29d0a
+--- /dev/null
++++ b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/DisplayPort.conf
+@@ -0,0 +1,30 @@
++Syntax 3
++
++# DisplayPort audio is its own use case: without a monitor the DSP cannot
++# start the DisplayPort port, and a sound server that probes it together
++# with the speakers would then drop the speakers and microphones too.
++SectionVerb {
++	EnableSequence [
++		cset "name='DISPLAY_PORT_RX Audio Mixer MultiMedia8' 1"
++	]
++
++	DisableSequence [
++		cset "name='DISPLAY_PORT_RX Audio Mixer MultiMedia8' 0"
++	]
++
++	Value {
++		TQ "HiFi"
++	}
++}
++
++SectionDevice."HDMI" {
++	Comment "DisplayPort stereo playback"
++
++	Value {
++		PlaybackPriority 200
++		PlaybackPCM "hw:${CardId},7"
++		PlaybackChannels 2
++		PlaybackRate 48000
++		JackControl "DP0 Jack"
++	}
++}
+diff --git a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/HiFi.conf b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/HiFi.conf
+index ac1e9804c7..f1d56d15e3 100644
+--- a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/HiFi.conf
++++ b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/HiFi.conf
+@@ -57,23 +57,3 @@ SectionDevice."Mic" {
+ 		CaptureChannels 2
+ 	}
+ }
+-
+-SectionDevice."HDMI" {
+-	Comment "DisplayPort stereo playback"
+-
+-	EnableSequence [
+-		cset "name='DISPLAY_PORT_RX Audio Mixer MultiMedia8' 1"
+-	]
+-
+-	DisableSequence [
+-		cset "name='DISPLAY_PORT_RX Audio Mixer MultiMedia8' 0"
+-	]
+-
+-	Value {
+-		PlaybackPriority 200
+-		PlaybackPCM "hw:${CardId},7"
+-		PlaybackChannels 2
+-		PlaybackRate 48000
+-		JackControl "DP0 Jack"
+-	}
+-}
+diff --git a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/OnePlus8Pro.conf b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/OnePlus8Pro.conf
+index a8ceddc95d..78b2c94e10 100644
+--- a/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/OnePlus8Pro.conf
++++ b/device/testing/alsa-ucm-conf-oneplus-instantnoodlep/OnePlus8Pro.conf
+@@ -4,3 +4,8 @@ SectionUseCase."HiFi" {
+ 	File "/OnePlus8Pro/HiFi.conf"
+ 	Comment "HiFi quality Music."
+ }
++
++SectionUseCase."DisplayPort" {
++	File "/OnePlus8Pro/DisplayPort.conf"
++	Comment "DisplayPort audio"
++}
+-- 
+2.43.0
+
