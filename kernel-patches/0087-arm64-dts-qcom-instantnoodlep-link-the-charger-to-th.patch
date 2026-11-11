@@ -1,0 +1,40 @@
+From 97fe5a93dcd96f15a75c3e6a15c2aa272494dde8 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 19:20:56 +0000
+Subject: [PATCH] arm64: dts: qcom: instantnoodlep: link the charger to the
+ Type-C port
+
+Name the Type-C port as the charger's supplier so that the charger takes
+its input limit from TCPM, and set this board to the stock normal 2 A
+battery limit while retaining the 4.35 V battery ceiling and 5 V USB
+input policy.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 8eca70cf5..6c3ae98fe 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -555,6 +555,8 @@ battery: battery {
+ 		charge-full-design-microamp-hours = <4410000>;
+ 		energy-full-design-microwatt-hours = <17060000>;
+ 		voltage-max-design-microvolt = <4350000>;
++		/* Stock normal-temperature limit for the PM8150B charging path. */
++		constant-charge-current-max-microamp = <2000000>;
+ 	};
+ 
+ 	wcd938x: audio-codec {
+@@ -1415,6 +1417,7 @@ vol_down_n: vol-down-n-state {
+ &pm8150b_charger {
+ 	status = "okay";
+ 	monitored-battery = <&battery>;
++	power-supplies = <&pm8150b_typec>;
+ };
+ 
+ &pm8150b_typec {
+-- 
+2.51.2
+

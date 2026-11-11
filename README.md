@@ -16,6 +16,7 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 |---|---|
 | Display (1440×3168 @ 120 Hz), touch, GPU | works |
 | Speakers, 3 microphones | works |
+| USB-A and USB-C PD charging | draft patches: USB-A detection fixed; PD battery charging measured at 1.99 A; see [charging results](docs/charging.md); not in the release image |
 | Wi-Fi, Bluetooth, USB networking | works |
 | Modem: SIM with PIN, LTE/5G, SMS | works |
 | Mobile data | works, tested on congstar (IPv6 only, up to 90 Mbit/s) |

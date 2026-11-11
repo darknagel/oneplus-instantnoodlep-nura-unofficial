@@ -1,0 +1,43 @@
+From a5681309bdb9f349205e3528b6f5bd2f16afed31 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 9 Nov 2026 22:50:44 +0000
+Subject: [PATCH] power: supply: qcom_pm8150b: scale the USB input current
+ reading
+
+The USB input current channel reads a 0.2 V/A sense voltage in
+microvolts; multiply it by five to report microamps.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/power/supply/qcom_pm8150b_charger.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
+index 9c0aec030..b84f298e9 100644
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -599,6 +599,7 @@ static int smb5_get_property(struct power_supply *psy,
+ 			     union power_supply_propval *val)
+ {
+ 	struct smb5_chip *chip = power_supply_get_drvdata(psy);
++	int ret;
+ 
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_MANUFACTURER:
+@@ -610,8 +611,11 @@ static int smb5_get_property(struct power_supply *psy,
+ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+ 		return smb5_get_current_limit(chip, &val->intval);
+ 	case POWER_SUPPLY_PROP_CURRENT_NOW:
+-		return smb5_get_iio_chan(chip, chip->usb_in_i_chan,
+-					 &val->intval);
++		ret = smb5_get_iio_chan(chip, chip->usb_in_i_chan, &val->intval);
++		/* The current-sense channel is 0.2 V/A, reported in microvolts. */
++		if (!ret)
++			val->intval *= 5;
++		return ret;
+ 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+ 		return smb5_get_iio_chan(chip, chip->usb_in_v_chan,
+ 					 &val->intval);
+-- 
+2.51.2
+

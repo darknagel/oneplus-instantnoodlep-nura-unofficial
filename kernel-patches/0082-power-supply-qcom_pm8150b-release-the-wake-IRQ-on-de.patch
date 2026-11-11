@@ -1,0 +1,30 @@
+From cde3cbc51a70274dea3721540cc8126588e848bc Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 00:07:10 +0000
+Subject: [PATCH] power: supply: qcom_pm8150b: release the wake IRQ on detach
+
+A charger rebind fails with -EEXIST because the previous probe left its
+wake IRQ attached. Use the managed helper so driver detach and failed
+probe unwind clear it before the next probe.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/power/supply/qcom_pm8150b_charger.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
+index d4b8f94cc..9c0aec030 100644
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -941,7 +941,7 @@ static int smb5_probe(struct platform_device *pdev)
+ 	if (rc < 0)
+ 		return rc;
+ 
+-	rc = dev_pm_set_wake_irq(chip->dev, chip->cable_irq);
++	rc = devm_pm_set_wake_irq(chip->dev, chip->cable_irq);
+ 	if (rc < 0)
+ 		return dev_err_probe(chip->dev, rc, "Couldn't set wake irq\n");
+ 
+-- 
+2.51.2
+
