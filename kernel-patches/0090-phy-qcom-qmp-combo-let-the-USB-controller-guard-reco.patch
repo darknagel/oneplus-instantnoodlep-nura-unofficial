@@ -1,0 +1,219 @@
+From e5ddd75e6988d0828d8ebd74e5ada47c2bbb5af7 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 03:30:53 +0000
+Subject: [PATCH] phy: qcom-qmp-combo: let the USB controller guard
+ reconfiguration
+
+The Type-C mux can reset the USB PHY while the DWC3 role worker is
+resetting the controller, or while SUSPHY is asserted. This causes
+the PHY readiness poll to expire during display hotplug.
+
+Add a pair of optional callbacks that the USB controller glue registers
+on the USB PHY. Call them around orientation and mode changes, outside
+phy_mutex, so the controller can finish its reset and keep the PIPE
+interface awake until the PHY has been reconfigured.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 96 ++++++++++++++++++++++-
+ include/linux/phy/phy-qcom-qmp.h          | 36 +++++++++
+ 2 files changed, 128 insertions(+), 4 deletions(-)
+ create mode 100644 include/linux/phy/phy-qcom-qmp.h
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+index 10cfcb2d8..dce6b6b5e 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -15,6 +15,7 @@
+ #include <linux/of_address.h>
+ #include <linux/of_graph.h>
+ #include <linux/phy/phy.h>
++#include <linux/phy/phy-qcom-qmp.h>
+ #include <linux/platform_device.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/reset.h>
+@@ -2293,6 +2294,10 @@ struct qmp_combo {
+ 	struct regulator_bulk_data *vregs;
+ 
+ 	struct mutex phy_mutex;
++	/* Lock order: reconfig_lock, consumer controller lock, phy_mutex. */
++	struct mutex reconfig_lock;
++	const struct qcom_qmp_usb_reconfig_ops *usb_reconfig_ops;
++	void *usb_reconfig_data;
+ 	int init_count;
+ 	enum qmpphy_mode qmpphy_mode;
+ 
+@@ -4004,6 +4009,40 @@ static const struct phy_ops qmp_combo_dp_phy_ops = {
+ 	.owner		= THIS_MODULE,
+ };
+ 
++int qcom_qmp_usb_reconfig_register(struct phy *phy,
++		const struct qcom_qmp_usb_reconfig_ops *ops, void *data)
++{
++	struct qmp_combo *qmp;
++
++	if (!phy || phy->ops != &qmp_combo_usb_phy_ops)
++		return -EOPNOTSUPP;
++	if (!ops || !ops->prepare || !ops->complete)
++		return -EINVAL;
++	qmp = phy_get_drvdata(phy);
++	guard(mutex)(&qmp->reconfig_lock);
++	if (qmp->usb_reconfig_ops)
++		return -EBUSY;
++	qmp->usb_reconfig_data = data;
++	qmp->usb_reconfig_ops = ops;
++	return 0;
++}
++EXPORT_SYMBOL_GPL(qcom_qmp_usb_reconfig_register);
++
++void qcom_qmp_usb_reconfig_unregister(struct phy *phy, void *data)
++{
++	struct qmp_combo *qmp;
++
++	if (!phy || phy->ops != &qmp_combo_usb_phy_ops)
++		return;
++	qmp = phy_get_drvdata(phy);
++	guard(mutex)(&qmp->reconfig_lock);
++	if (qmp->usb_reconfig_data != data)
++		return;
++	qmp->usb_reconfig_ops = NULL;
++	qmp->usb_reconfig_data = NULL;
++}
++EXPORT_SYMBOL_GPL(qcom_qmp_usb_reconfig_unregister);
++
+ static void qmp_combo_enable_autonomous_mode(struct qmp_combo *qmp)
+ {
+ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
+@@ -4417,10 +4456,9 @@ static int qmp_combo_register_clocks(struct qmp_combo *qmp, struct device_node *
+ }
+ 
+ #if IS_ENABLED(CONFIG_TYPEC)
+-static int qmp_combo_typec_switch_set(struct typec_switch_dev *sw,
++static int qmp_combo_set_orientation(struct qmp_combo *qmp,
+ 				      enum typec_orientation orientation)
+ {
+-	struct qmp_combo *qmp = typec_switch_get_drvdata(sw);
+ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
+ 
+ 	if (orientation == qmp->orientation || orientation == TYPEC_ORIENTATION_NONE)
+@@ -4445,9 +4483,8 @@ static int qmp_combo_typec_switch_set(struct typec_switch_dev *sw,
+ 	return 0;
+ }
+ 
+-static int qmp_combo_typec_mux_set(struct typec_mux_dev *mux, struct typec_mux_state *state)
++static int qmp_combo_set_mux(struct qmp_combo *qmp, struct typec_mux_state *state)
+ {
+-	struct qmp_combo *qmp = typec_mux_get_drvdata(mux);
+ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
+ 	enum qmpphy_mode new_mode;
+ 	unsigned int svid;
+@@ -4528,6 +4565,56 @@ static int qmp_combo_typec_mux_set(struct typec_mux_dev *mux, struct typec_mux_s
+ 	return 0;
+ }
+ 
++/* These guards run outside phy_mutex: resume can initialize the USB PHY. */
++static int qmp_combo_reconfig_begin(struct qmp_combo *qmp)
++{
++	int ret = 0;
++
++	mutex_lock(&qmp->reconfig_lock);
++	if (qmp->usb_reconfig_ops)
++		ret = qmp->usb_reconfig_ops->prepare(qmp->usb_reconfig_data);
++	if (ret)
++		mutex_unlock(&qmp->reconfig_lock);
++	return ret;
++}
++
++static void qmp_combo_reconfig_end(struct qmp_combo *qmp)
++{
++	if (qmp->usb_reconfig_ops)
++		qmp->usb_reconfig_ops->complete(qmp->usb_reconfig_data);
++	mutex_unlock(&qmp->reconfig_lock);
++}
++
++static int qmp_combo_typec_switch_set(struct typec_switch_dev *sw,
++				    enum typec_orientation orientation)
++{
++	struct qmp_combo *qmp = typec_switch_get_drvdata(sw);
++	int ret;
++
++	if (orientation == TYPEC_ORIENTATION_NONE)
++		return 0;
++	ret = qmp_combo_reconfig_begin(qmp);
++	if (ret)
++		return ret;
++	ret = qmp_combo_set_orientation(qmp, orientation);
++	qmp_combo_reconfig_end(qmp);
++	return ret;
++}
++
++static int qmp_combo_typec_mux_set(struct typec_mux_dev *mux,
++				 struct typec_mux_state *state)
++{
++	struct qmp_combo *qmp = typec_mux_get_drvdata(mux);
++	int ret;
++
++	ret = qmp_combo_reconfig_begin(qmp);
++	if (ret)
++		return ret;
++	ret = qmp_combo_set_mux(qmp, state);
++	qmp_combo_reconfig_end(qmp);
++	return ret;
++}
++
+ static void qmp_combo_typec_switch_unregister(void *data)
+ {
+ 	struct qmp_combo *qmp = data;
+@@ -4859,6 +4946,7 @@ static int qmp_combo_probe(struct platform_device *pdev)
+ 		return -EINVAL;
+ 
+ 	mutex_init(&qmp->phy_mutex);
++	mutex_init(&qmp->reconfig_lock);
+ 
+ 	ret = qmp_combo_reset_init(qmp);
+ 	if (ret)
+diff --git a/include/linux/phy/phy-qcom-qmp.h b/include/linux/phy/phy-qcom-qmp.h
+new file mode 100644
+index 000000000..30e038f67
+--- /dev/null
++++ b/include/linux/phy/phy-qcom-qmp.h
+@@ -0,0 +1,36 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef __PHY_QCOM_QMP_H
++#define __PHY_QCOM_QMP_H
++
++#include <linux/errno.h>
++#include <linux/kconfig.h>
++
++struct phy;
++
++/*
++ * Serialize external USB3/DP lane changes with the USB controller. prepare()
++ * must leave the controller's PIPE interface awake until complete() is called.
++ * Both callbacks may sleep. A failed prepare() must undo its own changes;
++ * complete() is called exactly once for each successful prepare().
++ */
++struct qcom_qmp_usb_reconfig_ops {
++	int (*prepare)(void *data);
++	void (*complete)(void *data);
++};
++
++#if IS_REACHABLE(CONFIG_PHY_QCOM_QMP_COMBO)
++int qcom_qmp_usb_reconfig_register(struct phy *phy,
++		const struct qcom_qmp_usb_reconfig_ops *ops, void *data);
++void qcom_qmp_usb_reconfig_unregister(struct phy *phy, void *data);
++#else
++static inline int qcom_qmp_usb_reconfig_register(struct phy *phy,
++		const struct qcom_qmp_usb_reconfig_ops *ops, void *data)
++{
++	return -EOPNOTSUPP;
++}
++
++static inline void qcom_qmp_usb_reconfig_unregister(struct phy *phy, void *data)
++{
++}
++#endif
++#endif
+-- 
+2.51.2
+

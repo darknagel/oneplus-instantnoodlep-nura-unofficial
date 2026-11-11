@@ -1,0 +1,121 @@
+From 568fdd397b96281216b16586333a42fd777e0da5 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 9 Nov 2026 22:50:44 +0000
+Subject: [PATCH] phy: qcom-qmp-combo: hold USB3 in reset in SAFE and four-lane
+ DP modes
+
+Keep SAFE mode in reset and preserve USB consumer references across
+mux changes. Skip USB3 power-on and power-off while DP owns all four
+lanes; the common clocks still serve USB2.
+
+A transient PHY startup timeout still occurs in successful attachment
+tests.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 39 +++++++++++++++--------
+ 1 file changed, 26 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+index dce6b6b5e..8d8742a72 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -78,6 +78,7 @@ enum qmpphy_mode {
+ 	QMPPHY_MODE_USB3DP = 0,
+ 	QMPPHY_MODE_DP_ONLY,
+ 	QMPPHY_MODE_USB3_ONLY,
++	QMPPHY_MODE_SAFE,
+ };
+ 
+ /* set of registers with offsets different per-PHY */
+@@ -3727,6 +3728,11 @@ static int qmp_combo_com_init(struct qmp_combo *qmp, bool force)
+ 	writel(val, com + QPHY_V3_DP_COM_TYPEC_CTRL);
+ 
+ 	switch (qmp->qmpphy_mode) {
++	case QMPPHY_MODE_SAFE:
++		/* Keep both high-speed PCS blocks in reset during negotiation. */
++		writel(0, com + QPHY_V3_DP_COM_PHY_MODE_CTRL);
++		break;
++
+ 	case QMPPHY_MODE_USB3DP:
+ 		writel(USB3_MODE | DP_MODE, com + QPHY_V3_DP_COM_PHY_MODE_CTRL);
+ 
+@@ -3884,6 +3890,11 @@ static int qmp_combo_usb_power_on(struct phy *phy)
+ 	unsigned int val;
+ 	int ret;
+ 
++	/* Four-lane DP holds USB3 in reset; common clocks still serve USB2. */
++	if (qmp->qmpphy_mode == QMPPHY_MODE_DP_ONLY ||
++	    qmp->qmpphy_mode == QMPPHY_MODE_SAFE)
++		return 0;
++
+ 	qmp_configure(qmp->dev, serdes, cfg->serdes_tbl, cfg->serdes_tbl_num);
+ 
+ 	/* Tx, Rx, and PCS configurations */
+@@ -3925,6 +3936,10 @@ static int qmp_combo_usb_power_off(struct phy *phy)
+ 	struct qmp_combo *qmp = phy_get_drvdata(phy);
+ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
+ 
++	if (qmp->qmpphy_mode == QMPPHY_MODE_DP_ONLY ||
++	    qmp->qmpphy_mode == QMPPHY_MODE_SAFE)
++		return 0;
++
+ 	/* PHY reset */
+ 	qphy_setbits(qmp->pcs, cfg->regs[QPHY_SW_RESET], SW_RESET);
+ 
+@@ -4496,7 +4511,11 @@ static int qmp_combo_set_mux(struct qmp_combo *qmp, struct typec_mux_state *stat
+ 	else
+ 		svid = 0;
+ 
+-	if (svid == USB_TYPEC_DP_SID) {
++	if (state->mode == TYPEC_STATE_SAFE) {
++		new_mode = QMPPHY_MODE_SAFE;
++	} else if (state->mode == TYPEC_STATE_USB) {
++		new_mode = QMPPHY_MODE_USB3_ONLY;
++	} else if (svid == USB_TYPEC_DP_SID) {
+ 		switch (state->mode) {
+ 		/* DP Only */
+ 		case TYPEC_DP_STATE_C:
+@@ -4531,8 +4550,6 @@ static int qmp_combo_set_mux(struct qmp_combo *qmp, struct typec_mux_state *stat
+ 	dev_dbg(qmp->dev, "typec_mux_set: switching from qmpphy mode %d to %d\n",
+ 		qmp->qmpphy_mode, new_mode);
+ 
+-	qmp->qmpphy_mode = new_mode;
+-
+ 	if (qmp->init_count) {
+ 		if (qmp->usb_init_count)
+ 			qmp_combo_usb_power_off(qmp->usb_phy);
+@@ -4542,24 +4559,20 @@ static int qmp_combo_set_mux(struct qmp_combo *qmp, struct typec_mux_state *stat
+ 
+ 		qmp_combo_com_exit(qmp, true);
+ 
+-		/* Now everything's powered down, power up the right PHYs */
++		/* Now everything's powered down, power up the right PHYs. */
++		qmp->qmpphy_mode = new_mode;
+ 		qmp_combo_com_init(qmp, true);
+ 
+-		if (new_mode == QMPPHY_MODE_DP_ONLY) {
+-			if (qmp->usb_init_count)
+-				qmp->usb_init_count--;
+-		}
+-
+-		if (new_mode == QMPPHY_MODE_USB3DP || new_mode == QMPPHY_MODE_USB3_ONLY) {
++		/* Mode changes do not acquire or release PHY consumer references. */
++		if (qmp->usb_init_count)
+ 			qmp_combo_usb_power_on(qmp->usb_phy);
+-			if (!qmp->usb_init_count)
+-				qmp->usb_init_count++;
+-		}
+ 
+ 		if (new_mode == QMPPHY_MODE_DP_ONLY || new_mode == QMPPHY_MODE_USB3DP) {
+ 			if (qmp->dp_init_count)
+ 				cfg->dp_aux_init(qmp);
+ 		}
++	} else {
++		qmp->qmpphy_mode = new_mode;
+ 	}
+ 
+ 	return 0;
+-- 
+2.51.2
+

@@ -1,0 +1,1341 @@
+From e59f9b46fe4b1660064703dc4d1f95e51a05ac1c Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 19:51:01 +0000
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: enable OnePlus DisplayPort
+ alt mode
+
+Add kernel patches 0088-0095 for DisplayPort alternate mode with USB2
+alongside four-lane DP, including the Type-C CC-mode fix. Advance to
+release 76.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ ...0-retain-USB2-routing-in-four-lane-D.patch |  38 ++
+ ...bo-do-not-drop-the-pipe-clock-after-.patch |  45 +++
+ ...bo-let-the-USB-controller-guard-reco.patch | 219 ++++++++++
+ ...bo-hold-USB3-in-reset-in-SAFE-and-fo.patch | 121 ++++++
+ ...gacy-retain-the-USB2-clock-during-fo.patch | 381 ++++++++++++++++++
+ ...e-DP-mux-state-when-reconfiguration-.patch | 227 +++++++++++
+ ...c-qcom-program-the-CC-mode-in-set_cc.patch |  68 ++++
+ ...m8250-oneplus-instantnoodlep-enable-.patch | 119 ++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  18 +-
+ 9 files changed, 1235 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0088-usb-typec-fsa4480-retain-USB2-routing-in-four-lane-D.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0089-phy-qcom-qmp-combo-do-not-drop-the-pipe-clock-after-.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0090-phy-qcom-qmp-combo-let-the-USB-controller-guard-reco.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0091-phy-qcom-qmp-combo-hold-USB3-in-reset-in-SAFE-and-fo.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0092-usb-dwc3-qcom-legacy-retain-the-USB2-clock-during-fo.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0093-usb-typec-restore-DP-mux-state-when-reconfiguration-.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0094-usb-typec-qcom-program-the-CC-mode-in-set_cc.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0095-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-enable-.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0088-usb-typec-fsa4480-retain-USB2-routing-in-four-lane-D.patch b/device/testing/linux-postmarketos-qcom-sm8250/0088-usb-typec-fsa4480-retain-USB2-routing-in-four-lane-D.patch
+new file mode 100644
+index 0000000000..022c46132d
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0088-usb-typec-fsa4480-retain-USB2-routing-in-four-lane-D.patch
+@@ -0,0 +1,38 @@
++From 828fccc38e73e7b247337134bb482e2c939e3bac Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Mon, 9 Nov 2026 22:50:44 +0000
++Subject: [PATCH] usb: typec: fsa4480: retain USB2 routing in four-lane DP mode
++
++Four-lane DisplayPort uses the SuperSpeed pairs but leaves D+/D-
++available. Keep the USB2 switch enabled alongside SBU so the monitor
++hub can connect.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/usb/typec/mux/fsa4480.c | 8 +-------
++ 1 file changed, 1 insertion(+), 7 deletions(-)
++
++diff --git a/drivers/usb/typec/mux/fsa4480.c b/drivers/usb/typec/mux/fsa4480.c
++index fe6af2746..09880ca48 100644
++--- a/drivers/usb/typec/mux/fsa4480.c
+++++ b/drivers/usb/typec/mux/fsa4480.c
++@@ -94,15 +94,9 @@ static int fsa4480_set(struct fsa4480 *fsa)
++ 		sel = FSA4480_SEL_USB;
++ 	} else if (fsa->svid) {
++ 		switch (fsa->mode) {
++-		/* DP Only */
+++		/* USB 2.0 remains available with either two or four DP lanes. */
++ 		case TYPEC_DP_STATE_C:
++ 		case TYPEC_DP_STATE_E:
++-			enable |= FSA4480_ENABLE_SBU;
++-			if (reverse)
++-				sel = FSA4480_SEL_SBU_REVERSE;
++-			break;
++-
++-		/* DP + USB */
++ 		case TYPEC_DP_STATE_D:
++ 		case TYPEC_DP_STATE_F:
++ 			enable |= FSA4480_ENABLE_USB | FSA4480_ENABLE_SBU;
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0089-phy-qcom-qmp-combo-do-not-drop-the-pipe-clock-after-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0089-phy-qcom-qmp-combo-do-not-drop-the-pipe-clock-after-.patch
+new file mode 100644
+index 0000000000..66ad747100
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0089-phy-qcom-qmp-combo-do-not-drop-the-pipe-clock-after-.patch
+@@ -0,0 +1,45 @@
++From 5e6d59f80c69da449eeac269e0aa841c596fa7b1 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Mon, 9 Nov 2026 22:50:44 +0000
++Subject: [PATCH] phy: qcom-qmp-combo: do not drop the pipe clock after a USB
++ init timeout
++
++qmp_combo_com_init() enables the pipe clock and qmp_combo_com_exit()
++disables it. The timeout path of qmp_combo_usb_power_on() disables it as
++well, so a failed start drops the clock twice: here, and again when
++qmp_combo_usb_init() unwinds through qmp_combo_com_exit() or at the next
++common exit after a Type-C mux change.
++
++Leave the clock to the common init/exit paths.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 10 ++--------
++ 1 file changed, 2 insertions(+), 8 deletions(-)
++
++diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++index cdcfad2e8..10cfcb2d8 100644
++--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++@@ -3908,16 +3908,10 @@ static int qmp_combo_usb_power_on(struct phy *phy)
++ 	status = pcs + cfg->regs[QPHY_PCS_STATUS];
++ 	ret = readl_poll_timeout(status, val, !(val & PHYSTATUS), 200,
++ 			PHY_INIT_COMPLETE_TIMEOUT);
++-	if (ret) {
+++	if (ret)
++ 		dev_err(qmp->dev, "phy initialization timed-out\n");
++-		goto err_disable_pipe_clk;
++-	}
++-
++-	return 0;
++-
++-err_disable_pipe_clk:
++-	clk_disable_unprepare(qmp->pipe_clk);
++ 
+++	/* The common init/exit paths own the shared pipe clock. */
++ 	return ret;
++ }
++ 
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0090-phy-qcom-qmp-combo-let-the-USB-controller-guard-reco.patch b/device/testing/linux-postmarketos-qcom-sm8250/0090-phy-qcom-qmp-combo-let-the-USB-controller-guard-reco.patch
+new file mode 100644
+index 0000000000..2f1a5e08c3
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0090-phy-qcom-qmp-combo-let-the-USB-controller-guard-reco.patch
+@@ -0,0 +1,219 @@
++From e5ddd75e6988d0828d8ebd74e5ada47c2bbb5af7 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 03:30:53 +0000
++Subject: [PATCH] phy: qcom-qmp-combo: let the USB controller guard
++ reconfiguration
++
++The Type-C mux can reset the USB PHY while the DWC3 role worker is
++resetting the controller, or while SUSPHY is asserted. This causes
++the PHY readiness poll to expire during display hotplug.
++
++Add a pair of optional callbacks that the USB controller glue registers
++on the USB PHY. Call them around orientation and mode changes, outside
++phy_mutex, so the controller can finish its reset and keep the PIPE
++interface awake until the PHY has been reconfigured.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 96 ++++++++++++++++++++++-
++ include/linux/phy/phy-qcom-qmp.h          | 36 +++++++++
++ 2 files changed, 128 insertions(+), 4 deletions(-)
++ create mode 100644 include/linux/phy/phy-qcom-qmp.h
++
++diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++index 10cfcb2d8..dce6b6b5e 100644
++--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++@@ -15,6 +15,7 @@
++ #include <linux/of_address.h>
++ #include <linux/of_graph.h>
++ #include <linux/phy/phy.h>
+++#include <linux/phy/phy-qcom-qmp.h>
++ #include <linux/platform_device.h>
++ #include <linux/regulator/consumer.h>
++ #include <linux/reset.h>
++@@ -2293,6 +2294,10 @@ struct qmp_combo {
++ 	struct regulator_bulk_data *vregs;
++ 
++ 	struct mutex phy_mutex;
+++	/* Lock order: reconfig_lock, consumer controller lock, phy_mutex. */
+++	struct mutex reconfig_lock;
+++	const struct qcom_qmp_usb_reconfig_ops *usb_reconfig_ops;
+++	void *usb_reconfig_data;
++ 	int init_count;
++ 	enum qmpphy_mode qmpphy_mode;
++ 
++@@ -4004,6 +4009,40 @@ static const struct phy_ops qmp_combo_dp_phy_ops = {
++ 	.owner		= THIS_MODULE,
++ };
++ 
+++int qcom_qmp_usb_reconfig_register(struct phy *phy,
+++		const struct qcom_qmp_usb_reconfig_ops *ops, void *data)
+++{
+++	struct qmp_combo *qmp;
+++
+++	if (!phy || phy->ops != &qmp_combo_usb_phy_ops)
+++		return -EOPNOTSUPP;
+++	if (!ops || !ops->prepare || !ops->complete)
+++		return -EINVAL;
+++	qmp = phy_get_drvdata(phy);
+++	guard(mutex)(&qmp->reconfig_lock);
+++	if (qmp->usb_reconfig_ops)
+++		return -EBUSY;
+++	qmp->usb_reconfig_data = data;
+++	qmp->usb_reconfig_ops = ops;
+++	return 0;
+++}
+++EXPORT_SYMBOL_GPL(qcom_qmp_usb_reconfig_register);
+++
+++void qcom_qmp_usb_reconfig_unregister(struct phy *phy, void *data)
+++{
+++	struct qmp_combo *qmp;
+++
+++	if (!phy || phy->ops != &qmp_combo_usb_phy_ops)
+++		return;
+++	qmp = phy_get_drvdata(phy);
+++	guard(mutex)(&qmp->reconfig_lock);
+++	if (qmp->usb_reconfig_data != data)
+++		return;
+++	qmp->usb_reconfig_ops = NULL;
+++	qmp->usb_reconfig_data = NULL;
+++}
+++EXPORT_SYMBOL_GPL(qcom_qmp_usb_reconfig_unregister);
+++
++ static void qmp_combo_enable_autonomous_mode(struct qmp_combo *qmp)
++ {
++ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
++@@ -4417,10 +4456,9 @@ static int qmp_combo_register_clocks(struct qmp_combo *qmp, struct device_node *
++ }
++ 
++ #if IS_ENABLED(CONFIG_TYPEC)
++-static int qmp_combo_typec_switch_set(struct typec_switch_dev *sw,
+++static int qmp_combo_set_orientation(struct qmp_combo *qmp,
++ 				      enum typec_orientation orientation)
++ {
++-	struct qmp_combo *qmp = typec_switch_get_drvdata(sw);
++ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
++ 
++ 	if (orientation == qmp->orientation || orientation == TYPEC_ORIENTATION_NONE)
++@@ -4445,9 +4483,8 @@ static int qmp_combo_typec_switch_set(struct typec_switch_dev *sw,
++ 	return 0;
++ }
++ 
++-static int qmp_combo_typec_mux_set(struct typec_mux_dev *mux, struct typec_mux_state *state)
+++static int qmp_combo_set_mux(struct qmp_combo *qmp, struct typec_mux_state *state)
++ {
++-	struct qmp_combo *qmp = typec_mux_get_drvdata(mux);
++ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
++ 	enum qmpphy_mode new_mode;
++ 	unsigned int svid;
++@@ -4528,6 +4565,56 @@ static int qmp_combo_typec_mux_set(struct typec_mux_dev *mux, struct typec_mux_s
++ 	return 0;
++ }
++ 
+++/* These guards run outside phy_mutex: resume can initialize the USB PHY. */
+++static int qmp_combo_reconfig_begin(struct qmp_combo *qmp)
+++{
+++	int ret = 0;
+++
+++	mutex_lock(&qmp->reconfig_lock);
+++	if (qmp->usb_reconfig_ops)
+++		ret = qmp->usb_reconfig_ops->prepare(qmp->usb_reconfig_data);
+++	if (ret)
+++		mutex_unlock(&qmp->reconfig_lock);
+++	return ret;
+++}
+++
+++static void qmp_combo_reconfig_end(struct qmp_combo *qmp)
+++{
+++	if (qmp->usb_reconfig_ops)
+++		qmp->usb_reconfig_ops->complete(qmp->usb_reconfig_data);
+++	mutex_unlock(&qmp->reconfig_lock);
+++}
+++
+++static int qmp_combo_typec_switch_set(struct typec_switch_dev *sw,
+++				    enum typec_orientation orientation)
+++{
+++	struct qmp_combo *qmp = typec_switch_get_drvdata(sw);
+++	int ret;
+++
+++	if (orientation == TYPEC_ORIENTATION_NONE)
+++		return 0;
+++	ret = qmp_combo_reconfig_begin(qmp);
+++	if (ret)
+++		return ret;
+++	ret = qmp_combo_set_orientation(qmp, orientation);
+++	qmp_combo_reconfig_end(qmp);
+++	return ret;
+++}
+++
+++static int qmp_combo_typec_mux_set(struct typec_mux_dev *mux,
+++				 struct typec_mux_state *state)
+++{
+++	struct qmp_combo *qmp = typec_mux_get_drvdata(mux);
+++	int ret;
+++
+++	ret = qmp_combo_reconfig_begin(qmp);
+++	if (ret)
+++		return ret;
+++	ret = qmp_combo_set_mux(qmp, state);
+++	qmp_combo_reconfig_end(qmp);
+++	return ret;
+++}
+++
++ static void qmp_combo_typec_switch_unregister(void *data)
++ {
++ 	struct qmp_combo *qmp = data;
++@@ -4859,6 +4946,7 @@ static int qmp_combo_probe(struct platform_device *pdev)
++ 		return -EINVAL;
++ 
++ 	mutex_init(&qmp->phy_mutex);
+++	mutex_init(&qmp->reconfig_lock);
++ 
++ 	ret = qmp_combo_reset_init(qmp);
++ 	if (ret)
++diff --git a/include/linux/phy/phy-qcom-qmp.h b/include/linux/phy/phy-qcom-qmp.h
++new file mode 100644
++index 000000000..30e038f67
++--- /dev/null
+++++ b/include/linux/phy/phy-qcom-qmp.h
++@@ -0,0 +1,36 @@
+++/* SPDX-License-Identifier: GPL-2.0-only */
+++#ifndef __PHY_QCOM_QMP_H
+++#define __PHY_QCOM_QMP_H
+++
+++#include <linux/errno.h>
+++#include <linux/kconfig.h>
+++
+++struct phy;
+++
+++/*
+++ * Serialize external USB3/DP lane changes with the USB controller. prepare()
+++ * must leave the controller's PIPE interface awake until complete() is called.
+++ * Both callbacks may sleep. A failed prepare() must undo its own changes;
+++ * complete() is called exactly once for each successful prepare().
+++ */
+++struct qcom_qmp_usb_reconfig_ops {
+++	int (*prepare)(void *data);
+++	void (*complete)(void *data);
+++};
+++
+++#if IS_REACHABLE(CONFIG_PHY_QCOM_QMP_COMBO)
+++int qcom_qmp_usb_reconfig_register(struct phy *phy,
+++		const struct qcom_qmp_usb_reconfig_ops *ops, void *data);
+++void qcom_qmp_usb_reconfig_unregister(struct phy *phy, void *data);
+++#else
+++static inline int qcom_qmp_usb_reconfig_register(struct phy *phy,
+++		const struct qcom_qmp_usb_reconfig_ops *ops, void *data)
+++{
+++	return -EOPNOTSUPP;
+++}
+++
+++static inline void qcom_qmp_usb_reconfig_unregister(struct phy *phy, void *data)
+++{
+++}
+++#endif
+++#endif
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0091-phy-qcom-qmp-combo-hold-USB3-in-reset-in-SAFE-and-fo.patch b/device/testing/linux-postmarketos-qcom-sm8250/0091-phy-qcom-qmp-combo-hold-USB3-in-reset-in-SAFE-and-fo.patch
+new file mode 100644
+index 0000000000..e938d0ed20
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0091-phy-qcom-qmp-combo-hold-USB3-in-reset-in-SAFE-and-fo.patch
+@@ -0,0 +1,121 @@
++From 568fdd397b96281216b16586333a42fd777e0da5 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Mon, 9 Nov 2026 22:50:44 +0000
++Subject: [PATCH] phy: qcom-qmp-combo: hold USB3 in reset in SAFE and four-lane
++ DP modes
++
++Keep SAFE mode in reset and preserve USB consumer references across
++mux changes. Skip USB3 power-on and power-off while DP owns all four
++lanes; the common clocks still serve USB2.
++
++A transient PHY startup timeout still occurs in successful attachment
++tests.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 39 +++++++++++++++--------
++ 1 file changed, 26 insertions(+), 13 deletions(-)
++
++diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++index dce6b6b5e..8d8742a72 100644
++--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++@@ -78,6 +78,7 @@ enum qmpphy_mode {
++ 	QMPPHY_MODE_USB3DP = 0,
++ 	QMPPHY_MODE_DP_ONLY,
++ 	QMPPHY_MODE_USB3_ONLY,
+++	QMPPHY_MODE_SAFE,
++ };
++ 
++ /* set of registers with offsets different per-PHY */
++@@ -3727,6 +3728,11 @@ static int qmp_combo_com_init(struct qmp_combo *qmp, bool force)
++ 	writel(val, com + QPHY_V3_DP_COM_TYPEC_CTRL);
++ 
++ 	switch (qmp->qmpphy_mode) {
+++	case QMPPHY_MODE_SAFE:
+++		/* Keep both high-speed PCS blocks in reset during negotiation. */
+++		writel(0, com + QPHY_V3_DP_COM_PHY_MODE_CTRL);
+++		break;
+++
++ 	case QMPPHY_MODE_USB3DP:
++ 		writel(USB3_MODE | DP_MODE, com + QPHY_V3_DP_COM_PHY_MODE_CTRL);
++ 
++@@ -3884,6 +3890,11 @@ static int qmp_combo_usb_power_on(struct phy *phy)
++ 	unsigned int val;
++ 	int ret;
++ 
+++	/* Four-lane DP holds USB3 in reset; common clocks still serve USB2. */
+++	if (qmp->qmpphy_mode == QMPPHY_MODE_DP_ONLY ||
+++	    qmp->qmpphy_mode == QMPPHY_MODE_SAFE)
+++		return 0;
+++
++ 	qmp_configure(qmp->dev, serdes, cfg->serdes_tbl, cfg->serdes_tbl_num);
++ 
++ 	/* Tx, Rx, and PCS configurations */
++@@ -3925,6 +3936,10 @@ static int qmp_combo_usb_power_off(struct phy *phy)
++ 	struct qmp_combo *qmp = phy_get_drvdata(phy);
++ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
++ 
+++	if (qmp->qmpphy_mode == QMPPHY_MODE_DP_ONLY ||
+++	    qmp->qmpphy_mode == QMPPHY_MODE_SAFE)
+++		return 0;
+++
++ 	/* PHY reset */
++ 	qphy_setbits(qmp->pcs, cfg->regs[QPHY_SW_RESET], SW_RESET);
++ 
++@@ -4496,7 +4511,11 @@ static int qmp_combo_set_mux(struct qmp_combo *qmp, struct typec_mux_state *stat
++ 	else
++ 		svid = 0;
++ 
++-	if (svid == USB_TYPEC_DP_SID) {
+++	if (state->mode == TYPEC_STATE_SAFE) {
+++		new_mode = QMPPHY_MODE_SAFE;
+++	} else if (state->mode == TYPEC_STATE_USB) {
+++		new_mode = QMPPHY_MODE_USB3_ONLY;
+++	} else if (svid == USB_TYPEC_DP_SID) {
++ 		switch (state->mode) {
++ 		/* DP Only */
++ 		case TYPEC_DP_STATE_C:
++@@ -4531,8 +4550,6 @@ static int qmp_combo_set_mux(struct qmp_combo *qmp, struct typec_mux_state *stat
++ 	dev_dbg(qmp->dev, "typec_mux_set: switching from qmpphy mode %d to %d\n",
++ 		qmp->qmpphy_mode, new_mode);
++ 
++-	qmp->qmpphy_mode = new_mode;
++-
++ 	if (qmp->init_count) {
++ 		if (qmp->usb_init_count)
++ 			qmp_combo_usb_power_off(qmp->usb_phy);
++@@ -4542,24 +4559,20 @@ static int qmp_combo_set_mux(struct qmp_combo *qmp, struct typec_mux_state *stat
++ 
++ 		qmp_combo_com_exit(qmp, true);
++ 
++-		/* Now everything's powered down, power up the right PHYs */
+++		/* Now everything's powered down, power up the right PHYs. */
+++		qmp->qmpphy_mode = new_mode;
++ 		qmp_combo_com_init(qmp, true);
++ 
++-		if (new_mode == QMPPHY_MODE_DP_ONLY) {
++-			if (qmp->usb_init_count)
++-				qmp->usb_init_count--;
++-		}
++-
++-		if (new_mode == QMPPHY_MODE_USB3DP || new_mode == QMPPHY_MODE_USB3_ONLY) {
+++		/* Mode changes do not acquire or release PHY consumer references. */
+++		if (qmp->usb_init_count)
++ 			qmp_combo_usb_power_on(qmp->usb_phy);
++-			if (!qmp->usb_init_count)
++-				qmp->usb_init_count++;
++-		}
++ 
++ 		if (new_mode == QMPPHY_MODE_DP_ONLY || new_mode == QMPPHY_MODE_USB3DP) {
++ 			if (qmp->dp_init_count)
++ 				cfg->dp_aux_init(qmp);
++ 		}
+++	} else {
+++		qmp->qmpphy_mode = new_mode;
++ 	}
++ 
++ 	return 0;
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0092-usb-dwc3-qcom-legacy-retain-the-USB2-clock-during-fo.patch b/device/testing/linux-postmarketos-qcom-sm8250/0092-usb-dwc3-qcom-legacy-retain-the-USB2-clock-during-fo.patch
+new file mode 100644
+index 0000000000..6a224dd2ad
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0092-usb-dwc3-qcom-legacy-retain-the-USB2-clock-during-fo.patch
+@@ -0,0 +1,381 @@
++From 7bf184de634abcaf5e1a7af3fe022bca980b5848 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 03:30:53 +0000
++Subject: [PATCH] usb: dwc3: qcom-legacy: retain the USB2 clock during
++ four-lane DP
++
++The SM8250 legacy wrapper loses its host microframe clock when DP
++takes all four high-speed lanes. Register a Type-C mux and select UTMI
++in SAFE and DP-only modes, serializing clock changes with system power
++management.
++
++Guard external PHY reconfiguration through the QMP callbacks: wait for
++controller reset to finish, resume runtime power, and hold SUSPHY clear
++until the operation completes, then restore its previous value. Guard
++PIPE clock changes with the same controller lock.
++
++Adapt the UTMI clock approach from the posted dwc3-qcom proposal to this
++legacy parent/child controller layout.
++Link: https://lore-kernel.gnuweeb.org/linux-usb/20261107021208.934-1-26rote@gmail.com/T/
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ .../devicetree/bindings/usb/snps,dwc3.yaml    |   1 +
++ drivers/usb/dwc3/Kconfig                      |   1 +
++ drivers/usb/dwc3/dwc3-qcom-legacy.c           | 216 ++++++++++++++++--
++ 3 files changed, 204 insertions(+), 14 deletions(-)
++
++diff --git a/Documentation/devicetree/bindings/usb/snps,dwc3.yaml b/Documentation/devicetree/bindings/usb/snps,dwc3.yaml
++index 4380bb6fa..1f3f9efd8 100644
++--- a/Documentation/devicetree/bindings/usb/snps,dwc3.yaml
+++++ b/Documentation/devicetree/bindings/usb/snps,dwc3.yaml
++@@ -16,6 +16,7 @@ description:
++ 
++ allOf:
++   - $ref: snps,dwc3-common.yaml#
+++  - $ref: /schemas/usb/usb-switch.yaml#
++ 
++ properties:
++   compatible:
++diff --git a/drivers/usb/dwc3/Kconfig b/drivers/usb/dwc3/Kconfig
++index 18169727a..282f366de 100644
++--- a/drivers/usb/dwc3/Kconfig
+++++ b/drivers/usb/dwc3/Kconfig
++@@ -132,6 +132,7 @@ config USB_DWC3_QCOM
++ 	depends on ARCH_QCOM || COMPILE_TEST
++ 	depends on EXTCON || !EXTCON
++ 	depends on OF
+++	depends on TYPEC || TYPEC=n
++ 	default USB_DWC3
++ 	help
++ 	  Some Qualcomm SoCs use DesignWare Core IP for USB2/3
++diff --git a/drivers/usb/dwc3/dwc3-qcom-legacy.c b/drivers/usb/dwc3/dwc3-qcom-legacy.c
++index d3fad0fcf..b13c5156d 100644
++--- a/drivers/usb/dwc3/dwc3-qcom-legacy.c
+++++ b/drivers/usb/dwc3/dwc3-qcom-legacy.c
++@@ -17,12 +17,17 @@
++ #include <linux/of_platform.h>
++ #include <linux/platform_device.h>
++ #include <linux/phy/phy.h>
+++#include <linux/phy/phy-qcom-qmp.h>
++ #include <linux/usb/of.h>
++ #include <linux/reset.h>
++ #include <linux/iopoll.h>
++ #include <linux/usb/hcd.h>
++ #include <linux/usb.h>
+++#include <linux/usb/typec_altmode.h>
+++#include <linux/usb/typec_dp.h>
+++#include <linux/usb/typec_mux.h>
++ #include "core.h"
+++#include "io.h"
++ 
++ /* USB QSCRATCH Hardware registers */
++ #define QSCRATCH_HS_PHY_CTRL			0x10
++@@ -88,6 +93,14 @@ struct dwc3_qcom {
++ 	enum usb_dr_mode	mode;
++ 	bool			is_suspended;
++ 	bool			pm_suspended;
+++	bool			ignore_pipe_clk;
+++	bool			dp_active;
+++	bool			dp_only;
+++	bool			utmi_pipe_clk;
+++	struct mutex		pipe_clk_lock;
+++	struct typec_mux_dev	*mux;
+++	struct phy		*reconfig_phy;
+++	u32			saved_pipe_susphy;
++ 	struct icc_path		*icc_path_ddr;
++ 	struct icc_path		*icc_path_apps;
++ };
++@@ -459,6 +472,8 @@ static int dwc3_qcom_suspend(struct dwc3_qcom *qcom, bool wakeup)
++ 	return 0;
++ }
++ 
+++static void dwc3_qcom_select_utmi_clk(struct dwc3_qcom *qcom, bool utmi);
+++
++ static int dwc3_qcom_resume(struct dwc3_qcom *qcom, bool wakeup)
++ {
++ 	int ret;
++@@ -490,6 +505,11 @@ static int dwc3_qcom_resume(struct dwc3_qcom *qcom, bool wakeup)
++ 				  PWR_EVNT_LPM_IN_L2_MASK | PWR_EVNT_LPM_OUT_L2_MASK);
++ 	}
++ 
+++	/* Parent resume precedes the core child's PHY initialization. */
+++	if (!qcom->ignore_pipe_clk &&
+++	    READ_ONCE(qcom->dp_only) != qcom->utmi_pipe_clk)
+++		dwc3_qcom_select_utmi_clk(qcom, READ_ONCE(qcom->dp_only));
+++
++ 	qcom->is_suspended = false;
++ 
++ 	return 0;
++@@ -514,21 +534,177 @@ static irqreturn_t qcom_dwc3_resume_irq(int irq, void *data)
++ 	return IRQ_HANDLED;
++ }
++ 
++-static void dwc3_qcom_select_utmi_clk(struct dwc3_qcom *qcom)
+++static void dwc3_qcom_select_utmi_clk(struct dwc3_qcom *qcom, bool utmi)
++ {
++-	/* Configure dwc3 to use UTMI clock as PIPE clock not present */
++ 	dwc3_qcom_setbits(qcom->qscratch_base, QSCRATCH_GENERAL_CFG,
++ 			  PIPE_UTMI_CLK_DIS);
++ 
++ 	usleep_range(100, 1000);
++ 
++-	dwc3_qcom_setbits(qcom->qscratch_base, QSCRATCH_GENERAL_CFG,
++-			  PIPE_UTMI_CLK_SEL | PIPE3_PHYSTATUS_SW);
+++	if (utmi)
+++		dwc3_qcom_setbits(qcom->qscratch_base, QSCRATCH_GENERAL_CFG,
+++				  PIPE_UTMI_CLK_SEL | PIPE3_PHYSTATUS_SW);
+++	else
+++		dwc3_qcom_clrbits(qcom->qscratch_base, QSCRATCH_GENERAL_CFG,
+++				  PIPE_UTMI_CLK_SEL | PIPE3_PHYSTATUS_SW);
++ 
++ 	usleep_range(100, 1000);
++ 
++ 	dwc3_qcom_clrbits(qcom->qscratch_base, QSCRATCH_GENERAL_CFG,
++ 			  PIPE_UTMI_CLK_DIS);
+++
+++	qcom->utmi_pipe_clk = utmi;
+++}
+++
+++/* pipe_clk_lock is held by both the mux and QMP callbacks. */
+++static int dwc3_qcom_phy_prepare_locked(struct dwc3_qcom *qcom)
+++{
+++	struct dwc3 *dwc = platform_get_drvdata(qcom->dwc3);
+++	u32 reg;
+++	int ret;
+++
+++	if (qcom->pm_suspended)
+++		return -EBUSY;
+++	/* The core child can be unbound on its own. */
+++	if (!dwc)
+++		return -ENODEV;
+++
+++	/* Match the role worker's lock/PM order and wait out any core reset. */
+++	mutex_lock(&dwc->mutex);
+++	ret = pm_runtime_resume_and_get(dwc->dev);
+++	if (ret < 0) {
+++		mutex_unlock(&dwc->mutex);
+++		return ret;
+++	}
+++
+++	reg = dwc3_readl(dwc, DWC3_GUSB3PIPECTL(0));
+++	qcom->saved_pipe_susphy = reg & DWC3_GUSB3PIPECTL_SUSPHY;
+++	dwc3_writel(dwc, DWC3_GUSB3PIPECTL(0), reg & ~DWC3_GUSB3PIPECTL_SUSPHY);
+++	return 0;
+++}
+++
+++static void dwc3_qcom_phy_complete_locked(struct dwc3_qcom *qcom)
+++{
+++	struct dwc3 *dwc = platform_get_drvdata(qcom->dwc3);
+++	u32 reg = dwc3_readl(dwc, DWC3_GUSB3PIPECTL(0));
+++
+++	reg &= ~DWC3_GUSB3PIPECTL_SUSPHY;
+++	reg |= qcom->saved_pipe_susphy;
+++	dwc3_writel(dwc, DWC3_GUSB3PIPECTL(0), reg);
+++	pm_runtime_put_autosuspend(dwc->dev);
+++	mutex_unlock(&dwc->mutex);
+++}
+++
+++static int dwc3_qcom_phy_prepare(void *data)
+++{
+++	struct dwc3_qcom *qcom = data;
+++	int ret;
+++
+++	mutex_lock(&qcom->pipe_clk_lock);
+++	ret = dwc3_qcom_phy_prepare_locked(qcom);
+++	if (ret)
+++		mutex_unlock(&qcom->pipe_clk_lock);
+++	return ret;
+++}
+++
+++static void dwc3_qcom_phy_complete(void *data)
+++{
+++	struct dwc3_qcom *qcom = data;
+++
+++	dwc3_qcom_phy_complete_locked(qcom);
+++	mutex_unlock(&qcom->pipe_clk_lock);
+++}
+++
+++static const struct qcom_qmp_usb_reconfig_ops dwc3_qcom_phy_reconfig_ops = {
+++	.prepare = dwc3_qcom_phy_prepare,
+++	.complete = dwc3_qcom_phy_complete,
+++};
+++
+++static int dwc3_qcom_mux_set(struct typec_mux_dev *mux,
+++			     struct typec_mux_state *state)
+++{
+++	struct dwc3_qcom *qcom = typec_mux_get_drvdata(mux);
+++	bool dp_only, dp_active;
+++	int ret;
+++
+++	guard(mutex)(&qcom->pipe_clk_lock);
+++
+++	dp_only = qcom->dp_only;
+++	dp_active = qcom->dp_active;
+++
+++	/* SAFE and USB notifications may also carry the DP SVID. */
+++	if (state->mode == TYPEC_STATE_SAFE) {
+++		dp_active = false;
+++		dp_only = true;
+++	} else if (state->mode == TYPEC_STATE_USB) {
+++		dp_active = false;
+++		dp_only = false;
+++	} else if (state->alt && state->alt->svid == USB_TYPEC_DP_SID) {
+++		if (!dp_active || state->mode == TYPEC_DP_STATE_C ||
+++		    state->mode == TYPEC_DP_STATE_E)
+++			dp_only = state->mode == TYPEC_DP_STATE_C ||
+++				  state->mode == TYPEC_DP_STATE_E;
+++		dp_active = true;
+++	}
+++
+++	if (qcom->ignore_pipe_clk || qcom->pm_suspended ||
+++	    dp_only == qcom->utmi_pipe_clk) {
+++		qcom->dp_active = dp_active;
+++		WRITE_ONCE(qcom->dp_only, dp_only);
+++		return 0;
+++	}
+++
+++	/* Resume in the current lane configuration before publishing the new one. */
+++	if (qcom->reconfig_phy)
+++		ret = dwc3_qcom_phy_prepare_locked(qcom);
+++	else
+++		ret = pm_runtime_resume_and_get(qcom->dev);
+++	if (ret < 0)
+++		return ret;
+++	qcom->dp_active = dp_active;
+++	WRITE_ONCE(qcom->dp_only, dp_only);
+++	if (qcom->dp_only != qcom->utmi_pipe_clk)
+++		dwc3_qcom_select_utmi_clk(qcom, qcom->dp_only);
+++	if (qcom->reconfig_phy)
+++		dwc3_qcom_phy_complete_locked(qcom);
+++	else
+++		pm_runtime_put_autosuspend(qcom->dev);
+++
+++	return 0;
+++}
+++
+++static int dwc3_qcom_mux_register(struct dwc3_qcom *qcom)
+++{
+++	struct typec_mux_desc desc = {};
+++	struct dwc3 *dwc = platform_get_drvdata(qcom->dwc3);
+++	int ret;
+++
+++	if (!IS_ENABLED(CONFIG_TYPEC) ||
+++	    !device_property_present(&qcom->dwc3->dev, "mode-switch"))
+++		return 0;
+++
+++	if (!dwc)
+++		return -EPROBE_DEFER;
+++	if (dwc->num_usb3_ports == 1) {
+++		ret = qcom_qmp_usb_reconfig_register(dwc->usb3_generic_phy[0],
+++						    &dwc3_qcom_phy_reconfig_ops, qcom);
+++		if (ret && ret != -EOPNOTSUPP)
+++			return ret;
+++		if (!ret)
+++			qcom->reconfig_phy = dwc->usb3_generic_phy[0];
+++	}
+++
+++	desc.drvdata = qcom;
+++	/* The connector graph terminates on the DWC3 core child. */
+++	desc.fwnode = dev_fwnode(&qcom->dwc3->dev);
+++	desc.set = dwc3_qcom_mux_set;
+++
+++	qcom->mux = typec_mux_register(qcom->dev, &desc);
+++	if (IS_ERR(qcom->mux) && qcom->reconfig_phy) {
+++		qcom_qmp_usb_reconfig_unregister(qcom->reconfig_phy, qcom);
+++		qcom->reconfig_phy = NULL;
+++	}
+++	return PTR_ERR_OR_ZERO(qcom->mux);
++ }
++ 
++ static int dwc3_qcom_request_irq(struct dwc3_qcom *qcom, int irq,
++@@ -736,7 +912,6 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
++ 	struct device		*dev = &pdev->dev;
++ 	struct dwc3_qcom	*qcom;
++ 	int			ret, i;
++-	bool			ignore_pipe_clk;
++ 	bool			wakeup_source;
++ 
++ 	qcom = devm_kzalloc(&pdev->dev, sizeof(*qcom), GFP_KERNEL);
++@@ -745,6 +920,7 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
++ 
++ 	platform_set_drvdata(pdev, qcom);
++ 	qcom->dev = &pdev->dev;
+++	mutex_init(&qcom->pipe_clk_lock);
++ 
++ 	qcom->resets = devm_reset_control_array_get_optional_exclusive(dev);
++ 	if (IS_ERR(qcom->resets)) {
++@@ -788,10 +964,10 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
++ 	 * Disable pipe_clk requirement if specified. Used when dwc3
++ 	 * operates without SSPHY and only HS/FS/LS modes are supported.
++ 	 */
++-	ignore_pipe_clk = device_property_read_bool(dev,
+++	qcom->ignore_pipe_clk = device_property_read_bool(dev,
++ 				"qcom,select-utmi-as-pipe-clk");
++-	if (ignore_pipe_clk)
++-		dwc3_qcom_select_utmi_clk(qcom);
+++	if (qcom->ignore_pipe_clk)
+++		dwc3_qcom_select_utmi_clk(qcom, true);
++ 
++ 	ret = dwc3_qcom_of_register_core(pdev);
++ 	if (ret) {
++@@ -823,6 +999,13 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
++ 	pm_runtime_enable(dev);
++ 	pm_runtime_forbid(dev);
++ 
+++	ret = dwc3_qcom_mux_register(qcom);
+++	if (ret) {
+++		pm_runtime_disable(dev);
+++		pm_runtime_allow(dev);
+++		goto interconnect_exit;
+++	}
+++
++ 	return 0;
++ 
++ interconnect_exit:
++@@ -847,6 +1030,10 @@ static void dwc3_qcom_remove(struct platform_device *pdev)
++ 	struct device *dev = &pdev->dev;
++ 	int i;
++ 
+++	if (qcom->mux)
+++		typec_mux_unregister(qcom->mux);
+++	if (qcom->reconfig_phy)
+++		qcom_qmp_usb_reconfig_unregister(qcom->reconfig_phy, qcom);
++ 	of_platform_depopulate(&pdev->dev);
++ 	platform_device_put(qcom->dwc3);
++ 
++@@ -869,13 +1056,12 @@ static int __maybe_unused dwc3_qcom_pm_suspend(struct device *dev)
++ 	bool wakeup = device_may_wakeup(dev);
++ 	int ret;
++ 
+++	guard(mutex)(&qcom->pipe_clk_lock);
+++	qcom->pm_suspended = true;
++ 	ret = dwc3_qcom_suspend(qcom, wakeup);
++ 	if (ret)
++-		return ret;
++-
++-	qcom->pm_suspended = true;
++-
++-	return 0;
+++		qcom->pm_suspended = false;
+++	return ret;
++ }
++ 
++ static int __maybe_unused dwc3_qcom_pm_resume(struct device *dev)
++@@ -884,10 +1070,12 @@ static int __maybe_unused dwc3_qcom_pm_resume(struct device *dev)
++ 	bool wakeup = device_may_wakeup(dev);
++ 	int ret;
++ 
+++	guard(mutex)(&qcom->pipe_clk_lock);
++ 	ret = dwc3_qcom_resume(qcom, wakeup);
++ 	if (ret)
++ 		return ret;
++-
+++	if (!qcom->ignore_pipe_clk && qcom->dp_only != qcom->utmi_pipe_clk)
+++		dwc3_qcom_select_utmi_clk(qcom, qcom->dp_only);
++ 	qcom->pm_suspended = false;
++ 
++ 	return 0;
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0093-usb-typec-restore-DP-mux-state-when-reconfiguration-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0093-usb-typec-restore-DP-mux-state-when-reconfiguration-.patch
+new file mode 100644
+index 0000000000..fbf5e6c33e
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0093-usb-typec-restore-DP-mux-state-when-reconfiguration-.patch
+@@ -0,0 +1,227 @@
++From 7c09ce4186e9af3c3837b859f63ebf2233c000ed Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Tue, 10 Nov 2026 02:21:55 +0000
++Subject: [PATCH] usb: typec: restore DP mux state when reconfiguration is busy
++
++Changing four-lane DP to two-lane DP through SAFE can switch DWC3 to
++PIPE while QMP leaves the powered PHY in DP-only mode without that clock.
++Reject established-session SAFE requests while DP is powered and restore
++the previous mux configuration before returning the original error.
++
++Keep initial Enter and Configure notifications on the existing path so
++rapid replug does not fail while the previous display is still stopping.
++Track the applied configuration separately from pending Attention data,
++clear it on Exit ACK, and preserve requested configuration for the
++existing cable-to-partner fallback.
++
++Exit requested through sysfs takes the altmode lock like the worker's
++Exit, since both read and may restore the same state.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/phy/qualcomm/phy-qcom-qmp-combo.c |  4 ++
++ drivers/usb/typec/altmodes/displayport.c  | 86 ++++++++++++++++++++---
++ 2 files changed, 82 insertions(+), 8 deletions(-)
++
++diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++index 8d8742a72..2d395afd7 100644
++--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++@@ -4543,6 +4543,10 @@ static int qmp_combo_set_mux(struct qmp_combo *qmp, struct typec_mux_state *stat
++ 	}
++ 
++ 	if (qmp->qmpphy_mode != QMPPHY_MODE_USB3_ONLY && qmp->dp_powered_on) {
+++		/* Reject changes to an established session before reconfiguring its peer. */
+++		if (svid == USB_TYPEC_DP_SID && state->mode == TYPEC_STATE_SAFE &&
+++		    state->data)
+++			return -EBUSY;
++ 		dev_dbg(qmp->dev, "typec_mux_set: DP PHY is still in use, delaying switch\n");
++ 		return 0;
++ 	}
++diff --git a/drivers/usb/typec/altmodes/displayport.c b/drivers/usb/typec/altmodes/displayport.c
++index 263a89c5f..45e06244c 100644
++--- a/drivers/usb/typec/altmodes/displayport.c
+++++ b/drivers/usb/typec/altmodes/displayport.c
++@@ -60,6 +60,7 @@ enum dp_state {
++ 
++ struct dp_altmode {
++ 	struct typec_displayport_data data;
+++	u32 applied_conf;
++ 	struct typec_displayport_data data_prime;
++ 
++ 	enum dp_state state;
++@@ -81,7 +82,7 @@ struct dp_altmode {
++ 	struct typec_altmode *plug_prime;
++ };
++ 
++-static int dp_altmode_notify(struct dp_altmode *dp)
+++static int dp_altmode_notify_config(struct dp_altmode *dp)
++ {
++ 	unsigned long conf;
++ 	u8 state;
++@@ -96,6 +97,50 @@ static int dp_altmode_notify(struct dp_altmode *dp)
++ 	return typec_altmode_notify(dp->alt, conf, &dp->data);
++ }
++ 
+++/* A later mux may reject SAFE after an earlier mux has already changed. */
+++static void dp_altmode_restore(struct dp_altmode *dp)
+++{
+++	int ret;
+++
+++	dp->data.conf = dp->applied_conf;
+++	dp->data_prime.conf = dp->applied_conf;
+++	ret = dp_altmode_notify_config(dp);
+++
+++	if (ret)
+++		dev_err(&dp->alt->dev, "unable to restore connector configuration (%d)\n",
+++			ret);
+++}
+++
+++static int dp_altmode_notify(struct dp_altmode *dp)
+++{
+++	int ret = dp_altmode_notify_config(dp);
+++
+++	if (!ret)
+++		dp->applied_conf = dp->data.conf;
+++
+++	return ret;
+++}
+++
+++static int dp_altmode_exit(struct dp_altmode *dp)
+++{
+++	int ret;
+++
+++	/* The core's Exit SAFE notification has no existing configuration data. */
+++	if (dp->applied_conf) {
+++		ret = typec_altmode_notify(dp->alt, TYPEC_STATE_SAFE, &dp->data);
+++		if (ret)
+++			goto restore;
+++	}
+++
+++	ret = typec_altmode_exit(dp->alt);
+++
+++restore:
+++	if (ret)
+++		dp_altmode_restore(dp);
+++
+++	return ret;
+++}
+++
++ static int dp_altmode_configure(struct dp_altmode *dp, u8 con)
++ {
++ 	u8 pin_assign = 0;
++@@ -235,16 +280,18 @@ static int dp_altmode_configure_vdm(struct dp_altmode *dp, u32 conf)
++ 		return svdm_version;
++ 
++ 	header = DP_HEADER(dp, svdm_version, DP_CMD_CONFIGURE);
++-	ret = typec_altmode_notify(dp->alt, TYPEC_STATE_SAFE, &dp->data);
+++	ret = typec_altmode_notify(dp->alt, TYPEC_STATE_SAFE,
+++				   dp->applied_conf ? &dp->data : NULL);
++ 	if (ret) {
++ 		dev_err(&dp->alt->dev,
++ 			"unable to put to connector to safe mode\n");
+++		dp_altmode_restore(dp);
++ 		return ret;
++ 	}
++ 
++ 	ret = typec_altmode_vdm(dp->alt, header, &conf, 2);
++ 	if (ret)
++-		dp_altmode_notify(dp);
+++		dp_altmode_restore(dp);
++ 
++ 	return ret;
++ }
++@@ -253,13 +300,25 @@ static int dp_altmode_configure_vdm_cable(struct dp_altmode *dp, u32 conf)
++ {
++ 	int svdm_version = typec_altmode_get_cable_svdm_version(dp->plug_prime);
++ 	u32 header;
+++	int ret;
++ 
++ 	if (svdm_version < 0)
++ 		return svdm_version;
++ 
+++	/* Check all muxes before changing an active cable's lane assignment. */
+++	ret = typec_altmode_notify(dp->alt, TYPEC_STATE_SAFE,
+++				   dp->applied_conf ? &dp->data : NULL);
+++	if (ret) {
+++		dp_altmode_restore(dp);
+++		return ret;
+++	}
+++
++ 	header = DP_HEADER(dp, svdm_version, DP_CMD_CONFIGURE);
+++	ret = typec_cable_altmode_vdm(dp->plug_prime, TYPEC_PLUG_SOP_P, header, &conf, 2);
+++	if (ret)
+++		dp_altmode_restore(dp);
++ 
++-	return typec_cable_altmode_vdm(dp->plug_prime, TYPEC_PLUG_SOP_P, header, &conf, 2);
+++	return ret;
++ }
++ 
++ static void dp_altmode_work(struct work_struct *work)
++@@ -267,7 +326,7 @@ static void dp_altmode_work(struct work_struct *work)
++ 	struct dp_altmode *dp = container_of(work, struct dp_altmode, work);
++ 	int svdm_version;
++ 	u32 header;
++-	u32 vdo;
+++	u32 vdo, conf;
++ 	int ret;
++ 
++ 	mutex_lock(&dp->lock);
++@@ -310,17 +369,21 @@ static void dp_altmode_work(struct work_struct *work)
++ 				"unable to send Configure command (%d)\n", ret);
++ 		break;
++ 	case DP_STATE_CONFIGURE_PRIME:
+++		conf = dp->data.conf;
++ 		ret = dp_altmode_configure_vdm_cable(dp, dp->data_prime.conf);
+++		if (ret == -EBUSY)
+++			break;
++ 		if (ret) {
++ 			dev_err(&dp->plug_prime->dev,
++ 				"unable to send Configure command (%d)\n",
++ 				ret);
+++			dp->data.conf = conf;
++ 			dp->state = DP_STATE_CONFIGURE;
++ 			goto disable_prime;
++ 		}
++ 		break;
++ 	case DP_STATE_EXIT:
++-		if (typec_altmode_exit(dp->alt))
+++		if (dp_altmode_exit(dp))
++ 			dev_err(&dp->alt->dev, "Exit Mode Failed!\n");
++ 		break;
++ 	case DP_STATE_EXIT_PRIME:
++@@ -360,7 +423,9 @@ static void dp_altmode_attention(struct typec_altmode *alt, const u32 vdo)
++ 	if (dp_altmode_status_update(dp))
++ 		dev_warn(&alt->dev, "%s: status update failed\n", __func__);
++ 
++-	if (dp_altmode_notify(dp))
+++	/* Keep the committed mux configuration until the SAFE check succeeds. */
+++	if (dp->state != DP_STATE_CONFIGURE && dp->state != DP_STATE_CONFIGURE_PRIME &&
+++	    dp_altmode_notify(dp))
++ 		dev_err(&alt->dev, "%s: notification failed\n", __func__);
++ 
++ 	if (old_state == DP_STATE_IDLE && dp->state != DP_STATE_IDLE)
++@@ -395,6 +460,7 @@ static int dp_altmode_vdm(struct typec_altmode *alt,
++ 			typec_altmode_update_active(alt, false);
++ 			dp->data.status = 0;
++ 			dp->data.conf = 0;
+++			dp->applied_conf = 0;
++ 			if (dp->hpd) {
++ 				drm_connector_oob_hotplug_event(dp->connector_fwnode,
++ 								connector_status_disconnected);
++@@ -518,7 +584,11 @@ static int dp_altmode_activate(struct typec_altmode *alt, int activate)
++ 		}
++ 		return typec_altmode_enter(alt, NULL);
++ 	} else {
++-		return typec_altmode_exit(alt);
+++		/* Exit reads and may restore state that the worker also updates. */
+++		mutex_lock(&dp->lock);
+++		ret = dp_altmode_exit(dp);
+++		mutex_unlock(&dp->lock);
+++		return ret;
++ 	}
++ }
++ 
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0094-usb-typec-qcom-program-the-CC-mode-in-set_cc.patch b/device/testing/linux-postmarketos-qcom-sm8250/0094-usb-typec-qcom-program-the-CC-mode-in-set_cc.patch
+new file mode 100644
+index 0000000000..9fce4eed7e
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0094-usb-typec-qcom-program-the-CC-mode-in-set_cc.patch
+@@ -0,0 +1,68 @@
++From 70861ad386a4e74ce37173350deac11ac006cd20 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Mon, 9 Nov 2026 22:50:44 +0000
++Subject: [PATCH] usb: typec: qcom: program the CC mode in set_cc
++
++set_cc() works out the source or sink mode for the requested CC state
++but never writes it: TYPEC_MODE_CFG is only programmed when toggling
++starts. Rp and Rd changes that TCPM requests through set_cc(), such as
++during a power-role swap, therefore never reach the PMIC.
++
++Write the computed mode, and disable the CC block for TYPEC_CC_OPEN.
++Initialize the values the debug message prints so that error paths do
++not log uninitialized data.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c | 14 +++++++++++---
++ 1 file changed, 11 insertions(+), 3 deletions(-)
++
++diff --git a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c
++index bf985efe1..29d9f4c8b 100644
++--- a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c
+++++ b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c
++@@ -461,8 +461,8 @@ static int qcom_pmic_typec_port_set_cc(struct tcpc_dev *tcpc,
++ 	struct pmic_typec *tcpm = tcpc_to_tcpm(tcpc);
++ 	struct pmic_typec_port *pmic_typec_port = tcpm->pmic_typec_port;
++ 	struct device *dev = pmic_typec_port->dev;
++-	unsigned int mode, currsrc;
++-	unsigned int misc;
+++	unsigned int mode = 0, currsrc = 0;
+++	unsigned int misc = 0;
++ 	unsigned long flags;
++ 	int ret;
++ 
++@@ -478,6 +478,7 @@ static int qcom_pmic_typec_port_set_cc(struct tcpc_dev *tcpc,
++ 
++ 	switch (cc) {
++ 	case TYPEC_CC_OPEN:
+++		mode = TYPEC_DISABLE_CMD;
++ 		currsrc = TYPEC_SRC_RP_SEL_80UA;
++ 		break;
++ 	case TYPEC_CC_RP_DEF:
++@@ -507,6 +508,12 @@ static int qcom_pmic_typec_port_set_cc(struct tcpc_dev *tcpc,
++ 			goto done;
++ 	}
++ 
+++	/* Apply Rp/Rd (or open CC), including changes during a power-role swap. */
+++	ret = regmap_write(pmic_typec_port->regmap,
+++			   pmic_typec_port->base + TYPEC_MODE_CFG_REG, mode);
+++	if (ret)
+++		goto done;
+++
++ 	pmic_typec_port->cc = cc;
++ 	qcom_pmic_set_cc_debounce(pmic_typec_port);
++ 	ret = 0;
++@@ -516,7 +523,8 @@ static int qcom_pmic_typec_port_set_cc(struct tcpc_dev *tcpc,
++ 
++ 	dev_dbg(dev, "set_cc: currsrc=%x %s mode %s debounce %d attached %d cc=%s\n",
++ 		currsrc, rp_sel_to_name(currsrc),
++-		mode == EN_SRC_ONLY ? "EN_SRC_ONLY" : "EN_SNK_ONLY",
+++		mode == EN_SRC_ONLY ? "EN_SRC_ONLY" :
+++		mode == EN_SNK_ONLY ? "EN_SNK_ONLY" : "DISABLED",
++ 		pmic_typec_port->debouncing_cc, !!(misc & CC_ATTACHED),
++ 		misc_to_cc(misc));
++ 
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0095-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-enable-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0095-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-enable-.patch
+new file mode 100644
+index 0000000000..2f86e82a44
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0095-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-enable-.patch
+@@ -0,0 +1,119 @@
++From 11c71516746b9640e63e7d25d4989f04fca5959a Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Mon, 9 Nov 2026 20:23:50 +0000
++Subject: [PATCH] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: enable
++ DisplayPort
++
++Enable the DP controller and connect it to the USB/DP combo PHY and
++Type-C connector. Advertise DP Alt Mode, enable PHY mode switching, and
++allow all four DP lanes. Retain the existing FSA4480 SBU routing.
++
++Make the USB controller a mode switch as well, and list its port first
++so that its USB2 clock mux registers before the high-speed PHY mux and
++four-lane DP keeps USB2 alive.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 48 ++++++++++++++++---
++ 1 file changed, 42 insertions(+), 6 deletions(-)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 6c3ae98fe..aac72c44c 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -1285,6 +1285,15 @@ &mdss {
++ 	status = "okay";
++ };
++ 
+++&mdss_dp {
+++	status = "okay";
+++};
+++
+++&mdss_dp_out {
+++	data-lanes = <0 1 2 3>;
+++	remote-endpoint = <&usb_1_qmpphy_dp_in>;
+++};
+++
++ &mdss_dsi0 {
++ 	vdda-supply = <&vreg_l9a_1p2>;
++ 
++@@ -1443,10 +1452,33 @@ PDO_FIXED_DUAL_ROLE |
++                                       PDO_FIXED_USB_COMM |
++                                       PDO_FIXED_DATA_SWAP)>;
++ 
+++		altmodes {
+++			displayport {
+++				svid = /bits/ 16 <0xff01>;
+++				vdo = <0x00001c46>;
+++			};
+++		};
+++
++                ports {
++                        #address-cells = <1>;
++                        #size-cells = <0>;
++ 
+++			port@0 {
+++				reg = <0>;
+++
+++				pm8150b_hs_in: endpoint {
+++					remote-endpoint = <&usb_1_dwc3_hs_out>;
+++				};
+++			};
+++
+++			port@1 {
+++				reg = <1>;
+++				pm8150b_ss_in: endpoint {
+++					data-lanes = <0 1 2 3>;
+++					remote-endpoint = <&usb_1_qmpphy_out>;
+++				};
+++			};
+++
++ 			port@2 {
++ 				reg = <2>;
++ 				pm8150b_sbu: endpoint {
++@@ -1454,13 +1486,7 @@ pm8150b_sbu: endpoint {
++ 				};
++ 			};
++ 
++-                       port@0 {
++-                               reg = <0>;
++ 
++-                               pm8150b_hs_in: endpoint {
++-                                       remote-endpoint = <&usb_1_dwc3_hs_out>;
++-                               };
++-                       };
++                };
++        };
++ };
++@@ -1795,6 +1821,7 @@ &usb_1 {
++ &usb_1_dwc3 {
++ 	dr_mode = "otg";
++ 	usb-role-switch;
+++	mode-switch;
++ };
++ 
++ &usb_1_hsphy {
++@@ -1809,11 +1836,20 @@ &usb_1_dwc3_hs_out {
++ };
++ 
++ &usb_1_qmpphy {
+++	mode-switch;
++        status = "okay";
++        vdda-phy-supply = <&vreg_l9a_1p2>;
++        vdda-pll-supply = <&vreg_l18a_0p92>;
++ };
++ 
+++&usb_1_qmpphy_out {
+++	remote-endpoint = <&pm8150b_ss_in>;
+++};
+++
+++&usb_1_qmpphy_dp_in {
+++	remote-endpoint = <&mdss_dp_out>;
+++};
+++
++ &usb_2 {
++ 	status = "okay";
++ };
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 3174f09fb7..4f3a2dbe2b 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=75
++pkgrel=76
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -126,6 +126,14 @@ source="
+ 	0085-power-supply-qcom_pm8150b-follow-TCPM-limits-and-ref.patch
+ 	0086-arm64-dts-qcom-pm8150b-add-the-charger-source-change.patch
+ 	0087-arm64-dts-qcom-instantnoodlep-link-the-charger-to-th.patch
++	0088-usb-typec-fsa4480-retain-USB2-routing-in-four-lane-D.patch
++	0089-phy-qcom-qmp-combo-do-not-drop-the-pipe-clock-after-.patch
++	0090-phy-qcom-qmp-combo-let-the-USB-controller-guard-reco.patch
++	0091-phy-qcom-qmp-combo-hold-USB3-in-reset-in-SAFE-and-fo.patch
++	0092-usb-dwc3-qcom-legacy-retain-the-USB2-clock-during-fo.patch
++	0093-usb-typec-restore-DP-mux-state-when-reconfiguration-.patch
++	0094-usb-typec-qcom-program-the-CC-mode-in-set_cc.patch
++	0095-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-enable-.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -259,4 +267,12 @@ e1b735afaa5297be4e82a0abb12d2e258427b37b6a3b9e623ad5a6a98893923c20e8d27c5eb87b57
+ e5831cfa276a167964e8e4f512018eb6d92b2f0828e8102d08864ad68f81aca9a172466509a81e3c6144fe9ff5c48900b397d4ed2f3ab2980e420b12d58dd717  0085-power-supply-qcom_pm8150b-follow-TCPM-limits-and-ref.patch
+ 51584c620a04a8a390edb7b858fb58e159115dd921a64e0c048273b5e2222ccd04215a91dc950b3816a00cafb6951602e1582752c4f7fcf5e3a2e6dbdaa9a9ce  0086-arm64-dts-qcom-pm8150b-add-the-charger-source-change.patch
+ 78732ef745acd6865647aecfb668bd35fced71b657ebc569a838f282937a153d38cefffaa189390e257d93c65e0a1c8ee62a77788fe6592fd0b43a2ee2c1b9ca  0087-arm64-dts-qcom-instantnoodlep-link-the-charger-to-th.patch
++e051d9caa364781583833a60d016d9627228102e6cbcad96fbc15484205664e988bcf8ab3e7a9f4130a2a8a8e9a9da8459a1f3c94113c47f3eaee7d14986bf7d  0088-usb-typec-fsa4480-retain-USB2-routing-in-four-lane-D.patch
++91754b1cecaa41e3217bf3303ccf597924b8d045e4e532995ce5e8f6f151f56414d6c3cf955bea2c0031c520888db5828bb8edd4e7dc3e1fda3c4dc51684bb5b  0089-phy-qcom-qmp-combo-do-not-drop-the-pipe-clock-after-.patch
++d852568dfc68c32a5c66379977a5e97a682b28652b478a11c479888a1fb6c80de9cebb753c81d5c654db595ad138312717a882ae624c6922ae64047f694df432  0090-phy-qcom-qmp-combo-let-the-USB-controller-guard-reco.patch
++7e9da9fbbc237d9e6d162d55bc9ff1dba91f2b0528fdfc4fbd8cf3d44338021d9f706da0ef8de32a4c5b9ed31c2fd8b82e20c5323082fa58ca12f378a3753b80  0091-phy-qcom-qmp-combo-hold-USB3-in-reset-in-SAFE-and-fo.patch
++bdbc918a83c74a3a64821b5c311f895134de90d07cc6ee797855aeeb67d53b07c6e46dfb346c36d31d048c50957d4cdf115b5d3b3fea85079d2ff5bf370b1b0b  0092-usb-dwc3-qcom-legacy-retain-the-USB2-clock-during-fo.patch
++026e75d18a89bf6a46b06dc23f3251e7a219dd16d0a3629aaebcc3fa2a5a9db94c6a7efba61938a821705e98e6ecaa0287540006dbb78b56e15cc2a68a0c67f3  0093-usb-typec-restore-DP-mux-state-when-reconfiguration-.patch
++6114a658d225db08e341c944992887dc5afb4ffa4e1ca3485ad9f0afed9569dbd887c0bb50f67b2a3d6d1013604be9cb526a1732854524a8d4e94927d4b071c0  0094-usb-typec-qcom-program-the-CC-mode-in-set_cc.patch
++87fdb403bc4a30144440756d45cf02b28a09300f51da6e2ec0c6c0777c73cf063593c8618fff586eb7e55df30a6f0346c3521e6aa95f9e80573d6c0f72f22579  0095-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-enable-.patch
+ "
+-- 
+2.51.2
+
