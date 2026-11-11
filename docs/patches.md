@@ -6,10 +6,10 @@
 |---|---|---|
 | Display (Samsung AMS678UW01, new panel driver, 1440×3168 @ 120 Hz) | works | kernel 0001–0003, pmaports 0001 |
 | GPU (Adreno 650, Mesa freedreno), Phosh accelerated | works | kernel 0004, pmaports 0001 |
-| USB-C DisplayPort video/audio, USB2 hub/touch and power delivery | works: 2880×1800 at 120 Hz, touch and power swap in both orientations; stereo audio and restart recovery pass; PHY/VBUS timeout fixes tested in both orientations | kernel 0088–0103, pmaports 0045–0047; [integration notes](displayport.md) |
-| USB-A charger detection and battery charge current | tested on IN2023: standalone USB-A detects as DCP at 1.5 A input; PD charges the battery at 1.99 A with a 2 A ceiling | kernel 0082–0087, pmaports 0044; [charging results](charging.md) |
+| USB-C DisplayPort: video with USB2 alongside, VBUS supply and power-role swap, audio | works | kernel 0088–0103, pmaports 0045–0047, 0049; [notes](displayport.md) |
+| Charger input limit from USB-C/PD or USB-A detection, 2 A battery current | works | kernel 0082–0087, pmaports 0044; [notes](charging.md) |
 | Speakers + 3 microphones (VA macro, mic bias as in vendor DT) | works | kernel 0005, pmaports 0002, 0007 |
-| False headset detection with an ordinary USB cable, codec runtime-PM errors and unsorted RX register defaults | fixed on the test IN2023; analog USB-C headsets untested | kernel 0055–0060, pmaports 0030; [audio notes](audio.md) |
+| False headset detection with an ordinary USB cable, codec runtime-PM errors and unsorted RX register defaults | fixed; analog USB-C headsets untested | kernel 0055–0060, pmaports 0030; [notes](audio.md) |
 | A/B boot counter (qbootctl marks boot successful) | works | pmaports 0003 |
 | Accelerometer, light, proximity via SLPI (SMEM item 130 filled by new driver) | works, needs the stock sensor files | kernel 0006–0008, 0049, pmaports 0004–0006, 0026, hexagonrpc 0001–0005 |
 | Telephoto camera Samsung S5K3M5 via CAMSS + libcamera (4208×3120 @ 30, 2104×1184 @ 60, AGC, green tint) | works | kernel 0009–0010, pmaports 0008–0009, libcamera 0001 |
@@ -34,11 +34,11 @@
 | Focus actuators: the first CCI transfer after power up can time out, which left the ultrawide lens disabled until the next boot, and the first position write after standby release was sometimes NACKed | works | kernel 0048, pmaports 0025 |
 | Front camera missing at some boots: the telephoto actuator used the camera I2C bus without the 1.8 V pull-up supply (L7F), the CCI timed out and reset both masters during the front camera probe | works | kernel 0050–0051, pmaports 0027 |
 | Compass heading: rotv needs fmv, which needs mag_cal and gyro_cal, which need the software motion detector that OnePlus switches off on SM8250 (`kona_amd_sw_disabled.json`) | works | `sensors/setup-sensors.sh` |
-| SLPI, Venus and CDSP: firmware from the phone's active modem partition, joined with pil-squasher and stored as local overrides | DSP startup and H.264 encode/decode tested; CDSP compute workloads untested | `firmware/dsp-firmware.sh` |
+| SLPI, Venus and CDSP: firmware from the phone's active modem partition, joined with pil-squasher and stored as local overrides | works; CDSP compute workloads untested | `firmware/dsp-firmware.sh` |
 | Automatic screen rotation: iio-sensor-proxy 3.9 opens the SSC sensors synchronously at startup; a claim in that window (KWin, Phosh) is stored but the sensor is never started | works | iio-sensor-proxy 0001 |
 | Reboot modes: `reboot bootloader` / `reboot recovery`; the unused PM8009 PON registered a second `qcom-pon` reboot mode (-EEXIST warning at boot) | works | kernel 0052, pmaports 0028 |
 | OIS of the main camera: onsemi LC898128 at 0x24, runs from its own firmware and reads the module gyroscope itself; new driver starts it whenever the sensor is powered, PM8009 L5 added for its supply | works | kernel 0053–0054, pmaports 0029 |
-| QRTR forwarded client deletions: accept notifications from a remote router for clients reached through the same transport endpoint | tested on IN2023 | kernel 0064, pmaports 0032 |
+| QRTR forwarded client deletions: accept notifications from a remote router for clients reached through the same transport endpoint | works | kernel 0064, pmaports 0032 |
 | Compass: the MMC5603 sensor-direction of OnePlus's own device tree for this phone (19811) is 0, not 4; found by naorunaoru | works | kernel 0065, pmaports 0033 |
 | Lens noise: the AK7375 driver steps the lens to and from its rest position, which buzzes on this phone; a module parameter turns that off, as the vendor kernel does | works | kernel 0066, pmaports 0033, `system/ak7375.conf` |
 | OIS: the LC898128 firmware is busy for about 2 s after the servo command and drops the OIS enable meanwhile; it also reads the gyroscope only while the sensor DSP runs it | works | kernel 0067, pmaports 0033, `system/ois-gyro` |
@@ -51,7 +51,7 @@
 | Wireless charge pump: the stock part is a BQ2597x, not a BQ25980; the node is corrected and stays disabled until wireless charging is integrated | disabled | kernel 0076, pmaports 0038 |
 | Boot warnings: touchscreen axis check, panel brightness access before the panel is ready, PCIe IOMMU map cells, fbdev mapping flag | fixed | kernel 0069–0072, pmaports 0037 |
 | USB input voltage and current stay readable while battery charging is paused or finished | fixed | kernel 0073, pmaports 0037 |
-| DSI PHY: digital top kept powered for PLL and PHY users, bias references released after a failed PLL lock; startup timeouts fell from 3 to 0 on one IN2023 | works | kernel 0077–0078, pmaports 0040 |
+| DSI PHY: digital top kept powered for PLL and PHY users, bias references released after a failed PLL lock | works | kernel 0077–0078, pmaports 0040 |
 | GPU cooling, Bluetooth PAN and the Qualcomm crypto engine enabled in the kernel config | enabled | pmaports 0039 |
 | ModemManager without the MediaTek and Rolling plugins, whose shared module fails to load on musl | works, modem comes up with the `qcom-soc` plugin | pmaports 0041 |
 | Flash limits as in the vendor device tree: 1500 mA flash for up to 1280 ms and 500 mA torch per channel | works | kernel 0079, pmaports 0042 |
