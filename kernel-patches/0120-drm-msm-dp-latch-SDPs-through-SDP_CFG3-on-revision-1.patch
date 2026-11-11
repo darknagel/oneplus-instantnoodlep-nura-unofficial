@@ -1,0 +1,69 @@
+From 7236b9f30758b7881400de6bf30300eb7bd945ae Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Wed, 11 Nov 2026 01:38:17 +0000
+Subject: [PATCH] drm/msm/dp: latch SDPs through SDP_CFG3 on revision 1.2
+ controllers
+
+The driver expects controllers from hardware revision 1.2 on to put the
+generic SDP slots on the link when the display engine issues a
+peripheral flush. The SM8250 controller reports revision 1.2.0.3 and
+does not: with the flush mode set to SDE_PERIPH_UPDATE an enabled VSC
+SDP never leaves the controller, whether the flush comes from the DPU
+driver or is written to CTL_PERIPH_FLUSH and CTL_FLUSH by hand. A sink
+that is told by MISC1 to take its colorimetry from the VSC SDP then
+shows no picture.
+
+With the flush mode set to UPDATE_SDP and SDP_CFG3 toggled, which is
+what the driver does below revision 1.2 and what the vendor driver does
+on this SoC, the packet goes out and the picture is there.
+
+Use that path for revision 1.2 as well. Where the peripheral flush
+starts to work is not known; 1.2.0.3 is the only revision this was
+measured on.
+---
+ drivers/gpu/drm/msm/dp/dp_ctrl.c  | 2 +-
+ drivers/gpu/drm/msm/dp/dp_panel.c | 2 +-
+ drivers/gpu/drm/msm/dp/dp_reg.h   | 1 +
+ 3 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_ctrl.c b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+index 86ef8c89a..37d2cd515 100644
+--- a/drivers/gpu/drm/msm/dp/dp_ctrl.c
++++ b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+@@ -347,7 +347,7 @@ static void msm_dp_setup_peripheral_flush(struct msm_dp_ctrl_private *ctrl)
+ 
+ 	mainlink_ctrl = msm_dp_read_link(ctrl, REG_DP_MAINLINK_CTRL);
+ 
+-	if (ctrl->hw_revision >= DP_HW_VERSION_1_2)
++	if (ctrl->hw_revision >= DP_HW_VERSION_1_3)
+ 		mainlink_ctrl |= DP_MAINLINK_FLUSH_MODE_SDE_PERIPH_UPDATE;
+ 	else
+ 		mainlink_ctrl |= DP_MAINLINK_FLUSH_MODE_UPDATE_SDP;
+diff --git a/drivers/gpu/drm/msm/dp/dp_panel.c b/drivers/gpu/drm/msm/dp/dp_panel.c
+index a12447b57..e0b6ab114 100644
+--- a/drivers/gpu/drm/msm/dp/dp_panel.c
++++ b/drivers/gpu/drm/msm/dp/dp_panel.c
+@@ -512,7 +512,7 @@ static void msm_dp_panel_update_sdp(struct msm_dp_panel_private *panel)
+ 	u32 hw_revision = panel->msm_dp_panel.hw_revision;
+ 
+ 	if (hw_revision >= DP_HW_VERSION_1_0 &&
+-	    hw_revision < DP_HW_VERSION_1_2) {
++	    hw_revision < DP_HW_VERSION_1_3) {
+ 		msm_dp_write_link(panel, MMSS_DP_SDP_CFG3, UPDATE_SDP);
+ 		msm_dp_write_link(panel, MMSS_DP_SDP_CFG3, 0x0);
+ 	}
+diff --git a/drivers/gpu/drm/msm/dp/dp_reg.h b/drivers/gpu/drm/msm/dp/dp_reg.h
+index 5c113832b..f3511c99d 100644
+--- a/drivers/gpu/drm/msm/dp/dp_reg.h
++++ b/drivers/gpu/drm/msm/dp/dp_reg.h
+@@ -13,6 +13,7 @@
+ #define REG_DP_HW_VERSION			(0x00000000)
+ #define DP_HW_VERSION_1_0	0x10000000
+ #define DP_HW_VERSION_1_2	0x10020000
++#define DP_HW_VERSION_1_3	0x10030000
+ 
+ #define REG_DP_SW_RESET				(0x00000010)
+ #define DP_SW_RESET				(0x00000001)
+-- 
+2.51.2
+

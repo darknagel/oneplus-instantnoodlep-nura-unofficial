@@ -1,0 +1,637 @@
+From c62a636fd64c565a32016a6c62266d5828216359 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Wed, 11 Nov 2026 18:11:12 +0000
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: HDR output and HBR3 over
+ DisplayPort
+
+Add kernel patches 0117-0121 for HBR3, BT.2020 RGB colorimetry, HDR static metadata and connector properties. Advance to release 82.
+---
+ ...nstantnoodlep-allow-DisplayPort-link.patch |  29 +++
+ ...l-the-colorimetry-of-RGB-streams-in-.patch | 101 ++++++++++
+ ...HDR-static-metadata-as-an-infoframe-.patch | 185 ++++++++++++++++++
+ ...-SDPs-through-SDP_CFG3-on-revision-1.patch |  69 +++++++
+ ...e-Colorspace-and-HDR_OUTPUT_METADATA.patch | 167 ++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  12 +-
+ 6 files changed, 562 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0117-arm64-dts-qcom-instantnoodlep-allow-DisplayPort-link.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0118-drm-msm-dp-signal-the-colorimetry-of-RGB-streams-in-.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0119-drm-msm-dp-send-HDR-static-metadata-as-an-infoframe-.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0120-drm-msm-dp-latch-SDPs-through-SDP_CFG3-on-revision-1.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0121-drm-msm-dp-expose-Colorspace-and-HDR_OUTPUT_METADATA.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0117-arm64-dts-qcom-instantnoodlep-allow-DisplayPort-link.patch b/device/testing/linux-postmarketos-qcom-sm8250/0117-arm64-dts-qcom-instantnoodlep-allow-DisplayPort-link.patch
+new file mode 100644
+index 0000000..0ba6b61
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0117-arm64-dts-qcom-instantnoodlep-allow-DisplayPort-link.patch
+@@ -0,0 +1,29 @@
++From 0812ec3505ab0f42570828b730c43dbb27f445b2 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Wed, 11 Nov 2026 01:38:17 +0000
++Subject: [PATCH] arm64: dts: qcom: instantnoodlep: allow DisplayPort link
++ rates up to HBR3
++
++Without link-frequencies the DP driver caps the link at HBR2. The
++SM8250 controller and combo PHY support 8.1 Gbps per lane, so list all
++four rates. Link training still falls back when a sink or cable cannot
++hold the higher rate.
++---
++ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 1 +
++ 1 file changed, 1 insertion(+)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 09d082e0e..407a273d1 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -1305,6 +1305,7 @@ &mdss_dp {
++ 
++ &mdss_dp_out {
++ 	data-lanes = <0 1 2 3>;
+++	link-frequencies = /bits/ 64 <1620000000 2700000000 5400000000 8100000000>;
++ 	remote-endpoint = <&usb_1_qmpphy_dp_in>;
++ };
++ 
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0118-drm-msm-dp-signal-the-colorimetry-of-RGB-streams-in-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0118-drm-msm-dp-signal-the-colorimetry-of-RGB-streams-in-.patch
+new file mode 100644
+index 0000000..d63196e
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0118-drm-msm-dp-signal-the-colorimetry-of-RGB-streams-in-.patch
+@@ -0,0 +1,101 @@
++From e4bbe14fac1820f41a355ef2373a144fc960f205 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Wed, 11 Nov 2026 01:38:17 +0000
++Subject: [PATCH] drm/msm/dp: signal the colorimetry of RGB streams in the VSC
++ SDP
++
++The VSC SDP is only sent for YCbCr 4:2:0 modes, always with default
++colorimetry. The MSA MISC0 field cannot describe BT.2020, so an RGB
++stream in a wide-gamut container has no way to say so.
++
++Let the panel carry the colorspace requested for the stream and send
++the VSC SDP for RGB as well when it is not the default and the sink
++accepts colorimetry there. RGB is described as full range. Nothing sets
++the colorspace yet.
++---
++ drivers/gpu/drm/msm/dp/dp_panel.c | 38 ++++++++++++++++++++++++++-----
++ drivers/gpu/drm/msm/dp/dp_panel.h |  2 ++
++ 2 files changed, 34 insertions(+), 6 deletions(-)
++
++diff --git a/drivers/gpu/drm/msm/dp/dp_panel.c b/drivers/gpu/drm/msm/dp/dp_panel.c
++index 6bb021820..4806f2ced 100644
++--- a/drivers/gpu/drm/msm/dp/dp_panel.c
+++++ b/drivers/gpu/drm/msm/dp/dp_panel.c
++@@ -567,7 +567,30 @@ void msm_dp_panel_disable_vsc_sdp(struct msm_dp_panel *msm_dp_panel)
++ 	msm_dp_panel_update_sdp(panel);
++ }
++ 
++-static int msm_dp_panel_setup_vsc_sdp_yuv_420(struct msm_dp_panel *msm_dp_panel)
+++/* MSA MISC0 cannot describe BT.2020, so wide colorimetry needs the VSC SDP. */
+++static bool msm_dp_panel_needs_vsc_sdp(const struct msm_dp_panel *msm_dp_panel)
+++{
+++	if (msm_dp_panel->msm_dp_mode.out_fmt_is_yuv_420)
+++		return true;
+++
+++	return msm_dp_panel->vsc_sdp_supported &&
+++	       msm_dp_panel->colorspace != DRM_MODE_COLORIMETRY_DEFAULT;
+++}
+++
+++static enum dp_colorimetry msm_dp_panel_vsc_colorimetry(const struct msm_dp_panel *msm_dp_panel)
+++{
+++	bool yuv = msm_dp_panel->msm_dp_mode.out_fmt_is_yuv_420;
+++
+++	switch (msm_dp_panel->colorspace) {
+++	case DRM_MODE_COLORIMETRY_BT2020_RGB:
+++	case DRM_MODE_COLORIMETRY_BT2020_YCC:
+++		return yuv ? DP_COLORIMETRY_BT2020_YCC : DP_COLORIMETRY_BT2020_RGB;
+++	default:
+++		return DP_COLORIMETRY_DEFAULT;
+++	}
+++}
+++
+++static int msm_dp_panel_setup_vsc_sdp(struct msm_dp_panel *msm_dp_panel)
++ {
++ 	struct msm_dp_display_mode *msm_dp_mode;
++ 	struct drm_dp_vsc_sdp vsc_sdp_data;
++@@ -589,12 +612,15 @@ static int msm_dp_panel_setup_vsc_sdp_yuv_420(struct msm_dp_panel *msm_dp_panel)
++ 	vsc_sdp_data.length = 0x13;
++ 
++ 	/* VSC SDP Payload for DB16 */
++-	vsc_sdp_data.pixelformat = DP_PIXELFORMAT_YUV420;
++-	vsc_sdp_data.colorimetry = DP_COLORIMETRY_DEFAULT;
+++	vsc_sdp_data.pixelformat = msm_dp_mode->out_fmt_is_yuv_420 ?
+++				   DP_PIXELFORMAT_YUV420 : DP_PIXELFORMAT_RGB;
+++	vsc_sdp_data.colorimetry = msm_dp_panel_vsc_colorimetry(msm_dp_panel);
++ 
++ 	/* VSC SDP Payload for DB17 */
++ 	vsc_sdp_data.bpc = msm_dp_mode->bpp / 3;
++-	vsc_sdp_data.dynamic_range = DP_DYNAMIC_RANGE_CTA;
+++	/* The pipeline produces full-range RGB. */
+++	vsc_sdp_data.dynamic_range = msm_dp_mode->out_fmt_is_yuv_420 ?
+++				     DP_DYNAMIC_RANGE_CTA : DP_DYNAMIC_RANGE_VESA;
++ 
++ 	/* VSC SDP Payload for DB18 */
++ 	vsc_sdp_data.content_type = DP_CONTENT_TYPE_GRAPHICS;
++@@ -679,8 +705,8 @@ int msm_dp_panel_timing_cfg(struct msm_dp_panel *msm_dp_panel, bool wide_bus_en)
++ 
++ 	msm_dp_write_p0(panel, MMSS_DP_INTF_CONFIG, reg);
++ 
++-	if (msm_dp_panel->msm_dp_mode.out_fmt_is_yuv_420)
++-		msm_dp_panel_setup_vsc_sdp_yuv_420(msm_dp_panel);
+++	if (msm_dp_panel_needs_vsc_sdp(msm_dp_panel))
+++		msm_dp_panel_setup_vsc_sdp(msm_dp_panel);
++ 
++ 	panel->panel_on = true;
++ 
++diff --git a/drivers/gpu/drm/msm/dp/dp_panel.h b/drivers/gpu/drm/msm/dp/dp_panel.h
++index 9173e90a5..f7949e030 100644
++--- a/drivers/gpu/drm/msm/dp/dp_panel.h
+++++ b/drivers/gpu/drm/msm/dp/dp_panel.h
++@@ -39,6 +39,8 @@ struct msm_dp_panel {
++ 	struct msm_dp_panel_psr psr_cap;
++ 	bool video_test;
++ 	bool vsc_sdp_supported;
+++	/* DRM_MODE_COLORIMETRY_* requested through the connector state */
+++	u32 colorspace;
++ 	u32 hw_revision;
++ 
++ 	u32 max_bw_code;
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0119-drm-msm-dp-send-HDR-static-metadata-as-an-infoframe-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0119-drm-msm-dp-send-HDR-static-metadata-as-an-infoframe-.patch
+new file mode 100644
+index 0000000..06db729
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0119-drm-msm-dp-send-HDR-static-metadata-as-an-infoframe-.patch
+@@ -0,0 +1,185 @@
++From b21c2098c941857e319b463629a82f445325b7fd Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Wed, 11 Nov 2026 01:38:17 +0000
++Subject: [PATCH] drm/msm/dp: send HDR static metadata as an infoframe SDP
++
++Add the third generic SDP slot of the controller and use it for the
++Dynamic Range and Mastering infoframe when the panel has HDR metadata to
++send. The slot and its enable bits are the ones the vendor driver uses
++for the same packet. The packet is switched off with the VSC SDP when
++the stream stops. Nothing provides metadata yet.
++---
++ drivers/gpu/drm/msm/dp/dp_panel.c | 73 ++++++++++++++++++++++++++-----
++ drivers/gpu/drm/msm/dp/dp_panel.h |  4 ++
++ drivers/gpu/drm/msm/dp/dp_reg.h   |  5 +++
++ 3 files changed, 72 insertions(+), 10 deletions(-)
++
++diff --git a/drivers/gpu/drm/msm/dp/dp_panel.c b/drivers/gpu/drm/msm/dp/dp_panel.c
++index 4806f2ced..a12447b57 100644
++--- a/drivers/gpu/drm/msm/dp/dp_panel.c
+++++ b/drivers/gpu/drm/msm/dp/dp_panel.c
++@@ -482,24 +482,31 @@ void msm_dp_panel_clear_dsc_dto(struct msm_dp_panel *msm_dp_panel)
++ 	msm_dp_write_p0(panel, MMSS_DP_DSC_DTO, 0x0);
++ }
++ 
++-static void msm_dp_panel_send_vsc_sdp(struct msm_dp_panel_private *panel, struct dp_sdp *vsc_sdp)
+++/* The generic SDP slots share one layout: two header words, then the payload. */
+++static void msm_dp_panel_write_sdp(struct msm_dp_panel_private *panel, u32 slot,
+++				   struct dp_sdp *sdp)
++ {
++ 	u32 header[2];
++ 	u32 val;
++ 	int i;
++ 
++-	msm_dp_utils_pack_sdp_header(&vsc_sdp->sdp_header, header);
+++	msm_dp_utils_pack_sdp_header(&sdp->sdp_header, header);
++ 
++-	msm_dp_write_link(panel, MMSS_DP_GENERIC0_0, header[0]);
++-	msm_dp_write_link(panel, MMSS_DP_GENERIC0_1, header[1]);
+++	msm_dp_write_link(panel, slot, header[0]);
+++	msm_dp_write_link(panel, slot + 4, header[1]);
++ 
++-	for (i = 0; i < sizeof(vsc_sdp->db); i += 4) {
++-		val = ((vsc_sdp->db[i]) | (vsc_sdp->db[i + 1] << 8) | (vsc_sdp->db[i + 2] << 16) |
++-		       (vsc_sdp->db[i + 3] << 24));
++-		msm_dp_write_link(panel, MMSS_DP_GENERIC0_2 + i, val);
+++	for (i = 0; i < sizeof(sdp->db); i += 4) {
+++		val = ((sdp->db[i]) | (sdp->db[i + 1] << 8) | (sdp->db[i + 2] << 16) |
+++		       (sdp->db[i + 3] << 24));
+++		msm_dp_write_link(panel, slot + 8 + i, val);
++ 	}
++ }
++ 
+++static void msm_dp_panel_send_vsc_sdp(struct msm_dp_panel_private *panel, struct dp_sdp *vsc_sdp)
+++{
+++	msm_dp_panel_write_sdp(panel, MMSS_DP_GENERIC0_0, vsc_sdp);
+++}
+++
++ static void msm_dp_panel_update_sdp(struct msm_dp_panel_private *panel)
++ {
++ 	u32 hw_revision = panel->msm_dp_panel.hw_revision;
++@@ -550,10 +557,10 @@ void msm_dp_panel_disable_vsc_sdp(struct msm_dp_panel *msm_dp_panel)
++ 	cfg2 = msm_dp_read_link(panel, MMSS_DP_SDP_CFG2);
++ 	misc = msm_dp_read_link(panel, REG_DP_MISC1_MISC0);
++ 
++-	cfg &= ~GEN0_SDP_EN;
+++	cfg &= ~(GEN0_SDP_EN | GEN2_SDP_EN);
++ 	msm_dp_write_link(panel, MMSS_DP_SDP_CFG, cfg);
++ 
++-	cfg2 &= ~GENERIC0_SDPSIZE_VALID;
+++	cfg2 &= ~(GENERIC0_SDPSIZE_VALID | GENERIC2_SDPSIZE_VALID);
++ 	msm_dp_write_link(panel, MMSS_DP_SDP_CFG2, cfg2);
++ 
++ 	/* switch back to MSA */
++@@ -567,6 +574,49 @@ void msm_dp_panel_disable_vsc_sdp(struct msm_dp_panel *msm_dp_panel)
++ 	msm_dp_panel_update_sdp(panel);
++ }
++ 
+++/*
+++ * HDR static metadata travels as an INFOFRAME SDP (DP 1.4a, tables 2-100 and
+++ * 2-101): the CTA-861 Dynamic Range and Mastering infoframe without its
+++ * checksum, behind the infoframe version and length.
+++ */
+++static void msm_dp_panel_setup_hdr_sdp(struct msm_dp_panel *msm_dp_panel)
+++{
+++	struct msm_dp_panel_private *panel =
+++		container_of(msm_dp_panel, struct msm_dp_panel_private, msm_dp_panel);
+++	const struct hdmi_drm_infoframe *frame = &msm_dp_panel->hdr_infoframe;
+++	u8 buf[HDMI_INFOFRAME_SIZE(DRM)];
+++	struct dp_sdp sdp = {};
+++	u32 cfg, cfg2;
+++
+++	if (hdmi_drm_infoframe_pack_only(frame, buf, sizeof(buf)) < 0) {
+++		DRM_ERROR("unable to pack HDR metadata\n");
+++		return;
+++	}
+++
+++	sdp.sdp_header.HB0 = 0;
+++	sdp.sdp_header.HB1 = frame->type;
+++	sdp.sdp_header.HB2 = 0x1D;
+++	sdp.sdp_header.HB3 = 0x13 << 2;
+++	sdp.db[0] = frame->version;
+++	sdp.db[1] = frame->length;
+++	memcpy(&sdp.db[2], &buf[HDMI_INFOFRAME_HEADER_SIZE], HDMI_DRM_INFOFRAME_SIZE);
+++
+++	cfg = msm_dp_read_link(panel, MMSS_DP_SDP_CFG);
+++	cfg2 = msm_dp_read_link(panel, MMSS_DP_SDP_CFG2);
+++
+++	cfg |= GEN2_SDP_EN;
+++	msm_dp_write_link(panel, MMSS_DP_SDP_CFG, cfg);
+++
+++	cfg2 |= GENERIC2_SDPSIZE_VALID;
+++	msm_dp_write_link(panel, MMSS_DP_SDP_CFG2, cfg2);
+++
+++	msm_dp_panel_write_sdp(panel, MMSS_DP_GENERIC2_0, &sdp);
+++
+++	drm_dbg_dp(panel->drm_dev, "hdr sdp enable=1 eotf=%d\n", frame->eotf);
+++
+++	msm_dp_panel_update_sdp(panel);
+++}
+++
++ /* MSA MISC0 cannot describe BT.2020, so wide colorimetry needs the VSC SDP. */
++ static bool msm_dp_panel_needs_vsc_sdp(const struct msm_dp_panel *msm_dp_panel)
++ {
++@@ -708,6 +758,9 @@ int msm_dp_panel_timing_cfg(struct msm_dp_panel *msm_dp_panel, bool wide_bus_en)
++ 	if (msm_dp_panel_needs_vsc_sdp(msm_dp_panel))
++ 		msm_dp_panel_setup_vsc_sdp(msm_dp_panel);
++ 
+++	if (msm_dp_panel->hdr_metadata_valid)
+++		msm_dp_panel_setup_hdr_sdp(msm_dp_panel);
+++
++ 	panel->panel_on = true;
++ 
++ 	return 0;
++diff --git a/drivers/gpu/drm/msm/dp/dp_panel.h b/drivers/gpu/drm/msm/dp/dp_panel.h
++index f7949e030..db4071c01 100644
++--- a/drivers/gpu/drm/msm/dp/dp_panel.h
+++++ b/drivers/gpu/drm/msm/dp/dp_panel.h
++@@ -7,6 +7,7 @@
++ #define _DP_PANEL_H_
++ 
++ #include <drm/drm_modes.h>
+++#include <linux/hdmi.h>
++ #include <drm/msm_drm.h>
++ 
++ #include "dp_aux.h"
++@@ -41,6 +42,9 @@ struct msm_dp_panel {
++ 	bool vsc_sdp_supported;
++ 	/* DRM_MODE_COLORIMETRY_* requested through the connector state */
++ 	u32 colorspace;
+++	/* HDR static metadata to send while the stream runs */
+++	bool hdr_metadata_valid;
+++	struct hdmi_drm_infoframe hdr_infoframe;
++ 	u32 hw_revision;
++ 
++ 	u32 max_bw_code;
++diff --git a/drivers/gpu/drm/msm/dp/dp_reg.h b/drivers/gpu/drm/msm/dp/dp_reg.h
++index 3689642b7..5c113832b 100644
++--- a/drivers/gpu/drm/msm/dp/dp_reg.h
+++++ b/drivers/gpu/drm/msm/dp/dp_reg.h
++@@ -231,10 +231,12 @@
++ 
++ #define MMSS_DP_SDP_CFG				(0x00000228)
++ #define GEN0_SDP_EN				(0x00020000)
+++#define GEN2_SDP_EN				(0x00080000)
++ #define MMSS_DP_SDP_CFG2			(0x0000022C)
++ #define MMSS_DP_AUDIO_TIMESTAMP_0		(0x00000230)
++ #define MMSS_DP_AUDIO_TIMESTAMP_1		(0x00000234)
++ #define GENERIC0_SDPSIZE_VALID			(0x00010000)
+++#define GENERIC2_SDPSIZE_VALID			(0x00100000)
++ 
++ #define MMSS_DP_AUDIO_STREAM_0			(0x00000240)
++ #define MMSS_DP_AUDIO_STREAM_1			(0x00000244)
++@@ -288,6 +290,9 @@
++ #define MMSS_DP_GENERIC1_7			(0x00000344)
++ #define MMSS_DP_GENERIC1_8			(0x00000348)
++ #define MMSS_DP_GENERIC1_9			(0x0000034C)
+++#define MMSS_DP_GENERIC2_0			(0x000003D8)
+++#define MMSS_DP_GENERIC2_1			(0x000003DC)
+++#define MMSS_DP_GENERIC2_2			(0x000003E0)
++ 
++ #define MMSS_DP_VSCEXT_0			(0x000002D0)
++ #define MMSS_DP_VSCEXT_1			(0x000002D4)
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0120-drm-msm-dp-latch-SDPs-through-SDP_CFG3-on-revision-1.patch b/device/testing/linux-postmarketos-qcom-sm8250/0120-drm-msm-dp-latch-SDPs-through-SDP_CFG3-on-revision-1.patch
+new file mode 100644
+index 0000000..f7aaeb0
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0120-drm-msm-dp-latch-SDPs-through-SDP_CFG3-on-revision-1.patch
+@@ -0,0 +1,69 @@
++From 7236b9f30758b7881400de6bf30300eb7bd945ae Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Wed, 11 Nov 2026 01:38:17 +0000
++Subject: [PATCH] drm/msm/dp: latch SDPs through SDP_CFG3 on revision 1.2
++ controllers
++
++The driver expects controllers from hardware revision 1.2 on to put the
++generic SDP slots on the link when the display engine issues a
++peripheral flush. The SM8250 controller reports revision 1.2.0.3 and
++does not: with the flush mode set to SDE_PERIPH_UPDATE an enabled VSC
++SDP never leaves the controller, whether the flush comes from the DPU
++driver or is written to CTL_PERIPH_FLUSH and CTL_FLUSH by hand. A sink
++that is told by MISC1 to take its colorimetry from the VSC SDP then
++shows no picture.
++
++With the flush mode set to UPDATE_SDP and SDP_CFG3 toggled, which is
++what the driver does below revision 1.2 and what the vendor driver does
++on this SoC, the packet goes out and the picture is there.
++
++Use that path for revision 1.2 as well. Where the peripheral flush
++starts to work is not known; 1.2.0.3 is the only revision this was
++measured on.
++---
++ drivers/gpu/drm/msm/dp/dp_ctrl.c  | 2 +-
++ drivers/gpu/drm/msm/dp/dp_panel.c | 2 +-
++ drivers/gpu/drm/msm/dp/dp_reg.h   | 1 +
++ 3 files changed, 3 insertions(+), 2 deletions(-)
++
++diff --git a/drivers/gpu/drm/msm/dp/dp_ctrl.c b/drivers/gpu/drm/msm/dp/dp_ctrl.c
++index 86ef8c89a..37d2cd515 100644
++--- a/drivers/gpu/drm/msm/dp/dp_ctrl.c
+++++ b/drivers/gpu/drm/msm/dp/dp_ctrl.c
++@@ -347,7 +347,7 @@ static void msm_dp_setup_peripheral_flush(struct msm_dp_ctrl_private *ctrl)
++ 
++ 	mainlink_ctrl = msm_dp_read_link(ctrl, REG_DP_MAINLINK_CTRL);
++ 
++-	if (ctrl->hw_revision >= DP_HW_VERSION_1_2)
+++	if (ctrl->hw_revision >= DP_HW_VERSION_1_3)
++ 		mainlink_ctrl |= DP_MAINLINK_FLUSH_MODE_SDE_PERIPH_UPDATE;
++ 	else
++ 		mainlink_ctrl |= DP_MAINLINK_FLUSH_MODE_UPDATE_SDP;
++diff --git a/drivers/gpu/drm/msm/dp/dp_panel.c b/drivers/gpu/drm/msm/dp/dp_panel.c
++index a12447b57..e0b6ab114 100644
++--- a/drivers/gpu/drm/msm/dp/dp_panel.c
+++++ b/drivers/gpu/drm/msm/dp/dp_panel.c
++@@ -512,7 +512,7 @@ static void msm_dp_panel_update_sdp(struct msm_dp_panel_private *panel)
++ 	u32 hw_revision = panel->msm_dp_panel.hw_revision;
++ 
++ 	if (hw_revision >= DP_HW_VERSION_1_0 &&
++-	    hw_revision < DP_HW_VERSION_1_2) {
+++	    hw_revision < DP_HW_VERSION_1_3) {
++ 		msm_dp_write_link(panel, MMSS_DP_SDP_CFG3, UPDATE_SDP);
++ 		msm_dp_write_link(panel, MMSS_DP_SDP_CFG3, 0x0);
++ 	}
++diff --git a/drivers/gpu/drm/msm/dp/dp_reg.h b/drivers/gpu/drm/msm/dp/dp_reg.h
++index 5c113832b..f3511c99d 100644
++--- a/drivers/gpu/drm/msm/dp/dp_reg.h
+++++ b/drivers/gpu/drm/msm/dp/dp_reg.h
++@@ -13,6 +13,7 @@
++ #define REG_DP_HW_VERSION			(0x00000000)
++ #define DP_HW_VERSION_1_0	0x10000000
++ #define DP_HW_VERSION_1_2	0x10020000
+++#define DP_HW_VERSION_1_3	0x10030000
++ 
++ #define REG_DP_SW_RESET				(0x00000010)
++ #define DP_SW_RESET				(0x00000001)
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0121-drm-msm-dp-expose-Colorspace-and-HDR_OUTPUT_METADATA.patch b/device/testing/linux-postmarketos-qcom-sm8250/0121-drm-msm-dp-expose-Colorspace-and-HDR_OUTPUT_METADATA.patch
+new file mode 100644
+index 0000000..66e9255
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0121-drm-msm-dp-expose-Colorspace-and-HDR_OUTPUT_METADATA.patch
+@@ -0,0 +1,167 @@
++From 4f3141d522f758722f2b9515e3de9d2f703d0d8f Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Wed, 11 Nov 2026 01:38:17 +0000
++Subject: [PATCH] drm/msm/dp: expose Colorspace and HDR_OUTPUT_METADATA on DP
++ connectors
++
++Attach the two properties to external DisplayPort connectors, offering
++BT2020_RGB next to the default colorspace. Copy the requested state to
++the panel when the stream is enabled, so the VSC SDP carries the
++colorimetry and the HDR static metadata infoframe is sent.
++
++Both packets are programmed when the stream starts, so a change of
++either property forces a modeset. A colorspace is refused for sinks
++that take no colorimetry in the VSC SDP.
++---
++ drivers/gpu/drm/msm/Kconfig         |  1 +
++ drivers/gpu/drm/msm/dp/dp_display.c | 62 +++++++++++++++++++++++++++++
++ drivers/gpu/drm/msm/dp/dp_drm.c     | 10 ++++-
++ drivers/gpu/drm/msm/dp/dp_drm.h     |  4 ++
++ 4 files changed, 76 insertions(+), 1 deletion(-)
++
++diff --git a/drivers/gpu/drm/msm/Kconfig b/drivers/gpu/drm/msm/Kconfig
++index 250246f81..955326c79 100644
++--- a/drivers/gpu/drm/msm/Kconfig
+++++ b/drivers/gpu/drm/msm/Kconfig
++@@ -117,6 +117,7 @@ config DRM_MSM_DP
++ 	depends on DRM_MSM
++ 	depends on DRM_MSM_KMS
++ 	select DRM_DISPLAY_HDMI_AUDIO_HELPER
+++	select DRM_DISPLAY_HDMI_HELPER
++ 	select RATIONAL
++ 	select DRM_DISPLAY_DP_AUX_BUS
++ 	select DRM_DISPLAY_DP_HELPER
++diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
++index dc6f33809..fc87cd111 100644
++--- a/drivers/gpu/drm/msm/dp/dp_display.c
+++++ b/drivers/gpu/drm/msm/dp/dp_display.c
++@@ -14,6 +14,8 @@
++ #include <linux/string_choices.h>
++ #include <drm/display/drm_dp_aux_bus.h>
++ #include <drm/display/drm_hdmi_audio_helper.h>
+++#include <drm/display/drm_hdmi_helper.h>
+++#include <drm/drm_atomic.h>
++ #include <drm/drm_edid.h>
++ 
++ #include "msm_drv.h"
++@@ -1352,6 +1354,64 @@ int msm_dp_modeset_init(struct msm_dp *msm_dp_display, struct drm_device *dev,
++ 	return 0;
++ }
++ 
+++/* Colour and HDR signalling are programmed when the stream starts. */
+++int msm_dp_bridge_atomic_check(struct drm_bridge *bridge,
+++			       struct drm_bridge_state *bridge_state,
+++			       struct drm_crtc_state *crtc_state,
+++			       struct drm_connector_state *conn_state)
+++{
+++	struct msm_dp *dp = to_dp_bridge(bridge)->msm_dp_display;
+++	struct msm_dp_display_private *msm_dp_display =
+++		container_of(dp, struct msm_dp_display_private, msm_dp_display);
+++	struct drm_connector_state *old_conn_state;
+++
+++	if (!conn_state || !conn_state->crtc || !crtc_state)
+++		return 0;
+++
+++	if (conn_state->colorspace != DRM_MODE_COLORIMETRY_DEFAULT &&
+++	    !msm_dp_display->panel->vsc_sdp_supported) {
+++		drm_dbg_dp(dp->drm_dev, "sink takes no colorimetry in the VSC SDP\n");
+++		return -EINVAL;
+++	}
+++
+++	old_conn_state = drm_atomic_get_old_connector_state(conn_state->state,
+++							   conn_state->connector);
+++	if (!old_conn_state || !old_conn_state->crtc)
+++		return 0;
+++
+++	if (old_conn_state->colorspace == conn_state->colorspace &&
+++	    drm_connector_atomic_hdr_metadata_equal(old_conn_state, conn_state))
+++		return 0;
+++
+++	crtc_state->mode_changed = true;
+++
+++	return drm_atomic_add_affected_planes(conn_state->state, conn_state->crtc);
+++}
+++
+++static void msm_dp_display_set_color_state(struct msm_dp_display_private *msm_dp_display,
+++					   struct drm_atomic_commit *state,
+++					   struct drm_encoder *encoder)
+++{
+++	struct msm_dp_panel *panel = msm_dp_display->panel;
+++	struct drm_connector_state *conn_state = NULL;
+++	struct drm_connector *connector;
+++
+++	panel->colorspace = DRM_MODE_COLORIMETRY_DEFAULT;
+++	panel->hdr_metadata_valid = false;
+++
+++	connector = drm_atomic_get_new_connector_for_encoder(state, encoder);
+++	if (connector)
+++		conn_state = drm_atomic_get_new_connector_state(state, connector);
+++	if (!conn_state)
+++		return;
+++
+++	panel->colorspace = conn_state->colorspace;
+++
+++	if (conn_state->hdr_output_metadata &&
+++	    !drm_hdmi_infoframe_set_hdr_metadata(&panel->hdr_infoframe, conn_state))
+++		panel->hdr_metadata_valid = true;
+++}
+++
++ void msm_dp_bridge_atomic_enable(struct drm_bridge *drm_bridge,
++ 				 struct drm_atomic_commit *state)
++ {
++@@ -1378,6 +1438,8 @@ void msm_dp_bridge_atomic_enable(struct drm_bridge *drm_bridge,
++ 	if (msm_dp_display->link->sink_count == 0)
++ 		return;
++ 
+++	msm_dp_display_set_color_state(msm_dp_display, state, drm_bridge->encoder);
+++
++ 	rc = msm_dp_display_set_mode(dp, &msm_dp_display->msm_dp_mode);
++ 	if (rc) {
++ 		DRM_ERROR("Failed to perform a mode set, rc=%d\n", rc);
++diff --git a/drivers/gpu/drm/msm/dp/dp_drm.c b/drivers/gpu/drm/msm/dp/dp_drm.c
++index b659d22f5..c07442734 100644
++--- a/drivers/gpu/drm/msm/dp/dp_drm.c
+++++ b/drivers/gpu/drm/msm/dp/dp_drm.c
++@@ -53,6 +53,7 @@ static const struct drm_bridge_funcs msm_dp_bridge_ops = {
++ 	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
++ 	.atomic_destroy_state   = drm_atomic_helper_bridge_destroy_state,
++ 	.atomic_reset           = drm_atomic_helper_bridge_reset,
+++	.atomic_check           = msm_dp_bridge_atomic_check,
++ 	.atomic_enable          = msm_dp_bridge_atomic_enable,
++ 	.atomic_disable         = msm_dp_bridge_atomic_disable,
++ 	.atomic_post_disable    = msm_dp_bridge_atomic_post_disable,
++@@ -322,8 +323,15 @@ struct drm_connector *msm_dp_drm_connector_init(struct msm_dp *msm_dp_display,
++ 	if (IS_ERR(connector))
++ 		return connector;
++ 
++-	if (!msm_dp_display->is_edp)
+++	if (!msm_dp_display->is_edp) {
++ 		drm_connector_attach_dp_subconnector_property(connector);
++ 
+++		/* Whether a sink can take these is checked per commit. */
+++		if (!drm_mode_create_dp_colorspace_property(connector,
+++					BIT(DRM_MODE_COLORIMETRY_BT2020_RGB)))
+++			drm_connector_attach_colorspace_property(connector);
+++		drm_connector_attach_hdr_output_metadata_property(connector);
+++	}
+++
++ 	return connector;
++ }
++diff --git a/drivers/gpu/drm/msm/dp/dp_drm.h b/drivers/gpu/drm/msm/dp/dp_drm.h
++index 041aa026a..3129ea783 100644
++--- a/drivers/gpu/drm/msm/dp/dp_drm.h
+++++ b/drivers/gpu/drm/msm/dp/dp_drm.h
++@@ -27,6 +27,10 @@ int msm_dp_bridge_init(struct msm_dp *msm_dp_display, struct drm_device *dev,
++ 
++ enum drm_connector_status msm_dp_bridge_detect(struct drm_bridge *bridge,
++ 					       struct drm_connector *connector);
+++int msm_dp_bridge_atomic_check(struct drm_bridge *bridge,
+++			       struct drm_bridge_state *bridge_state,
+++			       struct drm_crtc_state *crtc_state,
+++			       struct drm_connector_state *conn_state);
++ void msm_dp_bridge_atomic_enable(struct drm_bridge *drm_bridge,
++ 				 struct drm_atomic_commit *state);
++ void msm_dp_bridge_atomic_disable(struct drm_bridge *drm_bridge,
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 6168cf9..b9db27b 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=81
++pkgrel=82
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -146,6 +146,11 @@ source="
+ 	0114-media-i2c-imx471-use-30-fps-for-the-binned-mode.patch
+ 	0115-drm-panel-samsung-ams678uw01-power-off-when-the-PPS-.patch
+ 	0116-soc-qcom-oneplus-sensor-devinfo-bound-the-SAR-channe.patch
++	0117-arm64-dts-qcom-instantnoodlep-allow-DisplayPort-link.patch
++	0118-drm-msm-dp-signal-the-colorimetry-of-RGB-streams-in-.patch
++	0119-drm-msm-dp-send-HDR-static-metadata-as-an-infoframe-.patch
++	0120-drm-msm-dp-latch-SDPs-through-SDP_CFG3-on-revision-1.patch
++	0121-drm-msm-dp-expose-Colorspace-and-HDR_OUTPUT_METADATA.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -299,4 +304,9 @@ ef386d3a666be1d9f947471cab78a5670caeeb92bb9db90fcdf64e704e2ac488a0ba2f3523747945
+ b4dc9ab0dfcb76beb508853856745f6c8d217f0fe116c52766341f490ae366e0db09e343a742db55a7e81bad2b907ba0294a9ebc05f9f9503a4481369cbb2a50  0114-media-i2c-imx471-use-30-fps-for-the-binned-mode.patch
+ 43c09c515743fc28c7ba5916f6d1940f85e95e8e23c68cb70d42a7a3ae8d9d31abf90247249561fd3ec5945662522cc59a11dfedbe02502824aa183569820587  0115-drm-panel-samsung-ams678uw01-power-off-when-the-PPS-.patch
+ 2a3a8e0fcd40450b45d22aee24417e5995dbad203c41813f399c18381a23618ca3adec03ef76e585d0822f5b54e26b325c01232f689e302ef8844502899e4e27  0116-soc-qcom-oneplus-sensor-devinfo-bound-the-SAR-channe.patch
++b546c241e74367fb9f0b59d48d87d5e03d48536a99f17361cdb854e20877e0550eb3289732c795b1a8a49e090d96ced608d5d7c99f21dad352110fe005f8a79b  0117-arm64-dts-qcom-instantnoodlep-allow-DisplayPort-link.patch
++71cfa4ecf54d560ed457d09708224645f892d8fd964822f72c1837fc06fa14301990b94a49e60831320ee46dd8003b082d646be306da4085215849c4d8799966  0118-drm-msm-dp-signal-the-colorimetry-of-RGB-streams-in-.patch
++90afa716ec04a892d8dd9a86ad085d093256ca3165b72213cf7769464a606308edb7b7de55d62c8c4e52fdfa24360f65f6087a9f814ba890ac4262fc9fb8ec23  0119-drm-msm-dp-send-HDR-static-metadata-as-an-infoframe-.patch
++f4de0c04450a74fcd907836614dfd2444fd47ca65485d671466be914fa1e958e845929d27ba996fb6c523e29c2f2e14d48bd61f60a8da1a5dd31823bd9a4398e  0120-drm-msm-dp-latch-SDPs-through-SDP_CFG3-on-revision-1.patch
++20fd1e9b4e7ccb7dd0b6f868e5b1218ff7bf8d26576115f3e8d1075489688c84fb3165f7bb37560c86afa5b56b3cd4b502c481463e515ef2986a4258ed57690e  0121-drm-msm-dp-expose-Colorspace-and-HDR_OUTPUT_METADATA.patch
+ "
