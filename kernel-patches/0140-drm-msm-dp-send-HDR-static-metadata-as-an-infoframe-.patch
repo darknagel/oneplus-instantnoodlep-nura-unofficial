@@ -1,0 +1,185 @@
+From b21c2098c941857e319b463629a82f445325b7fd Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Wed, 11 Nov 2026 01:38:17 +0000
+Subject: [PATCH] drm/msm/dp: send HDR static metadata as an infoframe SDP
+
+Add the third generic SDP slot of the controller and use it for the
+Dynamic Range and Mastering infoframe when the panel has HDR metadata to
+send. The slot and its enable bits are the ones the vendor driver uses
+for the same packet. The packet is switched off with the VSC SDP when
+the stream stops. Nothing provides metadata yet.
+---
+ drivers/gpu/drm/msm/dp/dp_panel.c | 73 ++++++++++++++++++++++++++-----
+ drivers/gpu/drm/msm/dp/dp_panel.h |  4 ++
+ drivers/gpu/drm/msm/dp/dp_reg.h   |  5 +++
+ 3 files changed, 72 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_panel.c b/drivers/gpu/drm/msm/dp/dp_panel.c
+index 4806f2ced..a12447b57 100644
+--- a/drivers/gpu/drm/msm/dp/dp_panel.c
++++ b/drivers/gpu/drm/msm/dp/dp_panel.c
+@@ -482,24 +482,31 @@ void msm_dp_panel_clear_dsc_dto(struct msm_dp_panel *msm_dp_panel)
+ 	msm_dp_write_p0(panel, MMSS_DP_DSC_DTO, 0x0);
+ }
+ 
+-static void msm_dp_panel_send_vsc_sdp(struct msm_dp_panel_private *panel, struct dp_sdp *vsc_sdp)
++/* The generic SDP slots share one layout: two header words, then the payload. */
++static void msm_dp_panel_write_sdp(struct msm_dp_panel_private *panel, u32 slot,
++				   struct dp_sdp *sdp)
+ {
+ 	u32 header[2];
+ 	u32 val;
+ 	int i;
+ 
+-	msm_dp_utils_pack_sdp_header(&vsc_sdp->sdp_header, header);
++	msm_dp_utils_pack_sdp_header(&sdp->sdp_header, header);
+ 
+-	msm_dp_write_link(panel, MMSS_DP_GENERIC0_0, header[0]);
+-	msm_dp_write_link(panel, MMSS_DP_GENERIC0_1, header[1]);
++	msm_dp_write_link(panel, slot, header[0]);
++	msm_dp_write_link(panel, slot + 4, header[1]);
+ 
+-	for (i = 0; i < sizeof(vsc_sdp->db); i += 4) {
+-		val = ((vsc_sdp->db[i]) | (vsc_sdp->db[i + 1] << 8) | (vsc_sdp->db[i + 2] << 16) |
+-		       (vsc_sdp->db[i + 3] << 24));
+-		msm_dp_write_link(panel, MMSS_DP_GENERIC0_2 + i, val);
++	for (i = 0; i < sizeof(sdp->db); i += 4) {
++		val = ((sdp->db[i]) | (sdp->db[i + 1] << 8) | (sdp->db[i + 2] << 16) |
++		       (sdp->db[i + 3] << 24));
++		msm_dp_write_link(panel, slot + 8 + i, val);
+ 	}
+ }
+ 
++static void msm_dp_panel_send_vsc_sdp(struct msm_dp_panel_private *panel, struct dp_sdp *vsc_sdp)
++{
++	msm_dp_panel_write_sdp(panel, MMSS_DP_GENERIC0_0, vsc_sdp);
++}
++
+ static void msm_dp_panel_update_sdp(struct msm_dp_panel_private *panel)
+ {
+ 	u32 hw_revision = panel->msm_dp_panel.hw_revision;
+@@ -550,10 +557,10 @@ void msm_dp_panel_disable_vsc_sdp(struct msm_dp_panel *msm_dp_panel)
+ 	cfg2 = msm_dp_read_link(panel, MMSS_DP_SDP_CFG2);
+ 	misc = msm_dp_read_link(panel, REG_DP_MISC1_MISC0);
+ 
+-	cfg &= ~GEN0_SDP_EN;
++	cfg &= ~(GEN0_SDP_EN | GEN2_SDP_EN);
+ 	msm_dp_write_link(panel, MMSS_DP_SDP_CFG, cfg);
+ 
+-	cfg2 &= ~GENERIC0_SDPSIZE_VALID;
++	cfg2 &= ~(GENERIC0_SDPSIZE_VALID | GENERIC2_SDPSIZE_VALID);
+ 	msm_dp_write_link(panel, MMSS_DP_SDP_CFG2, cfg2);
+ 
+ 	/* switch back to MSA */
+@@ -567,6 +574,49 @@ void msm_dp_panel_disable_vsc_sdp(struct msm_dp_panel *msm_dp_panel)
+ 	msm_dp_panel_update_sdp(panel);
+ }
+ 
++/*
++ * HDR static metadata travels as an INFOFRAME SDP (DP 1.4a, tables 2-100 and
++ * 2-101): the CTA-861 Dynamic Range and Mastering infoframe without its
++ * checksum, behind the infoframe version and length.
++ */
++static void msm_dp_panel_setup_hdr_sdp(struct msm_dp_panel *msm_dp_panel)
++{
++	struct msm_dp_panel_private *panel =
++		container_of(msm_dp_panel, struct msm_dp_panel_private, msm_dp_panel);
++	const struct hdmi_drm_infoframe *frame = &msm_dp_panel->hdr_infoframe;
++	u8 buf[HDMI_INFOFRAME_SIZE(DRM)];
++	struct dp_sdp sdp = {};
++	u32 cfg, cfg2;
++
++	if (hdmi_drm_infoframe_pack_only(frame, buf, sizeof(buf)) < 0) {
++		DRM_ERROR("unable to pack HDR metadata\n");
++		return;
++	}
++
++	sdp.sdp_header.HB0 = 0;
++	sdp.sdp_header.HB1 = frame->type;
++	sdp.sdp_header.HB2 = 0x1D;
++	sdp.sdp_header.HB3 = 0x13 << 2;
++	sdp.db[0] = frame->version;
++	sdp.db[1] = frame->length;
++	memcpy(&sdp.db[2], &buf[HDMI_INFOFRAME_HEADER_SIZE], HDMI_DRM_INFOFRAME_SIZE);
++
++	cfg = msm_dp_read_link(panel, MMSS_DP_SDP_CFG);
++	cfg2 = msm_dp_read_link(panel, MMSS_DP_SDP_CFG2);
++
++	cfg |= GEN2_SDP_EN;
++	msm_dp_write_link(panel, MMSS_DP_SDP_CFG, cfg);
++
++	cfg2 |= GENERIC2_SDPSIZE_VALID;
++	msm_dp_write_link(panel, MMSS_DP_SDP_CFG2, cfg2);
++
++	msm_dp_panel_write_sdp(panel, MMSS_DP_GENERIC2_0, &sdp);
++
++	drm_dbg_dp(panel->drm_dev, "hdr sdp enable=1 eotf=%d\n", frame->eotf);
++
++	msm_dp_panel_update_sdp(panel);
++}
++
+ /* MSA MISC0 cannot describe BT.2020, so wide colorimetry needs the VSC SDP. */
+ static bool msm_dp_panel_needs_vsc_sdp(const struct msm_dp_panel *msm_dp_panel)
+ {
+@@ -708,6 +758,9 @@ int msm_dp_panel_timing_cfg(struct msm_dp_panel *msm_dp_panel, bool wide_bus_en)
+ 	if (msm_dp_panel_needs_vsc_sdp(msm_dp_panel))
+ 		msm_dp_panel_setup_vsc_sdp(msm_dp_panel);
+ 
++	if (msm_dp_panel->hdr_metadata_valid)
++		msm_dp_panel_setup_hdr_sdp(msm_dp_panel);
++
+ 	panel->panel_on = true;
+ 
+ 	return 0;
+diff --git a/drivers/gpu/drm/msm/dp/dp_panel.h b/drivers/gpu/drm/msm/dp/dp_panel.h
+index f7949e030..db4071c01 100644
+--- a/drivers/gpu/drm/msm/dp/dp_panel.h
++++ b/drivers/gpu/drm/msm/dp/dp_panel.h
+@@ -7,6 +7,7 @@
+ #define _DP_PANEL_H_
+ 
+ #include <drm/drm_modes.h>
++#include <linux/hdmi.h>
+ #include <drm/msm_drm.h>
+ 
+ #include "dp_aux.h"
+@@ -41,6 +42,9 @@ struct msm_dp_panel {
+ 	bool vsc_sdp_supported;
+ 	/* DRM_MODE_COLORIMETRY_* requested through the connector state */
+ 	u32 colorspace;
++	/* HDR static metadata to send while the stream runs */
++	bool hdr_metadata_valid;
++	struct hdmi_drm_infoframe hdr_infoframe;
+ 	u32 hw_revision;
+ 
+ 	u32 max_bw_code;
+diff --git a/drivers/gpu/drm/msm/dp/dp_reg.h b/drivers/gpu/drm/msm/dp/dp_reg.h
+index 3689642b7..5c113832b 100644
+--- a/drivers/gpu/drm/msm/dp/dp_reg.h
++++ b/drivers/gpu/drm/msm/dp/dp_reg.h
+@@ -231,10 +231,12 @@
+ 
+ #define MMSS_DP_SDP_CFG				(0x00000228)
+ #define GEN0_SDP_EN				(0x00020000)
++#define GEN2_SDP_EN				(0x00080000)
+ #define MMSS_DP_SDP_CFG2			(0x0000022C)
+ #define MMSS_DP_AUDIO_TIMESTAMP_0		(0x00000230)
+ #define MMSS_DP_AUDIO_TIMESTAMP_1		(0x00000234)
+ #define GENERIC0_SDPSIZE_VALID			(0x00010000)
++#define GENERIC2_SDPSIZE_VALID			(0x00100000)
+ 
+ #define MMSS_DP_AUDIO_STREAM_0			(0x00000240)
+ #define MMSS_DP_AUDIO_STREAM_1			(0x00000244)
+@@ -288,6 +290,9 @@
+ #define MMSS_DP_GENERIC1_7			(0x00000344)
+ #define MMSS_DP_GENERIC1_8			(0x00000348)
+ #define MMSS_DP_GENERIC1_9			(0x0000034C)
++#define MMSS_DP_GENERIC2_0			(0x000003D8)
++#define MMSS_DP_GENERIC2_1			(0x000003DC)
++#define MMSS_DP_GENERIC2_2			(0x000003E0)
+ 
+ #define MMSS_DP_VSCEXT_0			(0x000002D0)
+ #define MMSS_DP_VSCEXT_1			(0x000002D4)
+-- 
+2.51.2
+

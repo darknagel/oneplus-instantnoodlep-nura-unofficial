@@ -1,0 +1,167 @@
+From 4f3141d522f758722f2b9515e3de9d2f703d0d8f Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Wed, 11 Nov 2026 01:38:17 +0000
+Subject: [PATCH] drm/msm/dp: expose Colorspace and HDR_OUTPUT_METADATA on DP
+ connectors
+
+Attach the two properties to external DisplayPort connectors, offering
+BT2020_RGB next to the default colorspace. Copy the requested state to
+the panel when the stream is enabled, so the VSC SDP carries the
+colorimetry and the HDR static metadata infoframe is sent.
+
+Both packets are programmed when the stream starts, so a change of
+either property forces a modeset. A colorspace is refused for sinks
+that take no colorimetry in the VSC SDP.
+---
+ drivers/gpu/drm/msm/Kconfig         |  1 +
+ drivers/gpu/drm/msm/dp/dp_display.c | 62 +++++++++++++++++++++++++++++
+ drivers/gpu/drm/msm/dp/dp_drm.c     | 10 ++++-
+ drivers/gpu/drm/msm/dp/dp_drm.h     |  4 ++
+ 4 files changed, 76 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/Kconfig b/drivers/gpu/drm/msm/Kconfig
+index 250246f81..955326c79 100644
+--- a/drivers/gpu/drm/msm/Kconfig
++++ b/drivers/gpu/drm/msm/Kconfig
+@@ -117,6 +117,7 @@ config DRM_MSM_DP
+ 	depends on DRM_MSM
+ 	depends on DRM_MSM_KMS
+ 	select DRM_DISPLAY_HDMI_AUDIO_HELPER
++	select DRM_DISPLAY_HDMI_HELPER
+ 	select RATIONAL
+ 	select DRM_DISPLAY_DP_AUX_BUS
+ 	select DRM_DISPLAY_DP_HELPER
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index dc6f33809..fc87cd111 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -14,6 +14,8 @@
+ #include <linux/string_choices.h>
+ #include <drm/display/drm_dp_aux_bus.h>
+ #include <drm/display/drm_hdmi_audio_helper.h>
++#include <drm/display/drm_hdmi_helper.h>
++#include <drm/drm_atomic.h>
+ #include <drm/drm_edid.h>
+ 
+ #include "msm_drv.h"
+@@ -1352,6 +1354,64 @@ int msm_dp_modeset_init(struct msm_dp *msm_dp_display, struct drm_device *dev,
+ 	return 0;
+ }
+ 
++/* Colour and HDR signalling are programmed when the stream starts. */
++int msm_dp_bridge_atomic_check(struct drm_bridge *bridge,
++			       struct drm_bridge_state *bridge_state,
++			       struct drm_crtc_state *crtc_state,
++			       struct drm_connector_state *conn_state)
++{
++	struct msm_dp *dp = to_dp_bridge(bridge)->msm_dp_display;
++	struct msm_dp_display_private *msm_dp_display =
++		container_of(dp, struct msm_dp_display_private, msm_dp_display);
++	struct drm_connector_state *old_conn_state;
++
++	if (!conn_state || !conn_state->crtc || !crtc_state)
++		return 0;
++
++	if (conn_state->colorspace != DRM_MODE_COLORIMETRY_DEFAULT &&
++	    !msm_dp_display->panel->vsc_sdp_supported) {
++		drm_dbg_dp(dp->drm_dev, "sink takes no colorimetry in the VSC SDP\n");
++		return -EINVAL;
++	}
++
++	old_conn_state = drm_atomic_get_old_connector_state(conn_state->state,
++							   conn_state->connector);
++	if (!old_conn_state || !old_conn_state->crtc)
++		return 0;
++
++	if (old_conn_state->colorspace == conn_state->colorspace &&
++	    drm_connector_atomic_hdr_metadata_equal(old_conn_state, conn_state))
++		return 0;
++
++	crtc_state->mode_changed = true;
++
++	return drm_atomic_add_affected_planes(conn_state->state, conn_state->crtc);
++}
++
++static void msm_dp_display_set_color_state(struct msm_dp_display_private *msm_dp_display,
++					   struct drm_atomic_commit *state,
++					   struct drm_encoder *encoder)
++{
++	struct msm_dp_panel *panel = msm_dp_display->panel;
++	struct drm_connector_state *conn_state = NULL;
++	struct drm_connector *connector;
++
++	panel->colorspace = DRM_MODE_COLORIMETRY_DEFAULT;
++	panel->hdr_metadata_valid = false;
++
++	connector = drm_atomic_get_new_connector_for_encoder(state, encoder);
++	if (connector)
++		conn_state = drm_atomic_get_new_connector_state(state, connector);
++	if (!conn_state)
++		return;
++
++	panel->colorspace = conn_state->colorspace;
++
++	if (conn_state->hdr_output_metadata &&
++	    !drm_hdmi_infoframe_set_hdr_metadata(&panel->hdr_infoframe, conn_state))
++		panel->hdr_metadata_valid = true;
++}
++
+ void msm_dp_bridge_atomic_enable(struct drm_bridge *drm_bridge,
+ 				 struct drm_atomic_commit *state)
+ {
+@@ -1378,6 +1438,8 @@ void msm_dp_bridge_atomic_enable(struct drm_bridge *drm_bridge,
+ 	if (msm_dp_display->link->sink_count == 0)
+ 		return;
+ 
++	msm_dp_display_set_color_state(msm_dp_display, state, drm_bridge->encoder);
++
+ 	rc = msm_dp_display_set_mode(dp, &msm_dp_display->msm_dp_mode);
+ 	if (rc) {
+ 		DRM_ERROR("Failed to perform a mode set, rc=%d\n", rc);
+diff --git a/drivers/gpu/drm/msm/dp/dp_drm.c b/drivers/gpu/drm/msm/dp/dp_drm.c
+index b659d22f5..c07442734 100644
+--- a/drivers/gpu/drm/msm/dp/dp_drm.c
++++ b/drivers/gpu/drm/msm/dp/dp_drm.c
+@@ -53,6 +53,7 @@ static const struct drm_bridge_funcs msm_dp_bridge_ops = {
+ 	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
+ 	.atomic_destroy_state   = drm_atomic_helper_bridge_destroy_state,
+ 	.atomic_reset           = drm_atomic_helper_bridge_reset,
++	.atomic_check           = msm_dp_bridge_atomic_check,
+ 	.atomic_enable          = msm_dp_bridge_atomic_enable,
+ 	.atomic_disable         = msm_dp_bridge_atomic_disable,
+ 	.atomic_post_disable    = msm_dp_bridge_atomic_post_disable,
+@@ -322,8 +323,15 @@ struct drm_connector *msm_dp_drm_connector_init(struct msm_dp *msm_dp_display,
+ 	if (IS_ERR(connector))
+ 		return connector;
+ 
+-	if (!msm_dp_display->is_edp)
++	if (!msm_dp_display->is_edp) {
+ 		drm_connector_attach_dp_subconnector_property(connector);
+ 
++		/* Whether a sink can take these is checked per commit. */
++		if (!drm_mode_create_dp_colorspace_property(connector,
++					BIT(DRM_MODE_COLORIMETRY_BT2020_RGB)))
++			drm_connector_attach_colorspace_property(connector);
++		drm_connector_attach_hdr_output_metadata_property(connector);
++	}
++
+ 	return connector;
+ }
+diff --git a/drivers/gpu/drm/msm/dp/dp_drm.h b/drivers/gpu/drm/msm/dp/dp_drm.h
+index 041aa026a..3129ea783 100644
+--- a/drivers/gpu/drm/msm/dp/dp_drm.h
++++ b/drivers/gpu/drm/msm/dp/dp_drm.h
+@@ -27,6 +27,10 @@ int msm_dp_bridge_init(struct msm_dp *msm_dp_display, struct drm_device *dev,
+ 
+ enum drm_connector_status msm_dp_bridge_detect(struct drm_bridge *bridge,
+ 					       struct drm_connector *connector);
++int msm_dp_bridge_atomic_check(struct drm_bridge *bridge,
++			       struct drm_bridge_state *bridge_state,
++			       struct drm_crtc_state *crtc_state,
++			       struct drm_connector_state *conn_state);
+ void msm_dp_bridge_atomic_enable(struct drm_bridge *drm_bridge,
+ 				 struct drm_atomic_commit *state);
+ void msm_dp_bridge_atomic_disable(struct drm_bridge *drm_bridge,
+-- 
+2.51.2
+
