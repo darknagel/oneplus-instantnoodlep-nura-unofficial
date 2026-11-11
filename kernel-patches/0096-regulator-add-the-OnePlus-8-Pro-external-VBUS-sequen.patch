@@ -1,0 +1,272 @@
+From 3473868b0407ae5ab2fa137af944c79149062970 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 9 Nov 2026 22:50:44 +0000
+Subject: [PATCH] regulator: add the OnePlus 8 Pro external VBUS sequence
+
+This board uses an external boost/output path rather than the PMIC OTG
+boost. Sequence the wireless-path select, boost enable and output gate
+with the vendor delays, and unwind GPIO failures.
+
+Describe the three control GPIOs and fixed 5 V output in a DT schema.
+This local board driver still needs upstream design review.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ .../oneplus,instantnoodlep-vbus.yaml          |  64 ++++++++
+ drivers/regulator/Kconfig                     |   7 +
+ drivers/regulator/Makefile                    |   2 +
+ .../regulator/oneplus-instantnoodlep-vbus.c   | 145 ++++++++++++++++++
+ 4 files changed, 218 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/regulator/oneplus,instantnoodlep-vbus.yaml
+ create mode 100644 drivers/regulator/oneplus-instantnoodlep-vbus.c
+
+diff --git a/Documentation/devicetree/bindings/regulator/oneplus,instantnoodlep-vbus.yaml b/Documentation/devicetree/bindings/regulator/oneplus,instantnoodlep-vbus.yaml
+new file mode 100644
+index 000000000..4c7b9a7d6
+--- /dev/null
++++ b/Documentation/devicetree/bindings/regulator/oneplus,instantnoodlep-vbus.yaml
+@@ -0,0 +1,64 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/regulator/oneplus,instantnoodlep-vbus.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: OnePlus 8 Pro external USB VBUS supply
++
++maintainers:
++  - Roman Kuraev <naoru.desu@gmail.com>
++
++description:
++  The OnePlus 8 Pro supplies USB VBUS through an external 5 V boost and
++  output gate, sharing a power-path switch with wireless charging. The
++  controls must be sequenced to select the USB path and start the boost
++  before connecting it to the USB port.
++
++allOf:
++  - $ref: regulator.yaml#
++
++properties:
++  compatible:
++    const: oneplus,instantnoodlep-vbus
++
++  regulator-min-microvolt:
++    const: 5000000
++
++  regulator-max-microvolt:
++    const: 5000000
++
++  wireless-mode-gpios:
++    maxItems: 1
++    description: Selects the shared power path for USB VBUS output.
++
++  boost-enable-gpios:
++    maxItems: 1
++    description: Enables the external 5 V boost converter.
++
++  output-enable-gpios:
++    maxItems: 1
++    description: Connects the boost output to the USB port.
++
++required:
++  - compatible
++  - regulator-name
++  - wireless-mode-gpios
++  - boost-enable-gpios
++  - output-enable-gpios
++
++unevaluatedProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/gpio/gpio.h>
++
++    regulator-vbus {
++        compatible = "oneplus,instantnoodlep-vbus";
++        regulator-name = "usb_vbus_external";
++        regulator-min-microvolt = <5000000>;
++        regulator-max-microvolt = <5000000>;
++        wireless-mode-gpios = <&pm8150l_gpios 8 GPIO_ACTIVE_HIGH>;
++        boost-enable-gpios = <&tlmm 172 GPIO_ACTIVE_HIGH>;
++        output-enable-gpios = <&pm8150l_gpios 4 GPIO_ACTIVE_HIGH>;
++    };
+diff --git a/drivers/regulator/Kconfig b/drivers/regulator/Kconfig
+index a54a54919..045611fc0 100644
+--- a/drivers/regulator/Kconfig
++++ b/drivers/regulator/Kconfig
+@@ -1889,4 +1889,11 @@ config REGULATOR_QCOM_LABIBB
+ 	  boost regulator and IBB can be used as a negative boost regulator
+ 	  for LCD display panel.
+ 
++config REGULATOR_ONEPLUS_INSTANTNOODLEP
++	tristate "OnePlus 8 Pro external USB VBUS power sequence"
++	depends on OF && GPIOLIB
++	help
++	  Control the external USB VBUS supply on OnePlus 8 Pro boards,
++	  including the shared wireless-charging path switch.
++
+ endif
+diff --git a/drivers/regulator/Makefile b/drivers/regulator/Makefile
+index 134eee274..561507c84 100644
+--- a/drivers/regulator/Makefile
++++ b/drivers/regulator/Makefile
+@@ -219,3 +219,5 @@ obj-$(CONFIG_REGULATOR_WM8400) += wm8400-regulator.o
+ obj-$(CONFIG_REGULATOR_WM8994) += wm8994-regulator.o
+ 
+ ccflags-$(CONFIG_REGULATOR_DEBUG) += -DDEBUG
++
++obj-$(CONFIG_REGULATOR_ONEPLUS_INSTANTNOODLEP) += oneplus-instantnoodlep-vbus.o
+diff --git a/drivers/regulator/oneplus-instantnoodlep-vbus.c b/drivers/regulator/oneplus-instantnoodlep-vbus.c
+new file mode 100644
+index 000000000..1f58a5378
+--- /dev/null
++++ b/drivers/regulator/oneplus-instantnoodlep-vbus.c
+@@ -0,0 +1,145 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* OnePlus 8 Pro external USB VBUS power sequence. */
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/regulator/driver.h>
++#include <linux/regulator/of_regulator.h>
++
++struct instantnoodlep_vbus {
++	struct gpio_desc *wireless;
++	struct gpio_desc *boost;
++	struct gpio_desc *output;
++};
++
++static int instantnoodlep_vbus_off(struct instantnoodlep_vbus *vbus)
++{
++	int ret, err;
++
++	ret = gpiod_set_value_cansleep(vbus->output, 0);
++	err = gpiod_set_value_cansleep(vbus->boost, 0);
++	if (!ret)
++		ret = err;
++	msleep(20);
++	err = gpiod_set_value_cansleep(vbus->wireless, 0);
++	return ret ? ret : err;
++}
++
++static int instantnoodlep_vbus_enable(struct regulator_dev *rdev)
++{
++	struct instantnoodlep_vbus *vbus = rdev_get_drvdata(rdev);
++	int ret;
++
++	/* Follow the vendor USB PD policy, including its inter-stage delays. */
++	ret = gpiod_set_value_cansleep(vbus->wireless, 1);
++	if (ret)
++		goto fail;
++	msleep(20);
++	ret = gpiod_set_value_cansleep(vbus->boost, 1);
++	if (ret)
++		goto fail;
++	msleep(100);
++	ret = gpiod_set_value_cansleep(vbus->output, 1);
++	if (ret)
++		goto fail;
++	return 0;
++
++fail:
++	instantnoodlep_vbus_off(vbus);
++	return ret;
++}
++
++static int instantnoodlep_vbus_disable(struct regulator_dev *rdev)
++{
++	return instantnoodlep_vbus_off(rdev_get_drvdata(rdev));
++}
++
++static int instantnoodlep_vbus_is_enabled(struct regulator_dev *rdev)
++{
++	struct instantnoodlep_vbus *vbus = rdev_get_drvdata(rdev);
++
++	return gpiod_get_value_cansleep(vbus->output);
++}
++
++static const struct regulator_ops instantnoodlep_vbus_ops = {
++	.enable = instantnoodlep_vbus_enable,
++	.disable = instantnoodlep_vbus_disable,
++	.is_enabled = instantnoodlep_vbus_is_enabled,
++};
++
++static const struct regulator_desc instantnoodlep_vbus_desc = {
++	.name = "instantnoodlep-vbus",
++	.type = REGULATOR_VOLTAGE,
++	.owner = THIS_MODULE,
++	.ops = &instantnoodlep_vbus_ops,
++	.n_voltages = 1,
++	.fixed_uV = 5000000,
++};
++
++static void instantnoodlep_vbus_cleanup(void *data)
++{
++	instantnoodlep_vbus_off(data);
++}
++
++static int instantnoodlep_vbus_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct regulator_config config = {};
++	struct instantnoodlep_vbus *vbus;
++	struct regulator_dev *rdev;
++	int ret;
++
++	vbus = devm_kzalloc(dev, sizeof(*vbus), GFP_KERNEL);
++	if (!vbus)
++		return -ENOMEM;
++
++	/* Disconnect the port before configuring the upstream controls. */
++	vbus->output = devm_gpiod_get(dev, "output-enable", GPIOD_OUT_LOW);
++	if (IS_ERR(vbus->output))
++		return dev_err_probe(dev, PTR_ERR(vbus->output), "output GPIO\n");
++	vbus->boost = devm_gpiod_get(dev, "boost-enable", GPIOD_OUT_LOW);
++	if (IS_ERR(vbus->boost))
++		return dev_err_probe(dev, PTR_ERR(vbus->boost), "boost GPIO\n");
++	vbus->wireless = devm_gpiod_get(dev, "wireless-mode", GPIOD_OUT_LOW);
++	if (IS_ERR(vbus->wireless))
++		return dev_err_probe(dev, PTR_ERR(vbus->wireless), "wireless GPIO\n");
++
++	ret = devm_add_action_or_reset(dev, instantnoodlep_vbus_cleanup, vbus);
++	if (ret)
++		return ret;
++	platform_set_drvdata(pdev, vbus);
++	config.dev = dev;
++	config.of_node = dev->of_node;
++	config.driver_data = vbus;
++	config.init_data = of_get_regulator_init_data(dev, dev->of_node,
++						      &instantnoodlep_vbus_desc);
++	if (!config.init_data)
++		return -ENOMEM;
++	rdev = devm_regulator_register(dev, &instantnoodlep_vbus_desc, &config);
++	return PTR_ERR_OR_ZERO(rdev);
++}
++
++static void instantnoodlep_vbus_shutdown(struct platform_device *pdev)
++{
++	instantnoodlep_vbus_off(platform_get_drvdata(pdev));
++}
++
++static const struct of_device_id instantnoodlep_vbus_of_match[] = {
++	{ .compatible = "oneplus,instantnoodlep-vbus" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, instantnoodlep_vbus_of_match);
++
++static struct platform_driver instantnoodlep_vbus_driver = {
++	.probe = instantnoodlep_vbus_probe,
++	.shutdown = instantnoodlep_vbus_shutdown,
++	.driver = {
++		.name = "instantnoodlep-vbus",
++		.of_match_table = instantnoodlep_vbus_of_match,
++	},
++};
++module_platform_driver(instantnoodlep_vbus_driver);
++
++MODULE_DESCRIPTION("OnePlus 8 Pro external USB VBUS power sequence");
++MODULE_LICENSE("GPL");
+-- 
+2.51.2
+

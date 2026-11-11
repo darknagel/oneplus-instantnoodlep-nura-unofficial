@@ -1,0 +1,101 @@
+From 059a0fdb335142a2a8a96039d0921e3f962eb3cf Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 9 Nov 2026 22:50:44 +0000
+Subject: [PATCH] arm64: dts: qcom: instantnoodlep: source VBUS from the
+ external boost
+
+Describe the external 5 V boost GPIOs, name the boost as the connector's
+VBUS supply in place of the PMIC OTG boost, and advertise a conservative
+500 mA source capability.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 55 +++++++++++++++++--
+ 1 file changed, 50 insertions(+), 5 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index aac72c44c..8cab9fa30 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -96,6 +96,20 @@ vol-down {
+ 		};
+ 	};
+ 
++	/* External VBUS path, sequenced as in the vendor PD policy. */
++	vbus_external: regulator-vbus {
++		compatible = "oneplus,instantnoodlep-vbus";
++		regulator-name = "usb_vbus_external";
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&vbus_boost_default>, <&vbus_output_default>,
++			    <&vbus_wireless_default>;
++		wireless-mode-gpios = <&pm8150l_gpios 8 GPIO_ACTIVE_HIGH>;
++		boost-enable-gpios = <&tlmm 172 GPIO_ACTIVE_HIGH>;
++		output-enable-gpios = <&pm8150l_gpios 4 GPIO_ACTIVE_HIGH>;
++	};
++
+ 	qca6390-pmu {
+ 		compatible = "qcom,qca6390-pmu";
+ 
+@@ -1440,9 +1454,10 @@ connector {
+                power-role = "dual";
+                data-role = "dual";
+                self-powered;
++		vbus-supply = <&vbus_external>;
+ 		accessory-mode-audio;
+ 
+-               source-pdos = <PDO_FIXED(5000, 3000,
++		source-pdos = <PDO_FIXED(5000, 500,
+                                         PDO_FIXED_DUAL_ROLE |
+                                         PDO_FIXED_USB_COMM |
+                                         PDO_FIXED_DATA_SWAP)>;
+@@ -1491,11 +1506,41 @@ pm8150b_sbu: endpoint {
+        };
+ };
+ 
+-// downstream uses otg-use_external_boost which do not enable bellow
++/* This board uses the external boost path instead of the PMIC OTG boost. */
+ &pm8150b_vbus {
+-       regulator-min-microamp = <500000>;
+-       regulator-max-microamp = <3000000>;
+-       status = "okay";
++	status = "disabled";
++};
++
++&pm8150l_gpios {
++	vbus_output_default: vbus-output-default-state {
++		pins = "gpio4";
++		function = "normal";
++		power-source = <0>;
++		bias-disable;
++		drive-push-pull;
++		qcom,drive-strength = <3>;
++		output-low;
++	};
++
++	vbus_wireless_default: vbus-wireless-default-state {
++		pins = "gpio8";
++		function = "normal";
++		power-source = <1>;
++		bias-disable;
++		drive-push-pull;
++		qcom,drive-strength = <3>;
++		output-low;
++	};
++};
++
++&tlmm {
++	vbus_boost_default: vbus-boost-default-state {
++		pins = "gpio172";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++		output-low;
++	};
+ };
+ 
+ &pm8009_pon {
+-- 
+2.51.2
+

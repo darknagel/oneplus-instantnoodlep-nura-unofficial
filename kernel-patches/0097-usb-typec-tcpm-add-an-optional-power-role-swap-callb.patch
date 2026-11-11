@@ -1,0 +1,127 @@
+From 5ec981a3dfa7ba017eb2a1c324d0c74a5e0bd517 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 9 Nov 2026 22:50:44 +0000
+Subject: [PATCH] usb: typec: tcpm: add an optional power-role-swap callback
+
+Some port controllers must hold state for the duration of a PD
+power-role swap, while both CC terminations change and the PD channel
+has to stay on the same wire. Add set_power_role_swap(), called with
+the current polarity at PR_SWAP_START and again when the next AMS
+finishes, on hard reset and on port reset. A soft reset can replace
+the swap AMS, so the release does not depend on which AMS ends.
+
+tcpm_apply_rc() runs at the same point, but it is tied to TCPCI
+automatic VBUS discharge and has no counterpart at the end of the swap.
+
+The new callback remains a local API proposal.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/usb/typec/tcpm/tcpm.c | 27 +++++++++++++++++++++++++++
+ include/linux/usb/tcpm.h      |  6 ++++++
+ 2 files changed, 33 insertions(+)
+
+diff --git a/drivers/usb/typec/tcpm/tcpm.c b/drivers/usb/typec/tcpm/tcpm.c
+index 89eec20a2..6dea2e287 100644
+--- a/drivers/usb/typec/tcpm/tcpm.c
++++ b/drivers/usb/typec/tcpm/tcpm.c
+@@ -622,6 +622,7 @@ struct tcpm_port {
+ 	enum tcpm_ams ams;
+ 	enum tcpm_ams next_ams;
+ 	bool in_ams;
++	bool power_role_swap_active;
+ 
+ 	/* Auto vbus discharge status */
+ 	bool auto_vbus_discharge_enabled;
+@@ -1082,10 +1083,29 @@ static enum typec_cc_status tcpm_rp_cc(struct tcpm_port *port)
+ 	return TYPEC_CC_RP_DEF;
+ }
+ 
++static int tcpm_set_power_role_swap(struct tcpm_port *port, bool active)
++{
++	int ret;
++
++	if (!port->tcpc->set_power_role_swap || port->power_role_swap_active == active)
++		return 0;
++
++	ret = port->tcpc->set_power_role_swap(port->tcpc, active, port->polarity);
++	if (ret) {
++		tcpm_log_force(port, "Power-role swap control %d failed: %d", active, ret);
++		return ret;
++	}
++	port->power_role_swap_active = active;
++	return 0;
++}
++
+ static void tcpm_ams_finish(struct tcpm_port *port)
+ {
+ 	tcpm_log(port, "AMS %s finished", tcpm_ams_str[port->ams]);
+ 
++	/* A soft reset can replace the swap AMS; never leave the swap state held. */
++	tcpm_set_power_role_swap(port, false);
++
+ 	if (port->pd_capable && port->pwr_role == TYPEC_SOURCE) {
+ 		if (port->negotiated_rev >= PD_REV30)
+ 			tcpm_set_cc(port, SINK_TX_OK);
+@@ -4927,6 +4947,7 @@ static void tcpm_partner_source_caps_reset(struct tcpm_port *port)
+ 
+ static void tcpm_reset_port(struct tcpm_port *port)
+ {
++	tcpm_set_power_role_swap(port, false);
+ 	tcpm_enable_auto_vbus_discharge(port, false);
+ 	port->in_ams = false;
+ 	port->ams = NONE_AMS;
+@@ -5862,6 +5883,7 @@ static void run_state_machine(struct tcpm_port *port)
+ 		tcpm_ams_start(port, HARD_RESET);
+ 		break;
+ 	case HARD_RESET_START:
++		tcpm_set_power_role_swap(port, false);
+ 		port->sink_cap_done = false;
+ 		if (port->tcpc->enable_frs)
+ 			port->tcpc->enable_frs(port->tcpc, false);
+@@ -6095,6 +6117,10 @@ static void run_state_machine(struct tcpm_port *port)
+ 		tcpm_set_state(port, ready_state(port), 0);
+ 		break;
+ 	case PR_SWAP_START:
++		if (tcpm_set_power_role_swap(port, true)) {
++			tcpm_set_state(port, ERROR_RECOVERY, 0);
++			break;
++		}
+ 		tcpm_apply_rc(port);
+ 		if (port->pwr_role == TYPEC_SOURCE)
+ 			tcpm_set_state(port, PR_SWAP_SRC_SNK_TRANSITION_OFF,
+@@ -6842,6 +6868,7 @@ static void _tcpm_pd_vbus_vsafe0v(struct tcpm_port *port)
+ static void _tcpm_pd_hard_reset(struct tcpm_port *port)
+ {
+ 	tcpm_log_force(port, "Received hard reset");
++	tcpm_set_power_role_swap(port, false);
+ 	if (port->bist_request == BDO_MODE_TESTDATA && port->tcpc->set_bist_data)
+ 		port->tcpc->set_bist_data(port->tcpc, false);
+ 
+diff --git a/include/linux/usb/tcpm.h b/include/linux/usb/tcpm.h
+index 93079450b..776d684aa 100644
+--- a/include/linux/usb/tcpm.h
++++ b/include/linux/usb/tcpm.h
+@@ -78,6 +78,10 @@ enum tcpm_transmit_type {
+  *		with partner.
+  * @set_pd_rx:	Called to enable or disable reception of PD messages
+  * @set_roles:	Called to set power and data roles
++ * @set_power_role_swap:
++ *		Optional; prepare or finish a PD power-role swap. The polarity
++ *		identifies the active PD channel. A false argument also releases
++ *		any temporary state on reset or an aborted swap.
+  * @start_toggling:
+  *		Optional; if supported by hardware, called to start dual-role
+  *		toggling or single-role connection detection. Toggling stops
+@@ -152,6 +156,8 @@ struct tcpc_dev {
+ 	int (*set_pd_rx)(struct tcpc_dev *dev, bool on);
+ 	int (*set_roles)(struct tcpc_dev *dev, bool attached,
+ 			 enum typec_role role, enum typec_data_role data);
++	int (*set_power_role_swap)(struct tcpc_dev *dev, bool active,
++				   enum typec_cc_polarity polarity);
+ 	int (*start_toggling)(struct tcpc_dev *dev,
+ 			      enum typec_port_type port_type,
+ 			      enum typec_cc_status cc);
+-- 
+2.51.2
+
