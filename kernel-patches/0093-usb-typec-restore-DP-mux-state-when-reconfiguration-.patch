@@ -1,0 +1,227 @@
+From 7c09ce4186e9af3c3837b859f63ebf2233c000ed Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 02:21:55 +0000
+Subject: [PATCH] usb: typec: restore DP mux state when reconfiguration is busy
+
+Changing four-lane DP to two-lane DP through SAFE can switch DWC3 to
+PIPE while QMP leaves the powered PHY in DP-only mode without that clock.
+Reject established-session SAFE requests while DP is powered and restore
+the previous mux configuration before returning the original error.
+
+Keep initial Enter and Configure notifications on the existing path so
+rapid replug does not fail while the previous display is still stopping.
+Track the applied configuration separately from pending Attention data,
+clear it on Exit ACK, and preserve requested configuration for the
+existing cable-to-partner fallback.
+
+Exit requested through sysfs takes the altmode lock like the worker's
+Exit, since both read and may restore the same state.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c |  4 ++
+ drivers/usb/typec/altmodes/displayport.c  | 86 ++++++++++++++++++++---
+ 2 files changed, 82 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+index 8d8742a72..2d395afd7 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -4543,6 +4543,10 @@ static int qmp_combo_set_mux(struct qmp_combo *qmp, struct typec_mux_state *stat
+ 	}
+ 
+ 	if (qmp->qmpphy_mode != QMPPHY_MODE_USB3_ONLY && qmp->dp_powered_on) {
++		/* Reject changes to an established session before reconfiguring its peer. */
++		if (svid == USB_TYPEC_DP_SID && state->mode == TYPEC_STATE_SAFE &&
++		    state->data)
++			return -EBUSY;
+ 		dev_dbg(qmp->dev, "typec_mux_set: DP PHY is still in use, delaying switch\n");
+ 		return 0;
+ 	}
+diff --git a/drivers/usb/typec/altmodes/displayport.c b/drivers/usb/typec/altmodes/displayport.c
+index 263a89c5f..45e06244c 100644
+--- a/drivers/usb/typec/altmodes/displayport.c
++++ b/drivers/usb/typec/altmodes/displayport.c
+@@ -60,6 +60,7 @@ enum dp_state {
+ 
+ struct dp_altmode {
+ 	struct typec_displayport_data data;
++	u32 applied_conf;
+ 	struct typec_displayport_data data_prime;
+ 
+ 	enum dp_state state;
+@@ -81,7 +82,7 @@ struct dp_altmode {
+ 	struct typec_altmode *plug_prime;
+ };
+ 
+-static int dp_altmode_notify(struct dp_altmode *dp)
++static int dp_altmode_notify_config(struct dp_altmode *dp)
+ {
+ 	unsigned long conf;
+ 	u8 state;
+@@ -96,6 +97,50 @@ static int dp_altmode_notify(struct dp_altmode *dp)
+ 	return typec_altmode_notify(dp->alt, conf, &dp->data);
+ }
+ 
++/* A later mux may reject SAFE after an earlier mux has already changed. */
++static void dp_altmode_restore(struct dp_altmode *dp)
++{
++	int ret;
++
++	dp->data.conf = dp->applied_conf;
++	dp->data_prime.conf = dp->applied_conf;
++	ret = dp_altmode_notify_config(dp);
++
++	if (ret)
++		dev_err(&dp->alt->dev, "unable to restore connector configuration (%d)\n",
++			ret);
++}
++
++static int dp_altmode_notify(struct dp_altmode *dp)
++{
++	int ret = dp_altmode_notify_config(dp);
++
++	if (!ret)
++		dp->applied_conf = dp->data.conf;
++
++	return ret;
++}
++
++static int dp_altmode_exit(struct dp_altmode *dp)
++{
++	int ret;
++
++	/* The core's Exit SAFE notification has no existing configuration data. */
++	if (dp->applied_conf) {
++		ret = typec_altmode_notify(dp->alt, TYPEC_STATE_SAFE, &dp->data);
++		if (ret)
++			goto restore;
++	}
++
++	ret = typec_altmode_exit(dp->alt);
++
++restore:
++	if (ret)
++		dp_altmode_restore(dp);
++
++	return ret;
++}
++
+ static int dp_altmode_configure(struct dp_altmode *dp, u8 con)
+ {
+ 	u8 pin_assign = 0;
+@@ -235,16 +280,18 @@ static int dp_altmode_configure_vdm(struct dp_altmode *dp, u32 conf)
+ 		return svdm_version;
+ 
+ 	header = DP_HEADER(dp, svdm_version, DP_CMD_CONFIGURE);
+-	ret = typec_altmode_notify(dp->alt, TYPEC_STATE_SAFE, &dp->data);
++	ret = typec_altmode_notify(dp->alt, TYPEC_STATE_SAFE,
++				   dp->applied_conf ? &dp->data : NULL);
+ 	if (ret) {
+ 		dev_err(&dp->alt->dev,
+ 			"unable to put to connector to safe mode\n");
++		dp_altmode_restore(dp);
+ 		return ret;
+ 	}
+ 
+ 	ret = typec_altmode_vdm(dp->alt, header, &conf, 2);
+ 	if (ret)
+-		dp_altmode_notify(dp);
++		dp_altmode_restore(dp);
+ 
+ 	return ret;
+ }
+@@ -253,13 +300,25 @@ static int dp_altmode_configure_vdm_cable(struct dp_altmode *dp, u32 conf)
+ {
+ 	int svdm_version = typec_altmode_get_cable_svdm_version(dp->plug_prime);
+ 	u32 header;
++	int ret;
+ 
+ 	if (svdm_version < 0)
+ 		return svdm_version;
+ 
++	/* Check all muxes before changing an active cable's lane assignment. */
++	ret = typec_altmode_notify(dp->alt, TYPEC_STATE_SAFE,
++				   dp->applied_conf ? &dp->data : NULL);
++	if (ret) {
++		dp_altmode_restore(dp);
++		return ret;
++	}
++
+ 	header = DP_HEADER(dp, svdm_version, DP_CMD_CONFIGURE);
++	ret = typec_cable_altmode_vdm(dp->plug_prime, TYPEC_PLUG_SOP_P, header, &conf, 2);
++	if (ret)
++		dp_altmode_restore(dp);
+ 
+-	return typec_cable_altmode_vdm(dp->plug_prime, TYPEC_PLUG_SOP_P, header, &conf, 2);
++	return ret;
+ }
+ 
+ static void dp_altmode_work(struct work_struct *work)
+@@ -267,7 +326,7 @@ static void dp_altmode_work(struct work_struct *work)
+ 	struct dp_altmode *dp = container_of(work, struct dp_altmode, work);
+ 	int svdm_version;
+ 	u32 header;
+-	u32 vdo;
++	u32 vdo, conf;
+ 	int ret;
+ 
+ 	mutex_lock(&dp->lock);
+@@ -310,17 +369,21 @@ static void dp_altmode_work(struct work_struct *work)
+ 				"unable to send Configure command (%d)\n", ret);
+ 		break;
+ 	case DP_STATE_CONFIGURE_PRIME:
++		conf = dp->data.conf;
+ 		ret = dp_altmode_configure_vdm_cable(dp, dp->data_prime.conf);
++		if (ret == -EBUSY)
++			break;
+ 		if (ret) {
+ 			dev_err(&dp->plug_prime->dev,
+ 				"unable to send Configure command (%d)\n",
+ 				ret);
++			dp->data.conf = conf;
+ 			dp->state = DP_STATE_CONFIGURE;
+ 			goto disable_prime;
+ 		}
+ 		break;
+ 	case DP_STATE_EXIT:
+-		if (typec_altmode_exit(dp->alt))
++		if (dp_altmode_exit(dp))
+ 			dev_err(&dp->alt->dev, "Exit Mode Failed!\n");
+ 		break;
+ 	case DP_STATE_EXIT_PRIME:
+@@ -360,7 +423,9 @@ static void dp_altmode_attention(struct typec_altmode *alt, const u32 vdo)
+ 	if (dp_altmode_status_update(dp))
+ 		dev_warn(&alt->dev, "%s: status update failed\n", __func__);
+ 
+-	if (dp_altmode_notify(dp))
++	/* Keep the committed mux configuration until the SAFE check succeeds. */
++	if (dp->state != DP_STATE_CONFIGURE && dp->state != DP_STATE_CONFIGURE_PRIME &&
++	    dp_altmode_notify(dp))
+ 		dev_err(&alt->dev, "%s: notification failed\n", __func__);
+ 
+ 	if (old_state == DP_STATE_IDLE && dp->state != DP_STATE_IDLE)
+@@ -395,6 +460,7 @@ static int dp_altmode_vdm(struct typec_altmode *alt,
+ 			typec_altmode_update_active(alt, false);
+ 			dp->data.status = 0;
+ 			dp->data.conf = 0;
++			dp->applied_conf = 0;
+ 			if (dp->hpd) {
+ 				drm_connector_oob_hotplug_event(dp->connector_fwnode,
+ 								connector_status_disconnected);
+@@ -518,7 +584,11 @@ static int dp_altmode_activate(struct typec_altmode *alt, int activate)
+ 		}
+ 		return typec_altmode_enter(alt, NULL);
+ 	} else {
+-		return typec_altmode_exit(alt);
++		/* Exit reads and may restore state that the worker also updates. */
++		mutex_lock(&dp->lock);
++		ret = dp_altmode_exit(dp);
++		mutex_unlock(&dp->lock);
++		return ret;
+ 	}
+ }
+ 
+-- 
+2.51.2
+

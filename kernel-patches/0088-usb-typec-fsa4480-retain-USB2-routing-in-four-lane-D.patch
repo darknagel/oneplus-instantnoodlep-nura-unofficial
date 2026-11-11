@@ -1,0 +1,38 @@
+From 828fccc38e73e7b247337134bb482e2c939e3bac Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 9 Nov 2026 22:50:44 +0000
+Subject: [PATCH] usb: typec: fsa4480: retain USB2 routing in four-lane DP mode
+
+Four-lane DisplayPort uses the SuperSpeed pairs but leaves D+/D-
+available. Keep the USB2 switch enabled alongside SBU so the monitor
+hub can connect.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/usb/typec/mux/fsa4480.c | 8 +-------
+ 1 file changed, 1 insertion(+), 7 deletions(-)
+
+diff --git a/drivers/usb/typec/mux/fsa4480.c b/drivers/usb/typec/mux/fsa4480.c
+index fe6af2746..09880ca48 100644
+--- a/drivers/usb/typec/mux/fsa4480.c
++++ b/drivers/usb/typec/mux/fsa4480.c
+@@ -94,15 +94,9 @@ static int fsa4480_set(struct fsa4480 *fsa)
+ 		sel = FSA4480_SEL_USB;
+ 	} else if (fsa->svid) {
+ 		switch (fsa->mode) {
+-		/* DP Only */
++		/* USB 2.0 remains available with either two or four DP lanes. */
+ 		case TYPEC_DP_STATE_C:
+ 		case TYPEC_DP_STATE_E:
+-			enable |= FSA4480_ENABLE_SBU;
+-			if (reverse)
+-				sel = FSA4480_SEL_SBU_REVERSE;
+-			break;
+-
+-		/* DP + USB */
+ 		case TYPEC_DP_STATE_D:
+ 		case TYPEC_DP_STATE_F:
+ 			enable |= FSA4480_ENABLE_USB | FSA4480_ENABLE_SBU;
+-- 
+2.51.2
+

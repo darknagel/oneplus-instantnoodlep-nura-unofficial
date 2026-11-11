@@ -1,0 +1,68 @@
+From 70861ad386a4e74ce37173350deac11ac006cd20 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 9 Nov 2026 22:50:44 +0000
+Subject: [PATCH] usb: typec: qcom: program the CC mode in set_cc
+
+set_cc() works out the source or sink mode for the requested CC state
+but never writes it: TYPEC_MODE_CFG is only programmed when toggling
+starts. Rp and Rd changes that TCPM requests through set_cc(), such as
+during a power-role swap, therefore never reach the PMIC.
+
+Write the computed mode, and disable the CC block for TYPEC_CC_OPEN.
+Initialize the values the debug message prints so that error paths do
+not log uninitialized data.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c
+index bf985efe1..29d9f4c8b 100644
+--- a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c
++++ b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c
+@@ -461,8 +461,8 @@ static int qcom_pmic_typec_port_set_cc(struct tcpc_dev *tcpc,
+ 	struct pmic_typec *tcpm = tcpc_to_tcpm(tcpc);
+ 	struct pmic_typec_port *pmic_typec_port = tcpm->pmic_typec_port;
+ 	struct device *dev = pmic_typec_port->dev;
+-	unsigned int mode, currsrc;
+-	unsigned int misc;
++	unsigned int mode = 0, currsrc = 0;
++	unsigned int misc = 0;
+ 	unsigned long flags;
+ 	int ret;
+ 
+@@ -478,6 +478,7 @@ static int qcom_pmic_typec_port_set_cc(struct tcpc_dev *tcpc,
+ 
+ 	switch (cc) {
+ 	case TYPEC_CC_OPEN:
++		mode = TYPEC_DISABLE_CMD;
+ 		currsrc = TYPEC_SRC_RP_SEL_80UA;
+ 		break;
+ 	case TYPEC_CC_RP_DEF:
+@@ -507,6 +508,12 @@ static int qcom_pmic_typec_port_set_cc(struct tcpc_dev *tcpc,
+ 			goto done;
+ 	}
+ 
++	/* Apply Rp/Rd (or open CC), including changes during a power-role swap. */
++	ret = regmap_write(pmic_typec_port->regmap,
++			   pmic_typec_port->base + TYPEC_MODE_CFG_REG, mode);
++	if (ret)
++		goto done;
++
+ 	pmic_typec_port->cc = cc;
+ 	qcom_pmic_set_cc_debounce(pmic_typec_port);
+ 	ret = 0;
+@@ -516,7 +523,8 @@ static int qcom_pmic_typec_port_set_cc(struct tcpc_dev *tcpc,
+ 
+ 	dev_dbg(dev, "set_cc: currsrc=%x %s mode %s debounce %d attached %d cc=%s\n",
+ 		currsrc, rp_sel_to_name(currsrc),
+-		mode == EN_SRC_ONLY ? "EN_SRC_ONLY" : "EN_SNK_ONLY",
++		mode == EN_SRC_ONLY ? "EN_SRC_ONLY" :
++		mode == EN_SNK_ONLY ? "EN_SNK_ONLY" : "DISABLED",
+ 		pmic_typec_port->debouncing_cc, !!(misc & CC_ATTACHED),
+ 		misc_to_cc(misc));
+ 
+-- 
+2.51.2
+

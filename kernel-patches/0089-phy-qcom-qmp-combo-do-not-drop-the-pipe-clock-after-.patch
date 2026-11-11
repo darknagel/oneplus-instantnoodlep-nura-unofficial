@@ -1,0 +1,45 @@
+From 5e6d59f80c69da449eeac269e0aa841c596fa7b1 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 9 Nov 2026 22:50:44 +0000
+Subject: [PATCH] phy: qcom-qmp-combo: do not drop the pipe clock after a USB
+ init timeout
+
+qmp_combo_com_init() enables the pipe clock and qmp_combo_com_exit()
+disables it. The timeout path of qmp_combo_usb_power_on() disables it as
+well, so a failed start drops the clock twice: here, and again when
+qmp_combo_usb_init() unwinds through qmp_combo_com_exit() or at the next
+common exit after a Type-C mux change.
+
+Leave the clock to the common init/exit paths.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 10 ++--------
+ 1 file changed, 2 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+index cdcfad2e8..10cfcb2d8 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -3908,16 +3908,10 @@ static int qmp_combo_usb_power_on(struct phy *phy)
+ 	status = pcs + cfg->regs[QPHY_PCS_STATUS];
+ 	ret = readl_poll_timeout(status, val, !(val & PHYSTATUS), 200,
+ 			PHY_INIT_COMPLETE_TIMEOUT);
+-	if (ret) {
++	if (ret)
+ 		dev_err(qmp->dev, "phy initialization timed-out\n");
+-		goto err_disable_pipe_clk;
+-	}
+-
+-	return 0;
+-
+-err_disable_pipe_clk:
+-	clk_disable_unprepare(qmp->pipe_clk);
+ 
++	/* The common init/exit paths own the shared pipe clock. */
+ 	return ret;
+ }
+ 
+-- 
+2.51.2
+
