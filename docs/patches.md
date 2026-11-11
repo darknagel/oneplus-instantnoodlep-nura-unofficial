@@ -6,7 +6,7 @@
 |---|---|---|
 | Display (Samsung AMS678UW01, new panel driver, 1440×3168 @ 120 Hz) | works | kernel 0001–0003, pmaports 0001 |
 | GPU (Adreno 650, Mesa freedreno), Phosh accelerated | works | kernel 0004, pmaports 0001 |
-| USB-C DisplayPort video, USB2 hub/touch and power delivery | draft: 2880×1800 at 120 Hz, touch and power swap in both orientations; PHY/VBUS timeout fixes tested in both orientations | kernel 0088–0099, pmaports 0045–0046; [integration notes](displayport.md) |
+| USB-C DisplayPort video/audio, USB2 hub/touch and power delivery | draft: 2880×1800 at 120 Hz, touch and power swap in both orientations; stereo audio and restart recovery pass; PHY/VBUS timeout fixes tested in both orientations | kernel 0088–0103, pmaports 0045–0047; [integration notes](displayport.md) |
 | USB-A charger detection and battery charge current | tested on IN2023: standalone USB-A detects as DCP at 1.5 A input; PD charges the battery at 1.99 A with a 2 A ceiling | kernel 0082–0087, pmaports 0044; [charging results](charging.md) |
 | Speakers + 3 microphones (VA macro, mic bias as in vendor DT) | works | kernel 0005, pmaports 0002, 0007 |
 | False headset detection with an ordinary USB cable, codec runtime-PM errors and unsorted RX register defaults | fixed on the test IN2023; analog USB-C headsets untested | kernel 0055–0060, pmaports 0030; [audio notes](audio.md) |
@@ -115,7 +115,8 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   limits) and 0043 adds 0080–0081 (resume from suspend). 0044 makes the PM8150B
   charger follow USB-C limits, with USB-A detection and this board's 2 A battery
   charge-current ceiling; 0045 adds DisplayPort alt mode with USB2 alongside and
-  the PHY fixes; 0046 adds the external VBUS supply and power-role swaps.
+  the PHY fixes; 0046 adds the external VBUS supply and power-role swaps;
+  0047 adds DP audio and PCM restart recovery.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `firmware/` – boot service that copies SLPI, Venus and CDSP firmware from your own phone.
@@ -135,6 +136,10 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
 Kernel patches 0033–0041 are not my work either: they are the series "media: camss: Add
 support for C-PHY" v5 by David Heidelberg, with patches by Casey Connolly and Luca Weiss.
 Use the original from lore.kernel.org if you need it.
+
+Kernel patch 0101 is not my work: it is v2 of "drm/display: add hw_params callback
+function to drm_connector_hdmi_audio_ops" by Jianfeng Liu, carried unchanged
+(https://lore.kernel.org/r/20250925040530.20731-1-liujianfeng1994@gmail.com).
 
 Kernel patch 0014 (LC898217XC driver) is not my work: it is v4 of the driver Vasiliy
 Doylov posted to the linux-media mailing list in March 2026

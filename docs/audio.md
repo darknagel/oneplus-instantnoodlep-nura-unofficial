@@ -17,6 +17,9 @@ Analog USB-C headset playback, microphone/buttons, full system suspend/resume
 and CDSP compute workloads remain untested; four SoundWire port-count warnings
 remain.
 
+DisplayPort audio uses the UCM profile in pmaports patch 0047; see the
+[DisplayPort integration notes](displayport.md).
+
 <details>
 <summary>Firmware evidence and test details</summary>
 

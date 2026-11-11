@@ -1,0 +1,30 @@
+From 3687b7d30ad11fcf7475d6f8f8a83a8923dd145f Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Tue, 10 Nov 2026 00:07:10 +0000
+Subject: [PATCH] ASoC: qcom: q6asm-dai: reset the PCM queue pointer on stop
+
+ALSA resets the application pointer for a new prepare cycle, but the
+driver retains the previous queued-frame count. Reusing the PCM handle
+after STOP can therefore stall with an I/O error. Reset queue_ptr on
+STOP while retaining the existing stream cleanup and pause behavior.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ sound/soc/qcom/qdsp6/q6asm-dai.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/sound/soc/qcom/qdsp6/q6asm-dai.c b/sound/soc/qcom/qdsp6/q6asm-dai.c
+index 4f09fdd40..1c0326db9 100644
+--- a/sound/soc/qcom/qdsp6/q6asm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6asm-dai.c
+@@ -349,6 +349,7 @@ static int q6asm_dai_trigger(struct snd_soc_component *component,
+ 	case SNDRV_PCM_TRIGGER_STOP:
+ 		ret = q6asm_cmd_nowait(prtd->audio_client, prtd->stream_id,
+ 				       CMD_EOS);
++		prtd->queue_ptr = 0;
+ 		break;
+ 	case SNDRV_PCM_TRIGGER_SUSPEND:
+ 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+-- 
+2.51.2
+

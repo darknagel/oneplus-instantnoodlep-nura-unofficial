@@ -1,8 +1,12 @@
 # DisplayPort integration
 
-Kernel patches 0088–0095 add DP video with USB2 routing, and 0096–0099 add the
-external VBUS supply and power-role swaps; apply pmaports patches 0045–0046
-after 0044, producing kernel package release 77.
+Kernel patches 0088–0095 add DP video with USB2 routing, 0096–0099 add the
+external VBUS supply and power-role swaps, and 0100–0103 add DP audio; apply
+pmaports patches 0045–0047 after 0044, producing kernel package release 78.
+
+The ALSA UCM device is `HDMI` (DisplayPort stereo playback), using MultiMedia8,
+`hw:${CardId},7` and `DP0 Jack` at stereo 48 kHz. The existing speaker and microphone
+routes remain available.
 
 The phone advertises a conservative 5 V / 500 mA when supplying monitor power.
 
