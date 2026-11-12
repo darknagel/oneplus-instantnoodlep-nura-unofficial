@@ -28,6 +28,17 @@ and sends the static metadata infoframe; either change causes a modeset. The
 link uses 10 bits per channel whenever the display reports it and the mode
 fits. The image has no compositor, so a DRM client has to set these.
 
+## System sleep
+
+The DP PHY does not keep its registers while the controller is powered down
+for system sleep: right after resume `PD_CTL` reads 0x78 and `AUX_CFG1` and
+`AUX_CFG2` read 0x00 and 0x04, where 0x67, 0x13 and 0xa4 were programmed. The
+controller therefore exits the PHY when it suspends, and the next detect or
+enable sets it up again.
+
+A link that failed to train has no link clock. Its registers must not be
+written when the output is switched off; that write resets the phone.
+
 ## Pixel-rate limits
 
 - Link: four HBR3 lanes carry 864 MHz at 10 bits per channel, 1080 MHz at 8.

@@ -1,0 +1,47 @@
+From b21b4f65644709c9a943a914ea3160b032c8eb99 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Thu, 12 Nov 2026 15:26:08 +0000
+Subject: [PATCH] drm/msm/dp: shut the PHY down when the controller is
+ suspended
+
+System sleep suspends the controller with pm_runtime_force_suspend()
+even while a sink is plugged in. For external DisplayPort the runtime
+suspend callback only deinitialises the host, so phy_initialized stays
+set although the PHY does not keep its setup: on SM8250 the DP PHY reads
+back PD_CTL 0x78, AUX_CFG1 0x00 and AUX_CFG2 0x04 right after resume,
+where 0x67, 0x13 and 0xa4 were programmed before. The next detect then
+skips the PHY init, every AUX transfer times out and the sink is
+reported as unplugged until it is plugged in again.
+
+Exit the PHY in the runtime suspend callback for external DisplayPort as
+well, as is already done for eDP, so that the next detect, hotplug or
+enable sets it up again. Runtime suspend without a sink is unaffected,
+the PHY is not initialised then.
+---
+ drivers/gpu/drm/msm/dp/dp_display.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index fc87cd1..9c0ee32 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -1215,10 +1215,13 @@ static int msm_dp_pm_runtime_suspend(struct device *dev)
+ 
+ 	disable_irq(dp->irq);
+ 
+-	if (dp->msm_dp_display.is_edp) {
+-		msm_dp_display_host_phy_exit(dp);
++	/*
++	 * The PHY does not keep its setup once the controller is powered
++	 * down. System sleep gets here with a sink still plugged in.
++	 */
++	msm_dp_display_host_phy_exit(dp);
++	if (dp->msm_dp_display.is_edp)
+ 		msm_dp_aux_hpd_disable(dp->aux);
+-	}
+ 	msm_dp_display_host_deinit(dp);
+ 
+ 	return 0;
+-- 
+2.51.2
+
