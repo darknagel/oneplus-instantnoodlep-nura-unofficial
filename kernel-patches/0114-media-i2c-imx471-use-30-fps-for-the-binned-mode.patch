@@ -1,0 +1,47 @@
+From fad4208faf2c26bb34c4c5bb89855824f4a194e0 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 21:56:17 +0100
+Subject: [PATCH] media: i2c: imx471: use 30 fps for the binned mode
+
+The 2328x1748 binned mode ran at 60 fps with a frame length (VTS) of 2124
+lines, which caps the exposure at 2114 lines, about 16 ms. In a normally lit
+room the AGC already asks for several times more light, so front camera
+pictures stayed dark. Use 4248 lines (30 fps), like the binned modes of the
+other cameras on this phone, so the exposure can reach about 33 ms.
+
+---
+ drivers/media/i2c/imx471.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
+index 6bfe2dfb5..62f4453ae 100755
+--- a/drivers/media/i2c/imx471.c
++++ b/drivers/media/i2c/imx471.c
+@@ -335,8 +335,8 @@ static const struct cci_reg_sequence imx471_2328x1748_regs[] = {
+ 	{ CCI_REG8(0x0114), 0x03 },
+ 	{ CCI_REG8(0x0342), 0x0a },
+ 	{ CCI_REG8(0x0343), 0x00 },
+-	{ CCI_REG8(0x0340), 0x08 },
+-	{ CCI_REG8(0x0341), 0x4c },
++	{ CCI_REG8(0x0340), 0x10 },
++	{ CCI_REG8(0x0341), 0x98 },
+ 	{ CCI_REG8(0x0344), 0x00 },
+ 	{ CCI_REG8(0x0345), 0x00 },
+ 	{ CCI_REG8(0x0346), 0x00 },
+@@ -410,11 +410,11 @@ static const struct imx471_mode imx471_supported_modes[] = {
+ 		},
+ 	},
+ 	{
+-		/* 2x2 binned, 60 fps */
++		/* 2x2 binned, 30 fps */
+ 		.width = 2328,
+ 		.height = 1748,
+ 		.hts = 2560,
+-		.vts = 2124,
++		.vts = 4248,
+ 		.link_freq_index = 1,
+ 		.pixel_rate = 326400000,
+ 		.crop = {
+-- 
+2.43.0
+

@@ -1,0 +1,96 @@
+From e1df05873ecb6313ab08accfc696e8c0e4b05135 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 20:20:20 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: run the OnePlus 8 Pro front
+ camera binned mode at 30 fps
+
+Adds kernel patch 0105: at 60 fps the IMX471 exposure was capped at about 16 ms and front camera pictures stayed dark.
+---
+ ...mx471-use-30-fps-for-the-binned-mode.patch | 47 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  4 +-
+ 2 files changed, 50 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0114-media-i2c-imx471-use-30-fps-for-the-binned-mode.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0114-media-i2c-imx471-use-30-fps-for-the-binned-mode.patch b/device/testing/linux-postmarketos-qcom-sm8250/0114-media-i2c-imx471-use-30-fps-for-the-binned-mode.patch
+new file mode 100644
+index 0000000000..12e14da957
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0114-media-i2c-imx471-use-30-fps-for-the-binned-mode.patch
+@@ -0,0 +1,47 @@
++From fad4208faf2c26bb34c4c5bb89855824f4a194e0 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Thu, 12 Nov 2026 21:56:17 +0100
++Subject: [PATCH] media: i2c: imx471: use 30 fps for the binned mode
++
++The 2328x1748 binned mode ran at 60 fps with a frame length (VTS) of 2124
++lines, which caps the exposure at 2114 lines, about 16 ms. In a normally lit
++room the AGC already asks for several times more light, so front camera
++pictures stayed dark. Use 4248 lines (30 fps), like the binned modes of the
++other cameras on this phone, so the exposure can reach about 33 ms.
++
++---
++ drivers/media/i2c/imx471.c | 8 ++++----
++ 1 file changed, 4 insertions(+), 4 deletions(-)
++
++diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
++index 6bfe2dfb5..62f4453ae 100755
++--- a/drivers/media/i2c/imx471.c
+++++ b/drivers/media/i2c/imx471.c
++@@ -335,8 +335,8 @@ static const struct cci_reg_sequence imx471_2328x1748_regs[] = {
++ 	{ CCI_REG8(0x0114), 0x03 },
++ 	{ CCI_REG8(0x0342), 0x0a },
++ 	{ CCI_REG8(0x0343), 0x00 },
++-	{ CCI_REG8(0x0340), 0x08 },
++-	{ CCI_REG8(0x0341), 0x4c },
+++	{ CCI_REG8(0x0340), 0x10 },
+++	{ CCI_REG8(0x0341), 0x98 },
++ 	{ CCI_REG8(0x0344), 0x00 },
++ 	{ CCI_REG8(0x0345), 0x00 },
++ 	{ CCI_REG8(0x0346), 0x00 },
++@@ -410,11 +410,11 @@ static const struct imx471_mode imx471_supported_modes[] = {
++ 		},
++ 	},
++ 	{
++-		/* 2x2 binned, 60 fps */
+++		/* 2x2 binned, 30 fps */
++ 		.width = 2328,
++ 		.height = 1748,
++ 		.hts = 2560,
++-		.vts = 2124,
+++		.vts = 4248,
++ 		.link_freq_index = 1,
++ 		.pixel_rate = 326400000,
++ 		.crop = {
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index ce82248d04..65b1cef5d6 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=79
++pkgrel=80
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -143,6 +143,7 @@ source="
+ 	0102-ASoC-qcom-q6afe-dai-stop-the-DisplayPort-port-before.patch
+ 	0103-ASoC-qcom-q6asm-dai-reset-the-PCM-queue-pointer-on-s.patch
+ 	0104-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Drive-both-flash.patch
++	0114-media-i2c-imx471-use-30-fps-for-the-binned-mode.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -293,4 +294,5 @@ d7a9c89d083bb7afeecb9a1ebed6c7db2d840dbac2ff67218b83955dc7a75ddee0d9733e7fb056af
+ ef386d3a666be1d9f947471cab78a5670caeeb92bb9db90fcdf64e704e2ac488a0ba2f352374794508b3f14862a6feb9bb3ca30a7effea44633d05ff5dd30b91  0102-ASoC-qcom-q6afe-dai-stop-the-DisplayPort-port-before.patch
+ 5ec0c66a82c95965aa4e63d83c1d7edff7e0c6c854be381a68f1a671f8a16dbcba51d4881d1306f4196af20c184dafd0f2d17e5180648ee247983343321a7d54  0103-ASoC-qcom-q6asm-dai-reset-the-PCM-queue-pointer-on-s.patch
+ e9d98e92be4535451dfa7085e649cf2b1104bda7cf49fa7935e86fd79c33a2c25f549f3efacf0fc6ffdfe8426656f98ddf1eca339762ce74644dd53ff7ab7ce6  0104-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Drive-both-flash.patch
++b4dc9ab0dfcb76beb508853856745f6c8d217f0fe116c52766341f490ae366e0db09e343a742db55a7e81bad2b907ba0294a9ebc05f9f9503a4481369cbb2a50  0114-media-i2c-imx471-use-30-fps-for-the-binned-mode.patch
+ "
+-- 
+2.43.0
+

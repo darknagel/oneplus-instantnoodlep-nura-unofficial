@@ -13,7 +13,7 @@
 | A/B boot counter (qbootctl marks boot successful) | works | pmaports 0003 |
 | Accelerometer, light, proximity via SLPI (SMEM item 130 filled by new driver) | works, needs the stock sensor files | kernel 0006–0008, 0049, pmaports 0004–0006, 0026, hexagonrpc 0001–0005 |
 | Telephoto camera Samsung S5K3M5 via CAMSS + libcamera (4208×3120 @ 30, 2104×1184 @ 60, AGC, green tint) | works | kernel 0009–0010, pmaports 0008–0009, libcamera 0001 |
-| Front camera Sony IMX471 (new driver, 4656×3496 @ 30, 2328×1748 @ 60) | works, see known issues | kernel 0011–0012, pmaports 0010–0011, libcamera 0002 |
+| Front camera Sony IMX471 (new driver, 4656×3496 @ 30, 2328×1748 @ 30) | works, see known issues | kernel 0011–0012, 0114, pmaports 0010–0011, 0054, libcamera 0002 |
 | Full resolution capture on SM8250 CAMSS (camera NoC clock was never set) | fixed | kernel 0013, pmaports 0012 |
 | Telephoto autofocus: LC898217XC voice coil driver at 0x74, powered through GPIO 140 | works | kernel 0014–0015, pmaports 0013 |
 | Contrast detection autofocus in libcamera (software ISP statistics, lens support in the simple pipeline, soft IPA algorithm `Af`) | works, also in GNOME Snapshot | libcamera 0003–0005, pmaports 0014 |
