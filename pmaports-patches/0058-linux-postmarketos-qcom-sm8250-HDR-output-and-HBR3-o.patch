@@ -1,23 +1,25 @@
-From c62a636fd64c565a32016a6c62266d5828216359 Mon Sep 17 00:00:00 2001
+From 28679eeed28f85afa3cad897e5ed1a86ee379207 Mon Sep 17 00:00:00 2001
 From: Roman Kuraev <naoru.desu@gmail.com>
 Date: Wed, 11 Nov 2026 18:11:12 +0000
-Subject: [PATCH] linux-postmarketos-qcom-sm8250: HDR output and HBR3 over
- DisplayPort
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: package HDR output and HBR3
+ hotplug
 
-Add kernel patches 0117-0121 for HBR3, BT.2020 RGB colorimetry, HDR static metadata and connector properties. Advance to release 82.
+Add kernel patches 0117-0122 for HBR3, HDR signalling and refreshed sink link capabilities when switching monitors. Advance to release 82.
 ---
  ...nstantnoodlep-allow-DisplayPort-link.patch |  29 +++
  ...l-the-colorimetry-of-RGB-streams-in-.patch | 101 ++++++++++
  ...HDR-static-metadata-as-an-infoframe-.patch | 185 ++++++++++++++++++
  ...-SDPs-through-SDP_CFG3-on-revision-1.patch |  69 +++++++
  ...e-Colorspace-and-HDR_OUTPUT_METADATA.patch | 167 ++++++++++++++++
- .../linux-postmarketos-qcom-sm8250/APKBUILD   |  12 +-
- 6 files changed, 562 insertions(+), 1 deletion(-)
+ ...-link-capabilities-on-sink-discovery.patch |  32 +++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  14 +-
+ 7 files changed, 596 insertions(+), 1 deletion(-)
  create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0117-arm64-dts-qcom-instantnoodlep-allow-DisplayPort-link.patch
  create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0118-drm-msm-dp-signal-the-colorimetry-of-RGB-streams-in-.patch
  create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0119-drm-msm-dp-send-HDR-static-metadata-as-an-infoframe-.patch
  create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0120-drm-msm-dp-latch-SDPs-through-SDP_CFG3-on-revision-1.patch
  create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0121-drm-msm-dp-expose-Colorspace-and-HDR_OUTPUT_METADATA.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0122-drm-msm-dp-refresh-link-capabilities-on-sink-discovery.patch
 
 diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0117-arm64-dts-qcom-instantnoodlep-allow-DisplayPort-link.patch b/device/testing/linux-postmarketos-qcom-sm8250/0117-arm64-dts-qcom-instantnoodlep-allow-DisplayPort-link.patch
 new file mode 100644
@@ -600,8 +602,46 @@ index 0000000..66e9255
 +-- 
 +2.51.2
 +
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0122-drm-msm-dp-refresh-link-capabilities-on-sink-discovery.patch b/device/testing/linux-postmarketos-qcom-sm8250/0122-drm-msm-dp-refresh-link-capabilities-on-sink-discovery.patch
+new file mode 100644
+index 0000000..2f20bde
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0122-drm-msm-dp-refresh-link-capabilities-on-sink-discovery.patch
+@@ -0,0 +1,32 @@
++From aca8c6589bb3fba737cd1ab9cfd543e5f409a8c1 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Fri, 13 Nov 2026 23:28:24 +0000
++Subject: [PATCH] drm/msm/dp: Refresh link capabilities on sink discovery
++
++External DP reads MAX_LINK_RATE only when link_info->rate is zero.
++After swapping monitors, the old rate can survive discovery and set
++the starting rate for link training. Clear the parsed capabilities
++before populating them from the new receiver.
++
++On a OnePlus 8 Pro, switching from a GR14BU to an ASUS PG32UCDMR
++otherwise kept four HBR2 lanes and reduced 3840x2160 at 97 Hz to
++6 bpc. The ASUS now trains at HBR3 and carries 10 bpc at the same
++timing. Switching back to the GR14BU restores HBR2.
++
++Link: https://lore.kernel.org/r/20261009-msm-dp-hdr10-v2-11-1835d4966da3@radxa.com
++---
++ drivers/gpu/drm/msm/dp/dp_panel.c | 1 +
++ 1 file changed, 1 insertion(+)
++
++diff --git a/drivers/gpu/drm/msm/dp/dp_panel.c b/drivers/gpu/drm/msm/dp/dp_panel.c
++index e0b6ab114..1cb24a93c 100644
++--- a/drivers/gpu/drm/msm/dp/dp_panel.c
+++++ b/drivers/gpu/drm/msm/dp/dp_panel.c
++@@ -101,6 +101,7 @@ static int msm_dp_panel_read_dpcd(struct msm_dp_panel *msm_dp_panel)
++ 
++ 	msm_dp_panel->vsc_sdp_supported = drm_dp_vsc_sdp_supported(panel->aux, dpcd);
++ 	link_info = &msm_dp_panel->link_info;
+++	memset(link_info, 0, sizeof(*link_info));
++ 	link_info->revision = dpcd[DP_DPCD_REV];
++ 	major = (link_info->revision >> 4) & 0x0f;
++ 	minor = link_info->revision & 0x0f;
 diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
-index 6168cf9..b9db27b 100644
+index 6168cf9..61786e2 100644
 --- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
 +++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
 @@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
@@ -613,7 +653,7 @@ index 6168cf9..b9db27b 100644
  pkgdesc="Mainline kernel fork for SM8250"
  arch="aarch64"
  _carch="arm64"
-@@ -146,6 +146,11 @@ source="
+@@ -146,6 +146,12 @@ source="
  	0114-media-i2c-imx471-use-30-fps-for-the-binned-mode.patch
  	0115-drm-panel-samsung-ams678uw01-power-off-when-the-PPS-.patch
  	0116-soc-qcom-oneplus-sensor-devinfo-bound-the-SAR-channe.patch
@@ -622,10 +662,11 @@ index 6168cf9..b9db27b 100644
 +	0119-drm-msm-dp-send-HDR-static-metadata-as-an-infoframe-.patch
 +	0120-drm-msm-dp-latch-SDPs-through-SDP_CFG3-on-revision-1.patch
 +	0121-drm-msm-dp-expose-Colorspace-and-HDR_OUTPUT_METADATA.patch
++	0122-drm-msm-dp-refresh-link-capabilities-on-sink-discovery.patch
  "
  builddir="$srcdir/linux-$_tag"
  
-@@ -299,4 +304,9 @@ ef386d3a666be1d9f947471cab78a5670caeeb92bb9db90fcdf64e704e2ac488a0ba2f3523747945
+@@ -299,4 +305,10 @@ ef386d3a666be1d9f947471cab78a5670caeeb92bb9db90fcdf64e704e2ac488a0ba2f3523747945
  b4dc9ab0dfcb76beb508853856745f6c8d217f0fe116c52766341f490ae366e0db09e343a742db55a7e81bad2b907ba0294a9ebc05f9f9503a4481369cbb2a50  0114-media-i2c-imx471-use-30-fps-for-the-binned-mode.patch
  43c09c515743fc28c7ba5916f6d1940f85e95e8e23c68cb70d42a7a3ae8d9d31abf90247249561fd3ec5945662522cc59a11dfedbe02502824aa183569820587  0115-drm-panel-samsung-ams678uw01-power-off-when-the-PPS-.patch
  2a3a8e0fcd40450b45d22aee24417e5995dbad203c41813f399c18381a23618ca3adec03ef76e585d0822f5b54e26b325c01232f689e302ef8844502899e4e27  0116-soc-qcom-oneplus-sensor-devinfo-bound-the-SAR-channe.patch
@@ -634,4 +675,5 @@ index 6168cf9..b9db27b 100644
 +90afa716ec04a892d8dd9a86ad085d093256ca3165b72213cf7769464a606308edb7b7de55d62c8c4e52fdfa24360f65f6087a9f814ba890ac4262fc9fb8ec23  0119-drm-msm-dp-send-HDR-static-metadata-as-an-infoframe-.patch
 +f4de0c04450a74fcd907836614dfd2444fd47ca65485d671466be914fa1e958e845929d27ba996fb6c523e29c2f2e14d48bd61f60a8da1a5dd31823bd9a4398e  0120-drm-msm-dp-latch-SDPs-through-SDP_CFG3-on-revision-1.patch
 +20fd1e9b4e7ccb7dd0b6f868e5b1218ff7bf8d26576115f3e8d1075489688c84fb3165f7bb37560c86afa5b56b3cd4b502c481463e515ef2986a4258ed57690e  0121-drm-msm-dp-expose-Colorspace-and-HDR_OUTPUT_METADATA.patch
++191498da909f627a069265cbc7a84a0b5b5429800cfd1f82a6c3ca7aa23bcff42b9392b3c088ba16dcb857175d6c6ea30e956b9e2d3937006a26c207e0da86cd  0122-drm-msm-dp-refresh-link-capabilities-on-sink-discovery.patch
  "

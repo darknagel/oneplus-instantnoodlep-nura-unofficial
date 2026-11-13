@@ -13,6 +13,13 @@ speakers and microphones included.
 Tested with a GR14BU (2880×1800 at 100 and 120 Hz, touch, hub), powered by
 itself and by the phone, in both plug orientations.
 
+The driver reads each monitor’s link capabilities on hotplug. In a GR14BU
+to ASUS PG32UCDMR swap, the ASUS previously inherited the GR14BU’s HBR2
+rate and showed visible banding at 3840×2160, 97 Hz and 6 bpc. With the
+fix, the ASUS trained at four-lane HBR3 and showed smooth gradients at
+the same timing with 10 bpc. Switching back restored four-lane HBR2 on
+the GR14BU, and reconnecting the ASUS restored HBR3.
+
 ## HDR
 
 The connector has `Colorspace` (`Default`, `BT2020_RGB`) and
