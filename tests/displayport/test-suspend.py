@@ -28,6 +28,9 @@ code=r'''
 #include <stdio.h>
 #include <string.h>
 #define container_of(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
+/* No concurrent users in this controller model. */
+#define guard(lock_type) (void)
+#define WRITE_ONCE(field, value) ((field) = (value))
 #define drm_dbg_dp(dev, ...) do { (void)(dev); } while (0)
 struct drm_device;
 struct drm_atomic_commit;
@@ -47,6 +50,8 @@ struct msm_dp_ctrl {
 struct msm_dp {
  struct platform_device *pdev; struct drm_device *drm_dev;
  bool is_edp, power_on; int connector_type;
+ bool probe_unplugged_audio, audio_link_ready, audio_clock_ready;
+ int audio_clock_lock;
 };
 struct msm_dp_display_private {
  int irq; struct drm_device *drm_dev;
@@ -135,11 +140,14 @@ int main(void)
  msm_dp_bridge_atomic_disable(&bridge.bridge, NULL);
  if (ctrl.unclocked_writes) { puts("FAIL: disable wrote a link register without a link clock"); return 1; }
 
- /* A running link is still idled before it is switched off. */
+ /* A running link stops advertising audio readiness before it is switched off. */
  setup(false);
  dp.msm_dp_display.power_on=true; ctrl.link_clk_on=true;
+ dp.msm_dp_display.probe_unplugged_audio=true;
+ dp.msm_dp_display.audio_link_ready=dp.msm_dp_display.audio_clock_ready=true;
  msm_dp_bridge_atomic_disable(&bridge.bridge, NULL);
  assert(ctrl.idle_pushes==1 && !ctrl.unclocked_writes);
+ assert(!dp.msm_dp_display.audio_link_ready && !dp.msm_dp_display.audio_clock_ready);
 
  puts("PASS: PHY is set up again after suspend with a monitor plugged in; suspend without a PHY and eDP unchanged; disable after a failed link leaves the link registers alone; a running link is idled");
  return 0;
