@@ -1,4 +1,4 @@
-From e1df05873ecb6313ab08accfc696e8c0e4b05135 Mon Sep 17 00:00:00 2001
+From 7fc722dca1816034c5114385ced7532f013f7d1f Mon Sep 17 00:00:00 2001
 From: Timo <1788603+darknagel@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 20:20:20 +0100
 Subject: [PATCH] linux-postmarketos-qcom-sm8250: run the OnePlus 8 Pro front
@@ -65,7 +65,7 @@ index 0000000000..12e14da957
 +2.43.0
 +
 diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
-index ce82248d04..65b1cef5d6 100644
+index 450543c206..61611d18e9 100644
 --- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
 +++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
 @@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
@@ -88,7 +88,7 @@ index ce82248d04..65b1cef5d6 100644
 @@ -293,4 +294,5 @@ d7a9c89d083bb7afeecb9a1ebed6c7db2d840dbac2ff67218b83955dc7a75ddee0d9733e7fb056af
  ef386d3a666be1d9f947471cab78a5670caeeb92bb9db90fcdf64e704e2ac488a0ba2f352374794508b3f14862a6feb9bb3ca30a7effea44633d05ff5dd30b91  0102-ASoC-qcom-q6afe-dai-stop-the-DisplayPort-port-before.patch
  5ec0c66a82c95965aa4e63d83c1d7edff7e0c6c854be381a68f1a671f8a16dbcba51d4881d1306f4196af20c184dafd0f2d17e5180648ee247983343321a7d54  0103-ASoC-qcom-q6asm-dai-reset-the-PCM-queue-pointer-on-s.patch
- e9d98e92be4535451dfa7085e649cf2b1104bda7cf49fa7935e86fd79c33a2c25f549f3efacf0fc6ffdfe8426656f98ddf1eca339762ce74644dd53ff7ab7ce6  0104-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Drive-both-flash.patch
+ 45e65386b76e585da28996ae35265252a2bb341b5a08b3de25bbe318cf7cef15ae521f3207126eb87756f8b51e8a8d5512ad6b76075c16552d3faf1906bf987e  0104-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Drive-both-flash.patch
 +b4dc9ab0dfcb76beb508853856745f6c8d217f0fe116c52766341f490ae366e0db09e343a742db55a7e81bad2b907ba0294a9ebc05f9f9503a4481369cbb2a50  0114-media-i2c-imx471-use-30-fps-for-the-binned-mode.patch
  "
 -- 
