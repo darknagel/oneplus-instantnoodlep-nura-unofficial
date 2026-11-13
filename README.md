@@ -235,10 +235,11 @@ For the compass and sensor setup on old images see [`docs/sensors.md`](docs/sens
 - **`apk upgrade` can remove fixes.** The patched kernel, ModemManager, libcamera and
   iio-sensor-proxy can be replaced when Nura publishes a higher version. If modem or data
   break afterwards, check first: `apk policy modemmanager`
-- Cameras need fine-tuning: the front camera is too dark, colours and exposure differ from
-  Android. Main and ultrawide have one mode each (4000×3000 at 30 fps) and contrast
-  autofocus only: a scan takes about 4 seconds, moves the lens 11 to 14 times and is not
-  always right. Bright areas clip.
+- Cameras: colours, shading and exposure come from the stock tuning, but white balance is a
+  simple grey world: large coloured areas tint the picture (the front camera has no colour
+  matrix for that reason). Main and ultrawide have one mode each (4000×3000 at 30 fps);
+  autofocus is contrast only and takes about 3 seconds. Only 32 MB CMA: higher output
+  resolutions fail to allocate.
 - Charging has no temperature steps yet: Android reduces the current above 45 °C and stops
   at 50 °C.
 - Under Plasma Mobile the keyboard did not always open in the SIM PIN popup. Enter the PIN in

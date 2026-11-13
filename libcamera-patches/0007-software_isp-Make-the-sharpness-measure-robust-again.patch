@@ -1,0 +1,129 @@
+From 29a9bc973d83d0b918c29f4214e6d903bd8f2b49 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 19:44:29 +0100
+Subject: [PATCH 7/8] software_isp: Make the sharpness measure robust against
+ noise
+
+---
+ .../internal/software_isp/swstats_cpu.h       | 22 +++++++++-
+ src/libcamera/software_isp/swstats_cpu.cpp    | 43 ++++++++++++++++---
+ 2 files changed, 57 insertions(+), 8 deletions(-)
+
+diff --git a/include/libcamera/internal/software_isp/swstats_cpu.h b/include/libcamera/internal/software_isp/swstats_cpu.h
+index 82cc7e0..abf2a60 100644
+--- a/include/libcamera/internal/software_isp/swstats_cpu.h
++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
+@@ -67,7 +67,7 @@ public:
+ 		    y >= (window_.y + window_.height))
+ 			return;
+ 
+-		(this->*stats0_)(src, stats_[statsBufferIndex]);
++		processStats0(y - window_.y, src, stats_[statsBufferIndex]);
+ 	}
+ 
+ 	void processLine2(uint32_t frame, unsigned int y, const uint8_t *src[], unsigned int statsBufferIndex = 0)
+@@ -84,6 +84,26 @@ public:
+ 
+ 	Signal<uint32_t, uint32_t> statsReady;
+ 
++private:
++	/*
++	 * Run stats0_ for a line, keeping the sharpness measure to the centre
++	 * half of the window height (y relative to window_.y).
++	 */
++	void processStats0(unsigned int y, const uint8_t *src[], SwIspStats &stats)
++	{
++		const uint64_t sharpness = stats.sharpness;
++		const uint64_t sharpnessBase = stats.sharpnessBase;
++
++		(this->*stats0_)(src, stats);
++
++		if (y < window_.height / 4 || y >= window_.height * 3 / 4) {
++			stats.sharpness = sharpness;
++			stats.sharpnessBase = sharpnessBase;
++		}
++	}
++
++public:
++
+ private:
+ 	using statsProcessFn = void (SwStatsCpu::*)(const uint8_t *src[], SwIspStats &stats);
+ 	using processFrameFn = void (SwStatsCpu::*)(MappedFrameBuffer &in);
+diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+index 96c5fae..1095179 100644
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -23,6 +23,15 @@
+ 
+ namespace libcamera {
+ 
++/*
++ * Differences between neighbouring sampled green values up to this size are
++ * treated as noise by the autofocus sharpness measure.
++ */
++static constexpr unsigned int kSharpnessCoring = 2;
++
++/* Green values from here on are treated as clipped by the sharpness measure. */
++static constexpr unsigned int kSharpnessClip = 240;
++
+ /**
+  * \class SwStatsCpu
+  * \brief Class for gathering statistics on the CPU
+@@ -312,9 +321,19 @@ void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats)
+ 		r = src1[x + 1];
+ 		g = (g + g2) / 2;
+ 		if (x >= afStart_ && x < afEnd_) {
+-			if (x != afStart_)
+-				sharp += abs(static_cast<int>(g) - static_cast<int>(prevG));
+-			sharpBase += g;
++			if (x != afStart_) {
++				unsigned int d = abs(static_cast<int>(g) -
++						     static_cast<int>(prevG));
++				/*
++				 * Ignore small steps, they are mostly noise, and
++				 * steps at clipped highlights: the edges of
++				 * defocused lights would win otherwise.
++				 */
++				if (d > kSharpnessCoring &&
++				    g < kSharpnessClip && prevG < kSharpnessClip)
++					sharp += d * d;
++			}
++			sharpBase += g * g;
+ 			prevG = g;
+ 		}
+ 		/* Data is already 8 bits, divide by 1 */
+@@ -349,9 +368,19 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
+ 		g2 = src1[x + 1];
+ 		g = (g + g2) / 2;
+ 		if (x >= afStart_ && x < afEnd_) {
+-			if (x != afStart_)
+-				sharp += abs(static_cast<int>(g) - static_cast<int>(prevG));
+-			sharpBase += g;
++			if (x != afStart_) {
++				unsigned int d = abs(static_cast<int>(g) -
++						     static_cast<int>(prevG));
++				/*
++				 * Ignore small steps, they are mostly noise, and
++				 * steps at clipped highlights: the edges of
++				 * defocused lights would win otherwise.
++				 */
++				if (d > kSharpnessCoring &&
++				    g < kSharpnessClip && prevG < kSharpnessClip)
++					sharp += d * d;
++			}
++			sharpBase += g * g;
+ 			prevG = g;
+ 		}
+ 		/* Data is already 8 bits, divide by 1 */
+@@ -685,7 +714,7 @@ void SwStatsCpu::processBayerFrame2(MappedFrameBuffer &in)
+ 		/* linePointers[0] is not used by any stats0_ functions */
+ 		linePointers[1] = src;
+ 		linePointers[2] = src + stride_;
+-		(this->*stats0_)(linePointers, stats_[0]);
++		processStats0(y, linePointers, stats_[0]);
+ 		src += stride_ * 2;
+ 	}
+ }
+-- 
+2.43.0
+

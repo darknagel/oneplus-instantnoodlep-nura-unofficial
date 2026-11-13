@@ -58,6 +58,7 @@
 | Resume from suspend: the freezer interrupted the waiting FastRPC call of `hexagonrpcd`, the restarted system call sent it a second time and the sensor DSP crashed (taking iio-sensor-proxy and the rotation with it); the touchscreen driver enabled its interrupt before powering the controller up, so resume failed with -19 and sensing stayed off | works | kernel 0080–0081, pmaports 0043 |
 | Torch: the stock camera drives both PM8150L flash channels together as one flash; describing it as one LED with both sources also gives it the name `white:flash`, which the Plasma Mobile and Phosh torch switches look for | works | kernel 0104, pmaports 0048 |
 | Sound in PipeWire: DisplayPort audio as its own UCM use case, since without a monitor it made PipeWire drop the speakers and microphones; the speaker amplifiers get 16-bit samples, at 24 bit they play far too quietly | works | pmaports 0049, `system/61-oneplus-instantnoodlep-speaker-s16.conf` |
+| Camera tuning from the stock OnePlus tuning: colour matrices (main, ultrawide, telephoto) and lens shading tables (all four), new AGC limits so bright areas no longer clip; noise robust autofocus sharpness, and the GPU debayer statistics now cover the whole frame instead of its top left corner (autofocus, exposure and white balance measured only that corner) | works | libcamera 0007–0008, pmaports 0055 |
 | OIS of the telephoto camera (second LC898128), colour tuning of the front camera, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
@@ -118,7 +119,7 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   charger follow USB-C limits, with USB-A detection and this board's 2 A battery
   charge-current ceiling; 0045 adds DisplayPort alt mode with USB2 alongside and
   the PHY fixes; 0046 adds the external VBUS supply and power-role swaps;
-  0047 adds DP audio and PCM restart recovery.
+  0047 adds DP audio and PCM restart recovery. 0054 runs the front camera binned mode at 30 fps (kernel 0114) and 0055 adds the camera tuning and libcamera 0007–0008; 0050–0053 and kernel 0105–0113 are left for the open DisplayPort and charger pull requests.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `firmware/` – boot service that copies SLPI, Venus and CDSP firmware from your own phone.
@@ -128,9 +129,10 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   Adds a writable sensor registry (`-w DIR`), needed by the OnePlus sensor DSP.
 - `libcamera-patches/` – against libcamera v0.8.0 plus the patches already carried in
   Nura `temp/libcamera`: sensor helpers for S5K3M5 (0001) and IMX586, IMX689 and GC5035
-  (0002), the autofocus series (0003–0005) and a shorter autofocus scan (0006). The IMX471
-  helper is upstream since v0.8.0. The autofocus tuning is in the sensor files of
-  pmaports patch 0034.
+  (0002), the autofocus series (0003–0005), a shorter autofocus scan (0006), a noise
+  robust sharpness measure (0007) and whole-frame statistics for the GPU debayer (0008). The IMX471
+  helper is upstream since v0.8.0. The autofocus and image tuning is in the sensor files of
+  pmaports patches 0034 and 0055.
 - `system/` – small files the image adds: the `ois-gyro` service, which keeps the
   gyroscope running while the main camera's OIS is active, the AK7375 option without the
   lens ramp, camera names for PipeWire and 16-bit samples for the speakers.

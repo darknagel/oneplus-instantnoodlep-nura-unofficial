@@ -1,0 +1,33 @@
+From 9dc173ddd1c28901e3959fdeb7c6d3b64462c50f Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 20:05:27 +0100
+Subject: [PATCH 8/8] software_isp: debayer_egl: Calculate the statistics over
+ the whole frame
+
+---
+ src/libcamera/software_isp/debayer_egl.cpp | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+index df0d9c9..7f0b0ab 100644
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -351,10 +351,12 @@ int DebayerEGL::configure(const StreamConfiguration &inputCfg,
+ 	}
+ 
+ 	/*
+-	 * Don't pass x,y from window_ since process() already adjusts for it.
+-	 * But crop the window to 2/3 of its width and height for speedup.
++	 * The GPU scales the whole input frame to the output size, so the
++	 * statistics have to cover the whole input frame too. The statistics
++	 * get the unadjusted input buffer: using the output size here would
++	 * measure only the top left corner of the image.
+ 	 */
+-	stats_->setWindow(quadBayer_ ? window_ : Rectangle(window_.size()));
++	stats_->setWindow(quadBayer_ ? window_ : Rectangle(inputCfg.size));
+ 
+ 	inputBufferCount_ = inputCfg.bufferCount;
+ 	outputBufferCount_ = outputCfg.bufferCount;
+-- 
+2.43.0
+
