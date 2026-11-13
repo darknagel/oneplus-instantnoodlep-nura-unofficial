@@ -10,7 +10,7 @@
 | DisplayPort HBR3 and HDR signalling (`Colorspace`, `HDR_OUTPUT_METADATA`) | draft | kernel 0117–0122, pmaports 0058; [notes](displayport.md#hdr) |
 | DisplayPort over system sleep: the DP PHY loses its setup while the controller is suspended but was still taken as initialised, so the display was dropped after resume; a link that failed to train was pushed to idle without a link clock, which reset the phone | draft | kernel 0123–0124, pmaports 0059; [notes](displayport.md#system-sleep) |
 | Switching between the phone panel and an external DisplayPort monitor | Tested at 2880×1800, 120 Hz on the GR14BU | kernel 0125–0126, pmaports 0060 |
-| DisplayPort audio discovery after booting with the monitor unplugged | awaiting device test | kernel 0127, pmaports 0061 |
+| DisplayPort audio after booting with the monitor unplugged | Direct ALSA playback works on first plug. PulseAudio 17 discovers the profile after a card reprobe with the monitor connected. | kernel 0127–0128, pmaports 0061–0062 |
 | Charger input limit from USB-C/PD or USB-A detection, 2 A battery current | works | kernel 0082–0087, pmaports 0044; [notes](charging.md) |
 | Speakers + 3 microphones (VA macro, mic bias as in vendor DT) | works | kernel 0005, pmaports 0002, 0007 |
 | False headset detection with an ordinary USB cable, codec runtime-PM errors and unsorted RX register defaults | fixed; analog USB-C headsets untested | kernel 0055–0060, pmaports 0030; [notes](audio.md) |
