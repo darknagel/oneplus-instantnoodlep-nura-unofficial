@@ -1,0 +1,52 @@
+From d9ebfd19fc2392d80347b2d69974876872c03c43 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Fri, 13 Nov 2026 15:47:44 +0000
+Subject: [PATCH] device-oneplus-instantnoodlep: include the charger ADC in
+ initramfs
+
+The built-in PM8150B charger requests USB voltage and current channels
+from the PM8150B ADC. Package the ADC in the ramdisk so that the charger
+can probe before switching to the root filesystem.
+
+mkinitfs includes qcom-vadc-common through the ADC's module dependency.
+---
+ device/testing/device-oneplus-instantnoodlep/APKBUILD       | 4 +++-
+ device/testing/device-oneplus-instantnoodlep/modules-initfs | 1 +
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/device-oneplus-instantnoodlep/modules-initfs
+
+diff --git a/device/testing/device-oneplus-instantnoodlep/APKBUILD b/device/testing/device-oneplus-instantnoodlep/APKBUILD
+index 1b07fea..2f199d9 100644
+--- a/device/testing/device-oneplus-instantnoodlep/APKBUILD
++++ b/device/testing/device-oneplus-instantnoodlep/APKBUILD
+@@ -3,7 +3,7 @@ maintainer="kouling <k0ul1ng@proton.me>"
+ pkgname=device-oneplus-instantnoodlep
+ pkgdesc="OnePlus 8 Pro"
+ pkgver=7
+-pkgrel=6
++pkgrel=7
+ url="https://postmarketos.org"
+ license="MIT"
+ arch="aarch64"
+@@ -30,6 +30,7 @@ source="
+ 	hexagonrpcd-sdsp.conf
+ 	hexagonrpcd.tmpfiles
+ 	kernel-cmdline.conf
++	modules-initfs
+ 	sm8250-oneplus-instantnoodlep-empty.dts
+ "
+ 
+@@ -58,5 +59,6 @@ d0e8f2e378130130ac72703aed957f7638e2dd75acf4aa421e1b4592c6cb6d296b652db0d9c242be
+ 7b225a3513d3846089e6e04faf54682e0734dec8367c96393dbd48b983cfdb9efbef5331503f4f90bf8da321b4cd713a8d244666c5b8c3a85f24b4cf88fc5367  hexagonrpcd-sdsp.conf
+ 340ee153d351d6f42cd8b77207ceb7e793520a4031f2b24b3469700871f38e20e3c3c8b80ed5724893df48b6d712a8bf3ccd6371603535fb4caed8f428bd394a  hexagonrpcd.tmpfiles
+ 04cc87ed6b0041ede7edb2693ee4dd58d6ac8f1b036a0b37e1a86cce57b66e35d9f400a3ea75d75278b028132535033915f3a2fff919866e85336c5f92a68ffe  kernel-cmdline.conf
++a514e9ba59f434ff3cbd2f918246885c2b670ff3f07020a7c3dd9887f1d3ee619ff7d8a402c4fe68a84c86ae956262a817a92de9970995252f5d2f11ad31143d  modules-initfs
+ 06269dcbd405a18576a476bb976d39bcf91e8c7885a87716f510d66abc2ffe3bfabe56c286ad6fc88878de07427e58965ac833ac0e8cfa7ad393c2fa3b535c88  sm8250-oneplus-instantnoodlep-empty.dts
+ "
+diff --git a/device/testing/device-oneplus-instantnoodlep/modules-initfs b/device/testing/device-oneplus-instantnoodlep/modules-initfs
+new file mode 100644
+index 0000000..fb1f24c
+--- /dev/null
++++ b/device/testing/device-oneplus-instantnoodlep/modules-initfs
+@@ -0,0 +1 @@
++qcom-spmi-adc5
