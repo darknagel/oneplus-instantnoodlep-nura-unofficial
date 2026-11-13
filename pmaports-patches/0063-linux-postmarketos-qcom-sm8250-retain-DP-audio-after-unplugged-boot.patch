@@ -1,0 +1,332 @@
+From 20874b00cc077de9ca9355d51b5ed947ab813e84 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Fri, 13 Nov 2026 21:59:10 +0000
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: retain DP audio after an
+ unplugged boot
+
+Add kernel patch 0129 to retain audio probing while gating DSP startup on the display audio clock. Advance to release 87.
+---
+ ...layPort-probeable-with-the-link-down.patch | 286 ++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |   4 +-
+ 2 files changed, 289 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0129-ASoC-qcom-keep-DisplayPort-probeable-with-the-link-down.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0129-ASoC-qcom-keep-DisplayPort-probeable-with-the-link-down.patch b/device/testing/linux-postmarketos-qcom-sm8250/0129-ASoC-qcom-keep-DisplayPort-probeable-with-the-link-down.patch
+new file mode 100644
+index 0000000..ceb9374
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0129-ASoC-qcom-keep-DisplayPort-probeable-with-the-link-down.patch
+@@ -0,0 +1,286 @@
++From 6f0c09ff654ec12323b60d394a1ca401f31b8b3e Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Subject: [PATCH] ASoC: qcom: keep DisplayPort probeable with the link down on the OnePlus 8 Pro
++
++Allow PCM setup during unplugged card discovery. Gate the Q6 AFE start on
++the display audio clock and reject playback when that port was never started.
++Run the backend trigger before the multimedia frontend on this route.
++
++On an IN2023, PulseAudio retained the profile across two plugs and 24
++connected playback starts completed, including 12 with a 20 ms buffer.
++---
++diff --git a/drivers/gpu/drm/msm/dp/dp_audio.c b/drivers/gpu/drm/msm/dp/dp_audio.c
++--- a/drivers/gpu/drm/msm/dp/dp_audio.c
+++++ b/drivers/gpu/drm/msm/dp/dp_audio.c
++@@ -8,6 +8,7 @@
++ 
++ #include <linux/of.h>
++ #include <linux/platform_device.h>
+++#include <soc/qcom/sm8250-dp-audio.h>
++ 
++ #include <drm/display/drm_dp_helper.h>
++ #include <drm/drm_edid.h>
++@@ -285,8 +286,41 @@
++ 				     "qcom,sm8250-dp"))
++ 		return 0;
++ 
+++	/* This board gates the Q6 AFE port after PCM parameter discovery. */
+++	if (msm_dp_display->probe_unplugged_audio)
+++		return 0;
+++
++ 	return msm_dp_display->power_on ? 0 : -ENODEV;
++ }
+++
+++bool sm8250_dp_audio_clock_get(struct device *dev)
+++{
+++	struct msm_dp *dp = dev_get_drvdata(dev);
+++
+++	mutex_lock(&dp->audio_clock_lock);
+++	if (dp->audio_clock_ready)
+++		return true;
+++
+++	mutex_unlock(&dp->audio_clock_lock);
+++	return false;
+++}
+++EXPORT_SYMBOL_GPL(sm8250_dp_audio_clock_get);
+++
+++void sm8250_dp_audio_clock_put(struct device *dev)
+++{
+++	struct msm_dp *dp = dev_get_drvdata(dev);
+++
+++	mutex_unlock(&dp->audio_clock_lock);
+++}
+++EXPORT_SYMBOL_GPL(sm8250_dp_audio_clock_put);
+++
+++bool sm8250_dp_audio_clock_ready(struct device *dev)
+++{
+++	struct msm_dp *dp = dev_get_drvdata(dev);
+++
+++	return READ_ONCE(dp->audio_clock_ready);
+++}
+++EXPORT_SYMBOL_GPL(sm8250_dp_audio_clock_ready);
++ 
++ int msm_dp_audio_prepare(struct drm_bridge *bridge,
++ 			 struct drm_connector *connector,
++@@ -307,7 +341,10 @@
++ 	 * such cases check for connection status and bail out if not
++ 	 * connected.
++ 	 */
++-	if (!msm_dp_display->power_on)
+++	if (msm_dp_display->probe_unplugged_audio)
+++		mutex_lock(&msm_dp_display->audio_clock_lock);
+++	if (!msm_dp_display->power_on ||
+++	    (msm_dp_display->probe_unplugged_audio && !msm_dp_display->audio_link_ready))
++ 		goto end;
++ 
++ 	audio = msm_dp_audio_get_data(msm_dp_display);
++@@ -324,8 +361,12 @@
++ 	msm_dp_audio_enable(audio, true);
++ 	msm_dp_display_signal_audio_start(msm_dp_display);
++ 	msm_dp_display->audio_enabled = true;
+++	if (msm_dp_display->probe_unplugged_audio)
+++		WRITE_ONCE(msm_dp_display->audio_clock_ready, true);
++ 
++ end:
+++	if (msm_dp_display->probe_unplugged_audio)
+++		mutex_unlock(&msm_dp_display->audio_clock_lock);
++ 	return rc;
++ }
++ 
++@@ -350,6 +391,10 @@
++ 	 * connected. is_connected cannot be used here as its set
++ 	 * to false earlier than this call
++ 	 */
+++	if (msm_dp_display->probe_unplugged_audio) {
+++		guard(mutex)(&msm_dp_display->audio_clock_lock);
+++		WRITE_ONCE(msm_dp_display->audio_clock_ready, false);
+++	}
++ 	if (!msm_dp_display->audio_enabled)
++ 		return;
++ 
++diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
++--- a/drivers/gpu/drm/msm/dp/dp_display.c
+++++ b/drivers/gpu/drm/msm/dp/dp_display.c
++@@ -429,6 +429,13 @@
++ 	dp = container_of(msm_dp_display,
++ 			struct msm_dp_display_private, msm_dp_display);
++ 
+++	if (msm_dp_display->probe_unplugged_audio) {
+++		guard(mutex)(&msm_dp_display->audio_clock_lock);
+++		msm_dp_display->audio_link_ready = plugged && dp->audio_supported;
+++		if (!msm_dp_display->audio_link_ready)
+++			WRITE_ONCE(msm_dp_display->audio_clock_ready, false);
+++	}
+++
++ 	/* notify audio subsystem only if sink supports audio */
++ 	if (dp->audio_supported)
++ 		drm_connector_hdmi_audio_plugged_notify(msm_dp_display->connector,
++@@ -1153,6 +1160,10 @@
++ 	dp->hpd_isr_status = 0;
++ 
++ 	mutex_init(&dp->plugged_lock);
+++	mutex_init(&dp->msm_dp_display.audio_clock_lock);
+++	dp->msm_dp_display.probe_unplugged_audio =
+++		of_device_is_compatible(pdev->dev.of_node, "qcom,sm8250-dp") &&
+++		of_machine_is_compatible("oneplus,instantnoodlep");
++ 
++ 	rc = msm_dp_display_get_io(dp);
++ 	if (rc)
++@@ -1426,6 +1437,11 @@
++ 	if (!dp->power_on)
++ 		return;
++ 
+++	if (dp->probe_unplugged_audio) {
+++		guard(mutex)(&dp->audio_clock_lock);
+++		dp->audio_link_ready = false;
+++		WRITE_ONCE(dp->audio_clock_ready, false);
+++	}
++ 	msm_dp_ctrl_push_idle(msm_dp_display->ctrl);
++ }
++ 
++diff --git a/drivers/gpu/drm/msm/dp/dp_display.h b/drivers/gpu/drm/msm/dp/dp_display.h
++--- a/drivers/gpu/drm/msm/dp/dp_display.h
+++++ b/drivers/gpu/drm/msm/dp/dp_display.h
++@@ -17,6 +17,10 @@
++ 	struct drm_connector *connector;
++ 	struct drm_bridge *next_bridge;
++ 	struct drm_bridge *bridge;
+++	struct mutex audio_clock_lock;
+++	bool probe_unplugged_audio;
+++	bool audio_link_ready;
+++	bool audio_clock_ready;
++ 	bool audio_enabled;
++ 	bool power_on;
++ 	unsigned int connector_type;
++diff --git a/include/soc/qcom/sm8250-dp-audio.h b/include/soc/qcom/sm8250-dp-audio.h
++new file mode 100644
++--- /dev/null
+++++ b/include/soc/qcom/sm8250-dp-audio.h
++@@ -0,0 +1,18 @@
+++/* SPDX-License-Identifier: GPL-2.0-only */
+++#ifndef __SM8250_DP_AUDIO_H__
+++#define __SM8250_DP_AUDIO_H__
+++
+++#include <linux/device.h>
+++
+++#if IS_REACHABLE(CONFIG_DRM_MSM) && IS_ENABLED(CONFIG_DRM_MSM_DP)
+++/* Successful acquisition pins the clock against display shutdown until put. */
+++bool sm8250_dp_audio_clock_get(struct device *dev);
+++void sm8250_dp_audio_clock_put(struct device *dev);
+++bool sm8250_dp_audio_clock_ready(struct device *dev);
+++#else
+++static inline bool sm8250_dp_audio_clock_get(struct device *dev) { return false; }
+++static inline void sm8250_dp_audio_clock_put(struct device *dev) { }
+++static inline bool sm8250_dp_audio_clock_ready(struct device *dev) { return false; }
+++#endif
+++
+++#endif
++diff --git a/sound/soc/qcom/qdsp6/q6afe-dai.c b/sound/soc/qcom/qdsp6/q6afe-dai.c
++--- a/sound/soc/qcom/qdsp6/q6afe-dai.c
+++++ b/sound/soc/qcom/qdsp6/q6afe-dai.c
++@@ -9,6 +9,8 @@
++ #include <linux/device.h>
++ #include <linux/platform_device.h>
++ #include <linux/slab.h>
+++#include <linux/of.h>
+++#include <soc/qcom/sm8250-dp-audio.h>
++ #include <sound/pcm.h>
++ #include <sound/soc.h>
++ #include <sound/pcm_params.h>
++@@ -31,6 +33,7 @@
++ 	struct q6afe_port *port[AFE_PORT_MAX];
++ 	struct q6afe_port_config port_config[AFE_PORT_MAX];
++ 	bool is_port_started[AFE_PORT_MAX];
+++	struct device *dp_clock_dev;
++ 	struct q6afe_dai_priv_data priv[AFE_PORT_MAX];
++ };
++ 
++@@ -73,6 +76,13 @@
++ 	struct q6afe_hdmi_cfg *hdmi = &dai_data->port_config[dai->id].hdmi;
++ 	int ret;
++ 
+++	if (dai->id == DISPLAY_PORT_RX && of_machine_is_compatible("oneplus,instantnoodlep")) {
+++		struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+++		struct device *parent = snd_soc_rtd_to_codec(rtd, 0)->dev->parent;
+++
+++		if (parent && of_device_is_compatible(parent->of_node, "qcom,sm8250-dp"))
+++			dai_data->dp_clock_dev = parent;
+++	}
++ 	hdmi->sample_rate = params_rate(params);
++ 	switch (params_format(params)) {
++ 	case SNDRV_PCM_FORMAT_S16_LE:
++@@ -437,13 +447,41 @@
++ 		return -EINVAL;
++ 	}
++ 
++-	rc = q6afe_port_start(dai_data->port[dai->id]);
+++	/* Permit an unplugged prepare, but never send an unclocked AFE START. */
+++	if (dai->id == DISPLAY_PORT_RX && dai_data->dp_clock_dev) {
+++		if (!sm8250_dp_audio_clock_get(dai_data->dp_clock_dev))
+++			return 0;
+++
+++		rc = q6afe_port_start(dai_data->port[dai->id]);
+++		sm8250_dp_audio_clock_put(dai_data->dp_clock_dev);
+++	} else {
+++		rc = q6afe_port_start(dai_data->port[dai->id]);
+++	}
++ 	if (rc < 0) {
++ 		dev_err(dai->dev, "fail to start AFE port %x\n", dai->id);
++ 		return rc;
++ 	}
++ 	dai_data->is_port_started[dai->id] = true;
++ 
+++	return 0;
+++}
+++
+++static int q6hdmi_dai_trigger(struct snd_pcm_substream *substream, int cmd,
+++			      struct snd_soc_dai *dai)
+++{
+++	struct q6afe_dai_data *data = dev_get_drvdata(dai->dev);
+++
+++	if (dai->id != DISPLAY_PORT_RX || !data->dp_clock_dev)
+++		return 0;
+++
+++	switch (cmd) {
+++	case SNDRV_PCM_TRIGGER_START:
+++	case SNDRV_PCM_TRIGGER_RESUME:
+++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+++		if (!data->is_port_started[dai->id] ||
+++		    !sm8250_dp_audio_clock_ready(data->dp_clock_dev))
+++			return -ENODEV;
+++	}
++ 	return 0;
++ }
++ 
++@@ -735,6 +773,7 @@
++ 	.prepare		= q6afe_dai_prepare,
++ 	.hw_params		= q6hdmi_hw_params,
++ 	.hw_free		= q6hdmi_dai_hw_free,
+++	.trigger		= q6hdmi_dai_trigger,
++ 	.shutdown		= q6afe_dai_shutdown,
++ };
++ 
++diff --git a/sound/soc/qcom/sm8250.c b/sound/soc/qcom/sm8250.c
++--- a/sound/soc/qcom/sm8250.c
+++++ b/sound/soc/qcom/sm8250.c
++@@ -2,6 +2,8 @@
++ // Copyright (c) 2020, Linaro Limited
++ 
++ #include <dt-bindings/sound/qcom,q6afe.h>
+++#include <dt-bindings/sound/qcom,q6asm.h>
+++#include <linux/of.h>
++ #include <linux/module.h>
++ #include <linux/platform_device.h>
++ #include <sound/soc.h>
++@@ -251,6 +253,11 @@
++ 	int i;
++ 
++ 	for_each_card_prelinks(card, i, link) {
+++		/* Reject a disconnected DP start before running the ASM frontend. */
+++		if (link->dynamic && link->id == MSM_FRONTEND_DAI_MULTIMEDIA8 &&
+++		    of_machine_is_compatible("oneplus,instantnoodlep"))
+++			link->trigger[SNDRV_PCM_STREAM_PLAYBACK] = SND_SOC_DPCM_TRIGGER_POST;
+++
++ 		if (link->no_pcm == 1) {
++ 			link->init = sm8250_snd_init;
++ 			link->exit = sm8250_snd_exit;
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index c68e5e1..230b09f 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=86
++pkgrel=87
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -158,6 +158,7 @@ source="
+ 	0126-drm-msm-dpu-clean-up-command-mode-encoder-on-disable.patch
+ 	0127-drm-msm-dp-allow-audio-probe-when-disconnected.patch
+ 	0128-drm-msm-dp-refuse-unplugged-SM8250-audio-startup.patch
++	0129-ASoC-qcom-keep-DisplayPort-probeable-with-the-link-down.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -323,4 +324,5 @@ f4de0c04450a74fcd907836614dfd2444fd47ca65485d671466be914fa1e958e845929d27ba996fb
+ 87bea574b763f08a75e83d58ad6dcb9f245e34277a2a2c18c9b80d45fcc51f2f5ffcda7787b5a0e2d8c959efdb87dd3461a39bf73fc8389893f5ea48739d04db  0126-drm-msm-dpu-clean-up-command-mode-encoder-on-disable.patch
+ c80bb37f924a64d3f66ba0797c42c056b35add5abfc731179d54754c21eda86a9e006c3ecb4596753777e3e441d02cefc3294241b6bd93ec70068485e4942734  0127-drm-msm-dp-allow-audio-probe-when-disconnected.patch
+ bb245cbe04d33b9d3ffd9fc10ad09a137be989552f4dbad706f99c445115a51215a3e36d48539f732d35768979c7c8ecc55136c0e06dae9ae3d02a26ac2f536e  0128-drm-msm-dp-refuse-unplugged-SM8250-audio-startup.patch
++8c4b4ea47bfcb8d87d233e4b5f63577231da985a9a3011aadb30e0a2f18daad09424914231f73678fc1b7711f7abd495545156a124041bbb0fcfe8a3732b4aa2  0129-ASoC-qcom-keep-DisplayPort-probeable-with-the-link-down.patch
+ "
