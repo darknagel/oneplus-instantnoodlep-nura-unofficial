@@ -32,9 +32,9 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 | Sensors: accelerometer, gyroscope, light, proximity, compass | work |
 | Hardware video decoding and encoding (H.264, HEVC, VP9, …) | works |
 | Charging over USB-C PD and USB-A | works, see [`docs/charging.md`](docs/charging.md) |
-| Vibration, torch (also the Plasma Mobile torch switch) | work |
+| Vibration, torch | work |
 | External display and audio over USB-C (DisplayPort), with USB hub and charging | works, see [`docs/displayport.md`](docs/displayport.md) |
-| Calls (2G, with `plasma-dialer`; earpiece and speaker) | work, outgoing tested; no echo cancellation, no VoLTE, see [`modem/`](modem/) |
+| Calls (2G, earpiece and speaker) | work; no echo cancellation, no VoLTE, see [`modem/`](modem/) |
 | Fingerprint reader, fast and wireless charging | not done |
 
 Tested on IN2023 phones (EU) with the Samsung AMS678UW01 panel. With another panel the
