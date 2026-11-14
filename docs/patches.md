@@ -11,6 +11,7 @@
 | DisplayPort over system sleep: the DP PHY loses its setup while the controller is suspended but was still taken as initialised, so the display was dropped after resume; a link that failed to train was pushed to idle without a link clock, which reset the phone | draft | kernel 0123–0124, pmaports 0059; [notes](displayport.md#system-sleep) |
 | Switching between the phone panel and an external DisplayPort monitor | Tested at 2880×1800, 120 Hz on the GR14BU | kernel 0125–0126, pmaports 0060 |
 | DisplayPort audio after booting with the monitor unplugged | PulseAudio 17 discovers DisplayPort at boot and marks it available on plug. Stereo 48 kHz playback works after selecting the profile. | kernel 0127–0129, pmaports 0061–0063 |
+| External DisplayPort DSC | Experimental: 4K 103 Hz at 10 bpc works; lower resolutions and returning to uncompressed output have failures | kernel 0130, pmaports 0064; [results and limits](displayport-dsc.md) |
 | Charger input limit from USB-C/PD or USB-A detection, 2 A battery current | works | kernel 0082–0087, pmaports 0044; [notes](charging.md) |
 | Speakers + 3 microphones (VA macro, mic bias as in vendor DT) | works | kernel 0005, pmaports 0002, 0007 |
 | False headset detection with an ordinary USB cable, codec runtime-PM errors and unsorted RX register defaults | fixed; analog USB-C headsets untested | kernel 0055–0060, pmaports 0030; [notes](audio.md) |

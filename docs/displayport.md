@@ -39,6 +39,12 @@ enable sets it up again.
 A link that failed to train has no link clock. Its registers must not be
 written when the output is switched off; that write resets the phone.
 
+## Display stream compression
+
+The experimental external DSC path and its known failures are documented in
+[DisplayPort DSC results](displayport-dsc.md). It reduces link bandwidth, while
+the display-engine pixel-rate limit below still applies.
+
 ## Pixel-rate limits
 
 - Link: four HBR3 lanes carry 864 MHz at 10 bits per channel, 1080 MHz at 8.
