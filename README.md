@@ -29,7 +29,7 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 | GPS | works, also without SIM |
 | NFC | reading tags works |
 | Cameras: main, ultrawide, telephoto, front, colour filter | work, except phase detection autofocus |
-| Sensors: accelerometer, gyroscope, light, proximity, compass | work; automatic screen rotation in Phosh and Plasma Mobile |
+| Sensors: accelerometer, gyroscope, light, proximity, compass | work |
 | Hardware video decoding and encoding (H.264, HEVC, VP9, …) | works |
 | Charging over USB-C PD and USB-A | works, see [`docs/charging.md`](docs/charging.md) |
 | Vibration, torch (also the Plasma Mobile torch switch) | work |
