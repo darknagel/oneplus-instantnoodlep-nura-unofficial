@@ -12,7 +12,7 @@ DELAY = 1.0
 MIX = (("TERT_MI2S_RX Voice Mixer CS-Voice", None),
        ("CS-Voice Capture Mixer VA_CODEC_DMA_TX_0", None),
        ("VA_AIF1_CAP Mixer DEC0", None))
-SET = (("VA DEC0 MUX", "VA_DMIC"), ("VA DMIC MUX0", "DMIC2"), ("VA_DEC0 Volume", "108"))
+SET = (("VA DEC0 MUX", "VA_DMIC"), ("VA DMIC MUX0", "DMIC2"), ("VA_DEC0 Volume", "120"))
 
 a = ctypes.CDLL("libasound.so.2")
 pcms = []

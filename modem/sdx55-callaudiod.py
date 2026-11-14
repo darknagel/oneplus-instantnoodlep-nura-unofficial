@@ -18,7 +18,7 @@ XML = '''<node><interface name="org.mobian_project.CallAudio">
 </interface></node>'''
 NAME = 'org.mobian_project.CallAudio'
 PATH = '/org/mobian_project/CallAudio'
-SPEAKER_GAIN, EARPIECE_GAIN, MIC_GAIN = 182, 100, 108
+SPEAKER_GAIN, EARPIECE_GAIN, MIC_GAIN = 182, 100, 120
 state = {'AudioMode': 0, 'SpeakerState': 0, 'MicState': 0}
 
 

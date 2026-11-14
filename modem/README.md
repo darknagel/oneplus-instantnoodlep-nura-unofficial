@@ -42,7 +42,8 @@ with the country code (`+49...`).
 ## Calls
 
 Voice calls work with audio in both directions (kernel patches 0117–0137, pmaports 0058),
-tested outgoing over VoLTE and over 2G (CSFB) on congstar with `plasma-dialer`. The vocoder runs in the
+tested outgoing and incoming over VoLTE and outgoing over 2G (CSFB) on congstar with
+`plasma-dialer`. The vocoder runs in the
 ADSP of the SM8250; the modem and the ADSP exchange the speech frames over PCIe through a
 shared mailbox and talk to each other over QRTR, which the kernel forwards between the MHI
 link and GLINK.
@@ -59,8 +60,9 @@ link and GLINK.
   starts `callaudiod`, put the same service file into `~/.local/share/dbus-1/services/`.
 
 Limits: no echo cancellation or noise suppression (the vocproc runs without a Tx topology,
-`q6cvp.tx_topology`, because there is no calibration data), incoming calls with
-audio are untested, and several of the kernel patches are still marked WIP: which of the
+`q6cvp.tx_topology`, because there is no calibration data, so the microphone gain is
+fixed at +36 dB, `VA_DEC0 Volume` 120; at +24 dB the other side heard us too quietly),
+incoming calls over 2G are untested, and several of the kernel patches are still marked WIP: which of the
 mailbox placement patches are really needed has not been narrowed down.
 
 What made it work in the end: the SDX55 has two QRTR nodes behind its MHI link. Forwarded
