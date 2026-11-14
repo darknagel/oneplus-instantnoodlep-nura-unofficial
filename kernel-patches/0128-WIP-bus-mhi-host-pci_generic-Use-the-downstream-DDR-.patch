@@ -1,0 +1,43 @@
+From cf76a02f71d5e5a8043434c89e74af097c039012 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 22:14:22 +0100
+Subject: [PATCH 128/137] WIP: bus: mhi: host: pci_generic: Use the downstream
+ DDR window for the SDX55
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+(cherry picked from commit 9e16eaafe62b24255d8b4dc559b5cf688b1ae947)
+---
+ drivers/bus/mhi/host/pci_generic.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/bus/mhi/host/pci_generic.c b/drivers/bus/mhi/host/pci_generic.c
+index b605fa6be..156bf44b7 100644
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -1559,6 +1559,13 @@ static int mhi_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 		/* RDDM is collected through a BHIe table of 512 KiB segments */
+ 		mhi_cntrl->rddm_size = SZ_64M;
+ 		mhi_cntrl->seg_len = SZ_512K;
++		/*
++		 * Like the downstream DT (qcom,iommu-dma-addr-pool), give the
++		 * modem a 512 MiB DDR window. The SDX55 maps host memory for
++		 * voice (ADSP mailbox) only inside this window.
++		 */
++		mhi_cntrl->iova_start = 0x20000000;
++		mhi_cntrl->iova_stop = 0x3fffffff;
+ 	}
+ 	mhi_cntrl->edl_image = info->edl;
+ 
+@@ -1583,6 +1590,9 @@ static int mhi_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	}
+ 
+ 	err = mhi_pci_claim(mhi_cntrl, info->bar_num, DMA_BIT_MASK(dma_data_width));
++	/* Allocate all DMA addresses inside that window (top-down from its end) */
++	if (!err && info == &mhi_qcom_sdx55_flashless_info)
++		err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(30));
+ 	if (err)
+ 		return err;
+ 
+-- 
+2.43.0
+

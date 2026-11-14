@@ -1,0 +1,75 @@
+From e47c3a4eb3f4af11a0352b18ba595a3bba7b514f Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 19:56:59 +0100
+Subject: [PATCH 121/137] WIP: qrtr/mhi: Do not lose server announcements to
+ the SDX55
+
+The SDX55 IPCR ring had 8 elements; announcing the remote servers after
+the modem says hello filled it and the name service gave up. Use bigger
+rings and retry when the ring is full.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+(cherry picked from commit 22ddf080a2e758db93a1004ece6e12b58a8d5414)
+---
+ drivers/bus/mhi/host/pci_generic.c |  4 ++--
+ net/qrtr/ns.c                      | 15 +++++++++++----
+ 2 files changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/bus/mhi/host/pci_generic.c b/drivers/bus/mhi/host/pci_generic.c
+index cedbebcae..b605fa6be 100644
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -461,8 +461,8 @@ static const struct mhi_channel_config modem_qcom_sdx55_flashless_channels[] = {
+ 	MHI_CHANNEL_CONFIG_DL(13, "MBIM", 4, 0),
+ 	MHI_CHANNEL_CONFIG_UL(14, "QMI", 4, 0),
+ 	MHI_CHANNEL_CONFIG_DL(15, "QMI", 4, 0),
+-	MHI_CHANNEL_CONFIG_UL(20, "IPCR", 8, 0),
+-	MHI_CHANNEL_CONFIG_DL(21, "IPCR", 8, 0),
++	MHI_CHANNEL_CONFIG_UL(20, "IPCR", 64, 0),
++	MHI_CHANNEL_CONFIG_DL(21, "IPCR", 32, 0),
+ 	MHI_CHANNEL_CONFIG_UL(46, "IP_SW0", 64, 2),
+ 	MHI_CHANNEL_CONFIG_DL(47, "IP_SW0", 64, 3),
+ 	/* Voice packets go through an ADSP <-> modem mailbox, no rings */
+diff --git a/net/qrtr/ns.c b/net/qrtr/ns.c
+index 50ec71fd4..238e93a56 100644
+--- a/net/qrtr/ns.c
++++ b/net/qrtr/ns.c
+@@ -5,6 +5,7 @@
+  * Copyright (c) 2020, Linaro Ltd.
+  */
+ 
++#include <linux/delay.h>
+ #include <linux/module.h>
+ #include <linux/qrtr.h>
+ #include <linux/workqueue.h>
+@@ -217,7 +218,7 @@ static int announce_servers(struct sockaddr_qrtr *sq)
+ 	struct qrtr_server *srv;
+ 	struct qrtr_node *node;
+ 	unsigned long index, node_idx;
+-	int ret;
++	int ret, retry;
+ 
+ 	node = node_get(qrtr_ns.local_node);
+ 	if (!node)
+@@ -242,9 +243,15 @@ static int announce_servers(struct sockaddr_qrtr *sq)
+ 			continue;
+ 
+ 		xa_for_each(&node->servers, index, srv) {
+-			ret = service_announce_new(sq, srv);
+-			if (ret < 0 && ret != -ENODEV)
+-				return ret;
++			for (retry = 0; retry < 50; retry++) {
++				/* A small MHI ring can be full right after boot */
++				ret = service_announce_new(sq, srv);
++				if (ret != -EAGAIN && ret != -ENOSPC && ret != -ENOMEM)
++					break;
++				msleep(10);
++			}
++			if (ret < 0)
++				pr_warn("qrtr ns: announce to %u failed: %d\n", sq->sq_node, ret);
+ 		}
+ 	}
+ 	return 0;
+-- 
+2.43.0
+

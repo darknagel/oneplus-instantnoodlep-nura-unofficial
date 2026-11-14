@@ -1,0 +1,31 @@
+From d8a48c0a9372d01c215c359fa40f5db386c2082f Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 14:29:45 +0100
+Subject: [PATCH 133/137] WIP: net: qrtr: Send forwarded RESUME_TX to the node
+ it is meant for
+
+---
+ net/qrtr/af_qrtr.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/net/qrtr/af_qrtr.c b/net/qrtr/af_qrtr.c
+index 0bde2f875..18f671280 100644
+--- a/net/qrtr/af_qrtr.c
++++ b/net/qrtr/af_qrtr.c
+@@ -496,7 +496,12 @@ static void qrtr_fwd_xmit(struct qrtr_node *node, struct sk_buff *skb)
+ 	hdr->type = cpu_to_le32(cb->type);
+ 	hdr->src_node_id = cpu_to_le32(cb->src_node);
+ 	hdr->src_port_id = cpu_to_le32(cb->src_port);
+-	if (cb->dst_port == QRTR_PORT_CTRL)
++	/*
++	 * Broadcast control messages go to the neighbour itself. A RESUME_TX
++	 * is for one sender, which may be a node behind the neighbour (the
++	 * SDX55 has two nodes on its MHI link), so keep its destination.
++	 */
++	if (cb->dst_port == QRTR_PORT_CTRL && cb->type != QRTR_TYPE_RESUME_TX)
+ 		hdr->dst_node_id = cpu_to_le32(node->nid);
+ 	else
+ 		hdr->dst_node_id = cpu_to_le32(cb->dst_node);
+-- 
+2.43.0
+

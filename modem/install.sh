@@ -44,6 +44,8 @@ install -m 755 efssave.py /usr/local/bin/sdx55-efssave
 install -m 755 sdx55-gnss.py /usr/local/bin/sdx55-gnss
 install -m 755 sdx55-sim.py /usr/local/bin/sdx55-sim
 install -m 755 modemstate.py /usr/local/bin/sdx55-modemstate
+install -m 755 sdx55-callaudio.py /usr/local/bin/sdx55-callaudio
+install -m 755 sdx55-callaudiod.py /usr/local/bin/sdx55-callaudiod
 mkdir -p /var/lib/sdx55-rfs/efs /etc/udev/rules.d
 chmod 700 /var/lib/sdx55-rfs/efs
 
@@ -88,6 +90,27 @@ RestartSec=5
 WantedBy=multi-user.target
 UNIT
 
+cat > /etc/systemd/system/sdx55-callaudio.service <<'UNIT'
+[Unit]
+Description=SDX55 voice call audio path
+After=ModemManager.service sound.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/sdx55-callaudio
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# callaudiod cannot switch between speaker and earpiece here (see README);
+# let the session bus start our stand-in for it instead.
+install -d /usr/local/share/dbus-1/services
+printf '[D-BUS Service]
+Name=org.mobian_project.CallAudio
+Exec=/usr/local/bin/sdx55-callaudiod
+' 	> /usr/local/share/dbus-1/services/org.mobian_project.CallAudio.service
+
 install -D -m 644 sdx55-mhi-net.conf /etc/modprobe.d/sdx55-mhi-net.conf
 install -D -m 644 ModemManager-sdx55.conf /etc/systemd/system/ModemManager.service.d/sdx55.conf
 
@@ -100,5 +123,5 @@ install -m 644 78-mm-sdx55-qrtr.rules /etc/udev/rules.d/
 systemctl disable --now tqftpserv 2>/dev/null || true
 systemctl daemon-reload
 udevadm control --reload
-systemctl enable sdx55-rfsd sdx55-gnss sdx55-sim
+systemctl enable sdx55-rfsd sdx55-gnss sdx55-sim sdx55-callaudio
 echo "Done. Reboot to start the modem."

@@ -1,0 +1,44 @@
+From 443a7e931c5f7513b504eb7e6941609d534ba43b Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 20:39:37 +0100
+Subject: [PATCH 122/137] WIP: net: qrtr: Forward data broadcasts
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+(cherry picked from commit 73199ac0c20dc82edfd52e5c71146834140c257b)
+---
+ net/qrtr/af_qrtr.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/net/qrtr/af_qrtr.c b/net/qrtr/af_qrtr.c
+index a025b855c..1cb1267b5 100644
+--- a/net/qrtr/af_qrtr.c
++++ b/net/qrtr/af_qrtr.c
+@@ -668,6 +668,16 @@ int qrtr_endpoint_post(struct qrtr_endpoint *ep, const void *data, size_t len)
+ 		qrtr_node_assign(node, le32_to_cpu(pkt->server.node));
+ 	}
+ 
++	/* Data broadcasts, e.g. APR clients registering with a service */
++	if (cb->type == QRTR_TYPE_DATA && (cb->dst_node == QRTR_NODE_BCAST ||
++					    cb->dst_node == (u16)QRTR_NODE_BCAST)) {
++		cb->dst_node = QRTR_NODE_BCAST;
++		pr_info("qrtr fwd: data bcast %u:%u -> port %u len %zu\n",
++			cb->src_node, cb->src_port, cb->dst_port, size);
++		qrtr_fwd_queue_skb(ep, skb, true);
++		return 0;
++	}
++
+ 	/* Data for a node behind another endpoint */
+ 	if ((cb->type == QRTR_TYPE_DATA || cb->type == QRTR_TYPE_RESUME_TX) &&
+ 	    cb->dst_node != qrtr_local_nid && cb->dst_node != QRTR_NODE_BCAST) {
+@@ -702,6 +712,8 @@ int qrtr_endpoint_post(struct qrtr_endpoint *ep, const void *data, size_t len)
+ 	return 0;
+ 
+ err:
++	print_hex_dump(KERN_INFO, "qrtr invalid: ", DUMP_PREFIX_OFFSET, 16, 4,
++		       data, min_t(size_t, len, 64), false);
+ 	kfree_skb(skb);
+ 	return -EINVAL;
+ 
+-- 
+2.43.0
+

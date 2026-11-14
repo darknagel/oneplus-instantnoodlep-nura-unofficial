@@ -1,0 +1,55 @@
+From d753c248d9cef84ba24bd5f8ea9e2cfa54a16844 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 21:30:17 +0100
+Subject: [PATCH 127/137] WIP: ASoC: qcom: q6voice-dai: Start AUDIO_VOICE_0
+ during calls
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+(cherry picked from commit e43b639a580a7a3ccb38aaa98b10c95b0f9c3bce)
+---
+ sound/soc/qcom/qdsp6/q6voice-dai.c | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6voice-dai.c b/sound/soc/qcom/qdsp6/q6voice-dai.c
+index 8787f5ed1..9ff212201 100644
+--- a/sound/soc/qcom/qdsp6/q6voice-dai.c
++++ b/sound/soc/qcom/qdsp6/q6voice-dai.c
+@@ -38,6 +38,9 @@ struct q6voice_mailbox {
+ };
+ 
+ static unsigned long pcie_iova = 0x20000000;
++static bool start_channel = true;
++module_param(start_channel, bool, 0644);
++MODULE_PARM_DESC(start_channel, "Start the AUDIO_VOICE_0 MHI channel during calls");
+ module_param(pcie_iova, ulong, 0444);
+ MODULE_PARM_DESC(pcie_iova, "PCIe address of the mailbox, 0 = from the DMA API");
+ 
+@@ -99,6 +102,12 @@ static int q6voice_mailbox_get(void)
+ 			dev_err(mb->dev, "failed to vote for PCIe: %d\n", ret);
+ 			goto out;
+ 		}
++		if (start_channel) {
++			/* Experiment: tell the modem the voice channel is in use */
++			ret = mhi_prepare_for_transfer(mb->mhi_dev);
++			dev_info(mb->dev, "start AUDIO_VOICE_0: %d\n", ret);
++			ret = 0;
++		}
+ 	}
+ 	mb->votes++;
+ 
+@@ -115,8 +124,11 @@ static void q6voice_mailbox_put(void)
+ 	struct q6voice_mailbox *mb = &q6voice_mbox;
+ 
+ 	mutex_lock(&mb->lock);
+-	if (mb->mhi_dev && mb->votes && !--mb->votes)
++	if (mb->mhi_dev && mb->votes && !--mb->votes) {
++		if (start_channel)
++			mhi_unprepare_from_transfer(mb->mhi_dev);
+ 		mhi_device_put(mb->mhi_dev);
++	}
+ 	mutex_unlock(&mb->lock);
+ }
+ 
+-- 
+2.43.0
+

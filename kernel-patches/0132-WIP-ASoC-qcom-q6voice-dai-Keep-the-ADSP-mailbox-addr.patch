@@ -1,0 +1,33 @@
+From c3354323c100ce9ba7635c7d0d143727bec773e6 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 4 Nov 2026 22:37:02 +0100
+Subject: [PATCH 132/137] WIP: ASoC: qcom: q6voice-dai: Keep the ADSP mailbox
+ address below 4 GiB
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+(cherry picked from commit 3fbdd2af9ffa3ff0b3882bb13de5534ad29b7af8)
+---
+ sound/soc/qcom/qdsp6/q6voice-dai.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/sound/soc/qcom/qdsp6/q6voice-dai.c b/sound/soc/qcom/qdsp6/q6voice-dai.c
+index 9ff212201..76c19d1b4 100644
+--- a/sound/soc/qcom/qdsp6/q6voice-dai.c
++++ b/sound/soc/qcom/qdsp6/q6voice-dai.c
+@@ -234,6 +234,13 @@ static int q6voice_mailbox_init(struct device *dev)
+ 	mutex_lock(&mb->lock);
+ 	mb->phys = rmem->base;
+ 	mb->size = rmem->size;
++	/*
++	 * The ADSP address carries the SMMU context in bits 32 and up, so a
++	 * mapping ending exactly at 4 GiB overflows into them. The allocator
++	 * hands out the highest free IOVA first, so occupy that slot with a
++	 * page that is never used (as found on the Mi 10T by royka1).
++	 */
++	dma_map_resource(dev, mb->phys, PAGE_SIZE, DMA_BIDIRECTIONAL, 0);
+ 	mb->adsp_addr = dma_map_resource(dev, mb->phys, mb->size,
+ 					 DMA_BIDIRECTIONAL, 0);
+ 	if (dma_mapping_error(dev, mb->adsp_addr)) {
+-- 
+2.43.0
+

@@ -1,0 +1,45 @@
+From a6e3ae421b8a87b528be4026e647a86209abfa9b Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 15:14:32 +0100
+Subject: [PATCH 137/137] WIP: ASoC: qcom: q6voice: Defaults for the SDX55
+ voice session
+
+Name the passive MVM session after the VSID the modem uses for
+VoiceMMode1, take the PCIe address of the mailbox from the DMA API and
+leave AUDIO_VOICE_0 unstarted, so calls work without module options.
+---
+ sound/soc/qcom/qdsp6/q6mvm.c       | 2 +-
+ sound/soc/qcom/qdsp6/q6voice-dai.c | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6mvm.c b/sound/soc/qcom/qdsp6/q6mvm.c
+index db29a5815..296953219 100644
+--- a/sound/soc/qcom/qdsp6/q6mvm.c
++++ b/sound/soc/qcom/qdsp6/q6mvm.c
+@@ -9,7 +9,7 @@
+ #include "q6mvm.h"
+ #include "q6voice-common.h"
+ 
+-static char *session_name = "default modem voice";
++static char *session_name = "11C05000";
+ module_param(session_name, charp, 0644);
+ MODULE_PARM_DESC(session_name, "Passive MVM session name, e.g. 11C05000 for VoiceMMode1");
+ 
+diff --git a/sound/soc/qcom/qdsp6/q6voice-dai.c b/sound/soc/qcom/qdsp6/q6voice-dai.c
+index 76c19d1b4..45b61cca5 100644
+--- a/sound/soc/qcom/qdsp6/q6voice-dai.c
++++ b/sound/soc/qcom/qdsp6/q6voice-dai.c
+@@ -37,8 +37,8 @@ struct q6voice_mailbox {
+ 	struct mutex lock;
+ };
+ 
+-static unsigned long pcie_iova = 0x20000000;
+-static bool start_channel = true;
++static unsigned long pcie_iova;
++static bool start_channel;
+ module_param(start_channel, bool, 0644);
+ MODULE_PARM_DESC(start_channel, "Start the AUDIO_VOICE_0 MHI channel during calls");
+ module_param(pcie_iova, ulong, 0444);
+-- 
+2.43.0
+

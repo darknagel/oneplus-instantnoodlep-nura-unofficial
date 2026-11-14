@@ -1,0 +1,49 @@
+From a5f0064e81ce4141d2fc96ce5ae6076ebf6a874f Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 20:45:13 +0100
+Subject: [PATCH 123/137] WIP: net: qrtr: Forward name addressed broadcasts
+ (type 8)
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+(cherry picked from commit 5fae9b8c486a2fff6d593826155a8d6621a3d7b4)
+---
+ net/qrtr/af_qrtr.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/net/qrtr/af_qrtr.c b/net/qrtr/af_qrtr.c
+index 1cb1267b5..0bde2f875 100644
+--- a/net/qrtr/af_qrtr.c
++++ b/net/qrtr/af_qrtr.c
+@@ -88,6 +88,8 @@ struct qrtr_cb {
+ 	u32 fwd_ep_nid;
+ };
+ 
++#define QRTR_TYPE_NAME_BCAST	8
++
+ #define QRTR_HDR_MAX_SIZE max_t(size_t, sizeof(struct qrtr_hdr_v1), \
+ 					sizeof(struct qrtr_hdr_v2))
+ 
+@@ -652,6 +654,20 @@ int qrtr_endpoint_post(struct qrtr_endpoint *ep, const void *data, size_t len)
+ 	    size < sizeof(struct qrtr_ctrl_pkt))
+ 		goto err;
+ 
++	/*
++	 * Type 8 from IPC router firmware: data to all servers of a service,
++	 * addressed by name (dst node = service, dst port = instance). APR
++	 * clients on the modem register with the ADSP like this.
++	 */
++	if (cb->type == QRTR_TYPE_NAME_BCAST) {
++		skb_put_data(skb, data + hdrlen, size);
++		qrtr_node_assign(node, cb->src_node);
++		pr_info("qrtr fwd: name bcast %u:%u -> svc %u inst %u len %zu\n",
++			cb->src_node, cb->src_port, cb->dst_node, cb->dst_port, size);
++		qrtr_fwd_queue_skb(ep, skb, true);
++		return 0;
++	}
++
+ 	if (cb->dst_port != QRTR_PORT_CTRL && cb->type != QRTR_TYPE_DATA &&
+ 	    cb->type != QRTR_TYPE_RESUME_TX)
+ 		goto err;
+-- 
+2.43.0
+

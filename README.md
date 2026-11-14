@@ -34,7 +34,8 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 | Charging over USB-C PD and USB-A | works, see [`docs/charging.md`](docs/charging.md) |
 | Vibration, torch (also the Plasma Mobile torch switch) | work |
 | External display and audio over USB-C (DisplayPort), with USB hub and charging | works, see [`docs/displayport.md`](docs/displayport.md) |
-| Calls, OIS of the telephoto camera, fingerprint reader, fast and wireless charging | not done |
+| Calls (2G, with `plasma-dialer`; earpiece and speaker) | work, outgoing tested; no echo cancellation, no VoLTE, see [`modem/`](modem/) |
+| OIS of the telephoto camera, fingerprint reader, fast and wireless charging | not done |
 
 Tested on IN2023 phones (EU) with the Samsung AMS678UW01 panel. With another panel the
 screen may stay black, see [`docs/panel-log.md`](docs/panel-log.md). Patch-by-patch details:

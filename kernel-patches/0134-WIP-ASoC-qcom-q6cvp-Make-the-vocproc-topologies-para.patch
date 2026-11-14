@@ -1,0 +1,48 @@
+From 638450dd32937598309f57288273266c0a423ae7 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 14:42:51 +0100
+Subject: [PATCH 134/137] WIP: ASoC: qcom: q6cvp: Make the vocproc topologies
+ parameters, no Tx processing by default
+
+---
+ sound/soc/qcom/qdsp6/q6cvp.c | 17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6cvp.c b/sound/soc/qcom/qdsp6/q6cvp.c
+index 3549d3f14..6d8cc64ef 100644
+--- a/sound/soc/qcom/qdsp6/q6cvp.c
++++ b/sound/soc/qcom/qdsp6/q6cvp.c
+@@ -91,6 +91,19 @@ struct vss_ivocproc_cmd_create_full_control_session_v2_cmd {
+ 	char name[20];
+ } __packed;
+ 
++/*
++ * Without calibration data the single mic ECNS topology gives a silent
++ * uplink on the SM8250 ADSP, so run the Tx path without processing by
++ * default.
++ */
++static unsigned int tx_topology = VSS_IVOCPROC_TOPOLOGY_ID_NONE;
++module_param(tx_topology, uint, 0644);
++MODULE_PARM_DESC(tx_topology, "Topology of the vocproc's Tx path");
++
++static unsigned int rx_topology = VSS_IVOCPROC_TOPOLOGY_ID_RX_DEFAULT;
++module_param(rx_topology, uint, 0644);
++MODULE_PARM_DESC(rx_topology, "Topology of the vocproc's Rx path");
++
+ struct q6voice_session *q6cvp_session_create(enum q6voice_path_type path,
+ 					     u16 tx_port, u16 rx_port)
+ {
+@@ -100,8 +113,8 @@ struct q6voice_session *q6cvp_session_create(enum q6voice_path_type path,
+ 	cmd.hdr.opcode = VSS_IVOCPROC_CMD_CREATE_FULL_CONTROL_SESSION_V2;
+ 
+ 	/* TODO: Implement calibration */
+-	cmd.tx_topology_id = VSS_IVOCPROC_TOPOLOGY_ID_TX_SM_ECNS;
+-	cmd.rx_topology_id = VSS_IVOCPROC_TOPOLOGY_ID_RX_DEFAULT;
++	cmd.tx_topology_id = tx_topology;
++	cmd.rx_topology_id = rx_topology;
+ 
+ 	cmd.direction = VSS_IVOCPROC_DIRECTION_RX_TX;
+ 	cmd.tx_port_id = tx_port;
+-- 
+2.43.0
+

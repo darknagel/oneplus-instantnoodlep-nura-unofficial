@@ -1,0 +1,41 @@
+From 8ef95ef80cebfd3bf2daa502cad02c6862239778 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 18:55:17 +0100
+Subject: [PATCH 117/137] WIP: bus: mhi: host: pci_generic: Add SDX55
+ AUDIO_VOICE_0 channel
+
+The ADSP exchanges voice packets with the SDX55 through a mailbox in DDR.
+Channel 80 is an offload channel without rings; the audio driver only
+uses its device to map the mailbox for PCIe and to keep the link active
+during a call.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+(cherry picked from commit eac7bb3c5262dbae16be10c7a6892461f34ba579)
+---
+ drivers/bus/mhi/host/pci_generic.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/bus/mhi/host/pci_generic.c b/drivers/bus/mhi/host/pci_generic.c
+index 77c9c699b..cedbebcae 100644
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -465,6 +465,16 @@ static const struct mhi_channel_config modem_qcom_sdx55_flashless_channels[] = {
+ 	MHI_CHANNEL_CONFIG_DL(21, "IPCR", 8, 0),
+ 	MHI_CHANNEL_CONFIG_UL(46, "IP_SW0", 64, 2),
+ 	MHI_CHANNEL_CONFIG_DL(47, "IP_SW0", 64, 3),
++	/* Voice packets go through an ADSP <-> modem mailbox, no rings */
++	{
++		.num = 80,
++		.name = "AUDIO_VOICE_0",
++		/* Unused for offload channels, but must not be zero */
++		.num_elements = 64,
++		.dir = DMA_FROM_DEVICE,
++		.ee_mask = BIT(MHI_EE_AMSS),
++		.offload_channel = true,
++	},
+ 	{
+ 		.num = 100,
+ 		.name = "IP_HW0",
+-- 
+2.43.0
+

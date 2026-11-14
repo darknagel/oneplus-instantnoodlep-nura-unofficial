@@ -1,0 +1,103 @@
+From ee3ab6a49e69a538a5613cb86bbe85e11a412ba8 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 21:06:48 +0100
+Subject: [PATCH 125/137] WIP: ASoC: qcom: q6voice-dai: Configure the mailbox
+ once modem and ADSP are up
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+(cherry picked from commit b55a12822f2de335b4b131315c28c05877322b9a)
+---
+ sound/soc/qcom/qdsp6/q6voice-dai.c | 49 ++++++++++++++++++++++++------
+ 1 file changed, 39 insertions(+), 10 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6voice-dai.c b/sound/soc/qcom/qdsp6/q6voice-dai.c
+index 119e77d2a..7431fac0c 100644
+--- a/sound/soc/qcom/qdsp6/q6voice-dai.c
++++ b/sound/soc/qcom/qdsp6/q6voice-dai.c
+@@ -37,7 +37,7 @@ struct q6voice_mailbox {
+ 	struct mutex lock;
+ };
+ 
+-static bool pcie_identity = true;
++static bool pcie_identity;
+ module_param(pcie_identity, bool, 0444);
+ MODULE_PARM_DESC(pcie_identity, "Give the modem the physical mailbox address");
+ 
+@@ -45,6 +45,40 @@ static struct q6voice_mailbox q6voice_mbox = {
+ 	.lock = __MUTEX_INITIALIZER(q6voice_mbox.lock),
+ };
+ 
++/* Called with mb->lock held */
++static int q6voice_mailbox_configure(struct q6voice_mailbox *mb)
++{
++	int ret;
++
++	ret = q6mvm_set_mailbox(mb->adsp_addr, mb->pcie_addr, mb->size);
++	if (!ret)
++		mb->configured = true;
++	dev_info(mb->dev, "mailbox adsp %pad pcie %pad size %zu: %d\n",
++		 &mb->adsp_addr, &mb->pcie_addr, mb->size, ret);
++	return ret;
++}
++
++/*
++ * The modem asks the ADSP for the mailbox as soon as a call starts, so tell
++ * the ADSP about it right away, like the downstream voice_mhi driver.
++ */
++static void q6voice_mailbox_work_fn(struct work_struct *work);
++static DECLARE_DELAYED_WORK(q6voice_mailbox_work, q6voice_mailbox_work_fn);
++
++static void q6voice_mailbox_work_fn(struct work_struct *work)
++{
++	struct q6voice_mailbox *mb = &q6voice_mbox;
++	int ret = 0;
++
++	mutex_lock(&mb->lock);
++	if (mb->dev && mb->mhi_dev && !mb->configured)
++		ret = q6voice_mailbox_configure(mb);
++	mutex_unlock(&mb->lock);
++
++	if (ret)
++		schedule_delayed_work(&q6voice_mailbox_work, HZ);
++}
++
+ static int q6voice_mailbox_get(void)
+ {
+ 	struct q6voice_mailbox *mb = &q6voice_mbox;
+@@ -68,15 +102,8 @@ static int q6voice_mailbox_get(void)
+ 	}
+ 	mb->votes++;
+ 
+-	if (!mb->configured) {
+-		ret = q6mvm_set_mailbox(mb->adsp_addr, mb->pcie_addr, mb->size);
+-		if (ret)
+-			dev_err(mb->dev, "failed to set mailbox: %d\n", ret);
+-		else
+-			mb->configured = true;
+-		dev_info(mb->dev, "mailbox adsp %pad pcie %pad size %zu: %d\n",
+-			 &mb->adsp_addr, &mb->pcie_addr, mb->size, ret);
+-	}
++	if (!mb->configured)
++		q6voice_mailbox_configure(mb);
+ 
+ out:
+ 	mutex_unlock(&mb->lock);
+@@ -129,6 +156,7 @@ static int q6voice_mhi_probe(struct mhi_device *mhi_dev,
+ 	mb->mhi_dev = mhi_dev;
+ 	mb->configured = false;
+ 	mb->votes = 0;
++	schedule_delayed_work(&q6voice_mailbox_work, 0);
+ out:
+ 	mutex_unlock(&mb->lock);
+ 	return ret;
+@@ -488,6 +516,7 @@ module_init(q6voice_dai_init);
+ 
+ static void __exit q6voice_dai_exit(void)
+ {
++	cancel_delayed_work_sync(&q6voice_mailbox_work);
+ 	if (IS_ENABLED(CONFIG_MHI_BUS))
+ 		mhi_driver_unregister(&q6voice_mhi_driver);
+ 	platform_driver_unregister(&q6voice_dai_platform_driver);
+-- 
+2.43.0
+

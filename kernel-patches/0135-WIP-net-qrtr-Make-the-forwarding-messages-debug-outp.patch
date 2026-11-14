@@ -1,0 +1,44 @@
+From adf8bfe1b76a8dfe25e41a589a2ab43bdd0a761c Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 14:50:56 +0100
+Subject: [PATCH 135/137] WIP: net: qrtr: Make the forwarding messages debug
+ output
+
+---
+ net/qrtr/af_qrtr.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/net/qrtr/af_qrtr.c b/net/qrtr/af_qrtr.c
+index 18f671280..fb18356ea 100644
+--- a/net/qrtr/af_qrtr.c
++++ b/net/qrtr/af_qrtr.c
+@@ -667,7 +667,7 @@ int qrtr_endpoint_post(struct qrtr_endpoint *ep, const void *data, size_t len)
+ 	if (cb->type == QRTR_TYPE_NAME_BCAST) {
+ 		skb_put_data(skb, data + hdrlen, size);
+ 		qrtr_node_assign(node, cb->src_node);
+-		pr_info("qrtr fwd: name bcast %u:%u -> svc %u inst %u len %zu\n",
++		pr_debug("qrtr fwd: name bcast %u:%u -> svc %u inst %u len %zu\n",
+ 			cb->src_node, cb->src_port, cb->dst_node, cb->dst_port, size);
+ 		qrtr_fwd_queue_skb(ep, skb, true);
+ 		return 0;
+@@ -693,7 +693,7 @@ int qrtr_endpoint_post(struct qrtr_endpoint *ep, const void *data, size_t len)
+ 	if (cb->type == QRTR_TYPE_DATA && (cb->dst_node == QRTR_NODE_BCAST ||
+ 					    cb->dst_node == (u16)QRTR_NODE_BCAST)) {
+ 		cb->dst_node = QRTR_NODE_BCAST;
+-		pr_info("qrtr fwd: data bcast %u:%u -> port %u len %zu\n",
++		pr_debug("qrtr fwd: data bcast %u:%u -> port %u len %zu\n",
+ 			cb->src_node, cb->src_port, cb->dst_port, size);
+ 		qrtr_fwd_queue_skb(ep, skb, true);
+ 		return 0;
+@@ -733,7 +733,7 @@ int qrtr_endpoint_post(struct qrtr_endpoint *ep, const void *data, size_t len)
+ 	return 0;
+ 
+ err:
+-	print_hex_dump(KERN_INFO, "qrtr invalid: ", DUMP_PREFIX_OFFSET, 16, 4,
++	print_hex_dump_debug("qrtr invalid: ", DUMP_PREFIX_OFFSET, 16, 4,
+ 		       data, min_t(size_t, len, 64), false);
+ 	kfree_skb(skb);
+ 	return -EINVAL;
+-- 
+2.43.0
+

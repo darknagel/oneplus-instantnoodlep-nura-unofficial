@@ -1,0 +1,86 @@
+From ff15825488d7b4b9e6d7f4092efbe1a0585027c3 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 18:55:17 +0100
+Subject: [PATCH 119/137] WIP: arm64: dts: qcom: sm8250-oneplus-instantnoodlep:
+ Add voice call audio
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+(cherry picked from commit 6b95827880dc7bcb24150db8228f4a0bf1e4bc0e)
+---
+ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 49 +++++++++++++++++++
+ 1 file changed, 49 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 09d082e0e..87dd96fcc 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -10,6 +10,7 @@
+ #include <dt-bindings/clock/qcom,dispcc-sm8250.h>
+ #include <dt-bindings/clock/qcom,gcc-sm8250.h>
+ #include <dt-bindings/sound/qcom,q6asm.h>
++#include <dt-bindings/sound/qcom,q6voice.h>
+ #include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
+ #include "sm8250.dtsi"
+ #include "pm8150.dtsi"
+@@ -172,6 +173,13 @@ vreg_pmu_pcie_1p8: ldo9 {
+ 	};
+     
+ 	reserved-memory {
++		voice_mailbox_mem: voice-mailbox {
++			size = <0x0 0x20000>;
++			alignment = <0x0 0x400000>;
++			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
++			no-map;
++		};
++
+ 		removed_mem: memory@80b00000 {
+ 			reg = <0x0 0x80b00000 0x0 0xcd00000>;
+ 			no-map;
+@@ -2421,3 +2429,44 @@ led-0 {
+ 		flash-max-timeout-us = <1280000>;
+ 	};
+ };
++
++&adsp {
++	glink-edge {
++		apr {
++			q6mvm: service@9 {
++				compatible = "qcom,q6mvm";
++				reg = <APR_SVC_ADSP_MVM>;
++				qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
++
++				q6voicedai: dais {
++					compatible = "qcom,q6voice-dais";
++					#sound-dai-cells = <1>;
++					iommus = <&apps_smmu 0x1801 0x0>;
++					memory-region = <&voice_mailbox_mem>;
++				};
++			};
++
++			q6cvs: service@a {
++				compatible = "qcom,q6cvs";
++				reg = <APR_SVC_ADSP_CVS>;
++				qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
++			};
++
++			q6cvp: service@b {
++				compatible = "qcom,q6cvp";
++				reg = <APR_SVC_ADSP_CVP>;
++				qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
++			};
++		};
++	};
++};
++
++&sound {
++	cs-voice-dai-link {
++		link-name = "CS-Voice";
++
++		cpu {
++			sound-dai = <&q6voicedai CS_VOICE>;
++		};
++	};
++};
+-- 
+2.43.0
+

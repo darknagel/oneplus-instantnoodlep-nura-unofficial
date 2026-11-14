@@ -39,6 +39,35 @@ nmcli con add type gsm ifname '*' con-name congstar apn internet.v6.telekom gsm.
 SMS app for Plasma Mobile: `apk add spacebar`, then log in again. Enter numbers
 with the country code (`+49...`).
 
+## Calls
+
+Voice calls work with audio in both directions (kernel patches 0117–0137, pmaports 0058),
+tested outgoing over 2G (CSFB) on congstar with `plasma-dialer`. The vocoder runs in the
+ADSP of the SM8250; the modem and the ADSP exchange the speech frames over PCIe through a
+shared mailbox and talk to each other over QRTR, which the kernel forwards between the MHI
+link and GLINK.
+
+- `sdx55-callaudio` (root service) watches ModemManager. Once a call is alerting or
+  connected it enables the mixer routes (speakers, main microphone) and holds the hostless
+  `CS-Voice` PCM open, which starts the voice session in the ADSP. Opening it before the
+  modem has set up its own session leaves the uplink silent, hence the short delay.
+- `sdx55-callaudiod` (session service, D-Bus activated) stands in for `callaudiod`, which
+  needs a speaker and an earpiece port on one sink; PipeWire puts them into separate
+  profiles. It implements the same interface and switches the amplifiers directly: the
+  earpiece is the top speaker alone at a lower gain (`Top Speaker Volume`), the speaker
+  button turns both on, mute sets the microphone gain to zero. If the session bus still
+  starts `callaudiod`, put the same service file into `~/.local/share/dbus-1/services/`.
+
+Limits: no echo cancellation or noise suppression (the vocproc runs without a Tx topology,
+`q6cvp.tx_topology`, because there is no calibration data), no VoLTE, incoming calls with
+audio are untested, and several of the kernel patches are still marked WIP: which of the
+mailbox placement patches are really needed has not been narrowed down.
+
+What made it work in the end: the SDX55 has two QRTR nodes behind its MHI link. Forwarded
+control packets were addressed to the first one, so the flow control release (RESUME_TX)
+from the ADSP never reached the node the modem's voice task sends from, and its eleventh
+command, the one that selects the mailbox, blocked forever.
+
 ## Facts
 
 - The modem firmware **must come from your own modem partition** of the slot the

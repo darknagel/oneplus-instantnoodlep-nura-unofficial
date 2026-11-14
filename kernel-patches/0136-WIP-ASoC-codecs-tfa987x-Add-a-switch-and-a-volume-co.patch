@@ -1,0 +1,117 @@
+From 7f919863255cbd57a95066b43c061c84bdc8e202 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 15:04:43 +0100
+Subject: [PATCH 136/137] WIP: ASoC: codecs: tfa987x: Add a switch and a volume
+ control
+
+---
+ sound/soc/codecs/tfa987x.c | 63 ++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 60 insertions(+), 3 deletions(-)
+
+diff --git a/sound/soc/codecs/tfa987x.c b/sound/soc/codecs/tfa987x.c
+index 301191cbf..d569ce8cc 100644
+--- a/sound/soc/codecs/tfa987x.c
++++ b/sound/soc/codecs/tfa987x.c
+@@ -85,20 +85,68 @@
+ #define TFA9874_DCDC_CTRL6_DCVOF_MSK	GENMASK(8,  3)
+ #define TFA9874_DCDC_CTRL6_DCVOS_MSK	GENMASK(14,  9)
+ 
++struct tfa987x_priv {
++	bool enabled;
++	bool unmuted;
++};
++
++static void tfa987x_update_amp(struct snd_soc_component *component)
++{
++	struct tfa987x_priv *priv = snd_soc_component_get_drvdata(component);
++	int val = priv->enabled && priv->unmuted ? TFA987X_SYS_CTRL0_AMPE_MSK : 0;
++
++	snd_soc_component_update_bits(component, TFA987X_SYS_CTRL0,
++				      TFA987X_SYS_CTRL0_AMPE_MSK, val);
++}
++
+ static int tfa987x_digital_mute(struct snd_soc_dai *codec_dai, int mute, int stream)
+ {
+ 	struct snd_soc_component *component = codec_dai->component;
+-	int val = mute ? 0 : TFA987X_SYS_CTRL0_AMPE_MSK;
++	struct tfa987x_priv *priv = snd_soc_component_get_drvdata(component);
+ 
+ 	if (stream != SNDRV_PCM_STREAM_PLAYBACK)
+ 		return 0;
+ 
+-	snd_soc_component_update_bits(component, TFA987X_SYS_CTRL0,
+-						 TFA987X_SYS_CTRL0_AMPE_MSK, val);
++	priv->unmuted = !mute;
++	tfa987x_update_amp(component);
+ 
+ 	return 0;
+ }
+ 
++/*
++ * Lets userspace switch off one amplifier of a pair, e.g. the bottom speaker
++ * of a phone that uses its top speaker as the earpiece.
++ */
++static int tfa987x_switch_get(struct snd_kcontrol *kcontrol,
++			      struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct tfa987x_priv *priv = snd_soc_component_get_drvdata(component);
++
++	ucontrol->value.integer.value[0] = priv->enabled;
++	return 0;
++}
++
++static int tfa987x_switch_put(struct snd_kcontrol *kcontrol,
++			      struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct tfa987x_priv *priv = snd_soc_component_get_drvdata(component);
++	bool enabled = !!ucontrol->value.integer.value[0];
++
++	if (priv->enabled == enabled)
++		return 0;
++
++	priv->enabled = enabled;
++	tfa987x_update_amp(component);
++	return 1;
++}
++
++static const struct snd_kcontrol_new tfa987x_controls[] = {
++	SOC_SINGLE_BOOL_EXT("Switch", 0, tfa987x_switch_get, tfa987x_switch_put),
++	SOC_SINGLE("Volume", TFA987X_AMP_CFG, 5, 255, 0),
++};
++
+ static const struct snd_soc_dapm_widget tfa987x_dapm_widgets[] = {
+ 	SND_SOC_DAPM_OUTPUT("Speaker"),
+ 	SND_SOC_DAPM_OUT_DRV_E("PWUP", TFA987X_SYS_CTRL0, 0, 1, NULL, 0, NULL, 0),
+@@ -110,6 +158,8 @@ static const struct snd_soc_dapm_route tfa987x_dapm_routes[] = {
+ };
+ 
+ static const struct snd_soc_component_driver tfa987x_component = {
++	.controls		= tfa987x_controls,
++	.num_controls		= ARRAY_SIZE(tfa987x_controls),
+ 	.dapm_widgets		= tfa987x_dapm_widgets,
+ 	.num_dapm_widgets	= ARRAY_SIZE(tfa987x_dapm_widgets),
+ 	.dapm_routes		= tfa987x_dapm_routes,
+@@ -219,11 +269,18 @@ static bool tfa987x_setup_dcdc(struct device *dev, struct regmap *rmap, u16 rev)
+ static int tfa987x_i2c_probe(struct i2c_client *i2c)
+ {
+ 	struct device *dev = &i2c->dev;
++	struct tfa987x_priv *priv;
+ 	struct regmap *rmap;
+ 	unsigned int rev;
+ 	u32 channel_index = 0;
+ 	int ret;
+ 
++	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++	priv->enabled = true;
++	i2c_set_clientdata(i2c, priv);
++
+ 	rmap = devm_regmap_init_i2c(i2c, &tfa987x_regmap_config);
+ 	if (IS_ERR(rmap))
+ 		return PTR_ERR(rmap);
+-- 
+2.43.0
+

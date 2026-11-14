@@ -1,0 +1,87 @@
+From f5795baaa03bba87ff9e43dd3e3e88c2990ebd68 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 20:58:34 +0100
+Subject: [PATCH 124/137] WIP: ASoC: qcom: q6voice-dai: Optionally give the
+ modem the physical mailbox address
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+(cherry picked from commit f503edb423fc434617e446fdd9e4a060372a302c)
+---
+ sound/soc/qcom/qdsp6/q6voice-dai.c | 40 ++++++++++++++++++++++++------
+ 1 file changed, 33 insertions(+), 7 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6voice-dai.c b/sound/soc/qcom/qdsp6/q6voice-dai.c
+index 4d945707b..119e77d2a 100644
+--- a/sound/soc/qcom/qdsp6/q6voice-dai.c
++++ b/sound/soc/qcom/qdsp6/q6voice-dai.c
+@@ -3,6 +3,7 @@
+ // Copyright (c) 2020, Stephan Gerhold
+ 
+ #include <linux/dma-mapping.h>
++#include <linux/iommu.h>
+ #include <linux/mhi.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+@@ -36,6 +37,10 @@ struct q6voice_mailbox {
+ 	struct mutex lock;
+ };
+ 
++static bool pcie_identity = true;
++module_param(pcie_identity, bool, 0444);
++MODULE_PARM_DESC(pcie_identity, "Give the modem the physical mailbox address");
++
+ static struct q6voice_mailbox q6voice_mbox = {
+ 	.lock = __MUTEX_INITIALIZER(q6voice_mbox.lock),
+ };
+@@ -101,11 +106,24 @@ static int q6voice_mhi_probe(struct mhi_device *mhi_dev,
+ 		goto out;
+ 	}
+ 
+-	mb->pcie_addr = dma_map_resource(pcie_dev, mb->phys, mb->size,
+-					 DMA_BIDIRECTIONAL, 0);
+-	if (dma_mapping_error(pcie_dev, mb->pcie_addr)) {
+-		ret = -ENOMEM;
+-		goto out;
++	if (pcie_identity) {
++		struct iommu_domain *dom = iommu_get_domain_for_dev(pcie_dev);
++
++		/* The modem may expect the physical address of the mailbox */
++		if (dom) {
++			ret = iommu_map(dom, mb->phys, mb->phys, mb->size,
++					IOMMU_READ | IOMMU_WRITE, GFP_KERNEL);
++			if (ret)
++				goto out;
++		}
++		mb->pcie_addr = mb->phys;
++	} else {
++		mb->pcie_addr = dma_map_resource(pcie_dev, mb->phys, mb->size,
++						 DMA_BIDIRECTIONAL, 0);
++		if (dma_mapping_error(pcie_dev, mb->pcie_addr)) {
++			ret = -ENOMEM;
++			goto out;
++		}
+ 	}
+ 
+ 	mb->mhi_dev = mhi_dev;
+@@ -121,8 +139,16 @@ static void q6voice_mhi_remove(struct mhi_device *mhi_dev)
+ 	struct q6voice_mailbox *mb = &q6voice_mbox;
+ 
+ 	mutex_lock(&mb->lock);
+-	dma_unmap_resource(mhi_dev->mhi_cntrl->cntrl_dev, mb->pcie_addr,
+-			   mb->size, DMA_BIDIRECTIONAL, 0);
++	if (pcie_identity) {
++		struct iommu_domain *dom =
++			iommu_get_domain_for_dev(mhi_dev->mhi_cntrl->cntrl_dev);
++
++		if (dom)
++			iommu_unmap(dom, mb->phys, mb->size);
++	} else {
++		dma_unmap_resource(mhi_dev->mhi_cntrl->cntrl_dev, mb->pcie_addr,
++				   mb->size, DMA_BIDIRECTIONAL, 0);
++	}
+ 	mb->mhi_dev = NULL;
+ 	mb->configured = false;
+ 	mb->votes = 0;
+-- 
+2.43.0
+

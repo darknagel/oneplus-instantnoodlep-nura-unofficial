@@ -1,0 +1,28 @@
+From 1b23df3a92028ed96b9b09fc39ca539e2e6d93dc Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 22:28:27 +0100
+Subject: [PATCH 129/137] WIP: arm64: dts: qcom: sm8250-oneplus-instantnoodlep:
+ Keep the voice mailbox below 3 GiB
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+(cherry picked from commit 3918646e5a1cec1bac29e738b7804fe2b5acb950)
+---
+ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 87dd96fcc..0bf1cca44 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -176,7 +176,7 @@ reserved-memory {
+ 		voice_mailbox_mem: voice-mailbox {
+ 			size = <0x0 0x20000>;
+ 			alignment = <0x0 0x400000>;
+-			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
++			alloc-ranges = <0x0 0x80000000 0x0 0x40000000>;
+ 			no-map;
+ 		};
+ 
+-- 
+2.43.0
+
