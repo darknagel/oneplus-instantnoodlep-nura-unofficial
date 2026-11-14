@@ -28,14 +28,14 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 | Modem: SIM with PIN, LTE/5G, SMS, mobile data | works |
 | GPS | works, also without SIM |
 | NFC | reading tags works |
-| Cameras: main, ultrawide, telephoto, front, colour filter | work; autofocus on main, ultrawide and telephoto; optical stabilisation on main |
+| Cameras: main, ultrawide, telephoto, front, colour filter | work; autofocus on main, ultrawide and telephoto; optical stabilisation on main and telephoto |
 | Sensors: accelerometer, gyroscope, light, proximity, compass | work; automatic screen rotation in Phosh and Plasma Mobile |
 | Hardware video decoding and encoding (H.264, HEVC, VP9, …) | works |
 | Charging over USB-C PD and USB-A | works, see [`docs/charging.md`](docs/charging.md) |
 | Vibration, torch (also the Plasma Mobile torch switch) | work |
 | External display and audio over USB-C (DisplayPort), with USB hub and charging | works, see [`docs/displayport.md`](docs/displayport.md) |
 | Calls (2G, with `plasma-dialer`; earpiece and speaker) | work, outgoing tested; no echo cancellation, no VoLTE, see [`modem/`](modem/) |
-| OIS of the telephoto camera, fingerprint reader, fast and wireless charging | not done |
+| Fingerprint reader, fast and wireless charging | not done |
 
 Tested on IN2023 phones (EU) with the Samsung AMS678UW01 panel. With another panel the
 screen may stay black, see [`docs/panel-log.md`](docs/panel-log.md). Patch-by-patch details:
@@ -236,10 +236,10 @@ For the compass and sensor setup on old images see [`docs/sensors.md`](docs/sens
 - **`apk upgrade` can remove fixes.** The patched kernel, ModemManager, libcamera and
   iio-sensor-proxy can be replaced when Nura publishes a higher version. If modem or data
   break afterwards, check first: `apk policy modemmanager`
-- Cameras: colours, shading and exposure come from the stock tuning, but white balance is a
-  simple grey world: large coloured areas tint the picture (the front camera has no colour
-  matrix for that reason). Main and ultrawide have one mode each (4000×3000 at 30 fps);
-  autofocus is contrast only and takes about 1 second.
+- Cameras: colours, shading and exposure come from the stock tuning; white balance is
+  automatic only (no colour temperature curve from the stock tuning yet). Main and
+  ultrawide preview at 2000×1500 and 60 fps and take full pictures at 4000×3000 and 30 fps;
+  autofocus is contrast only (no phase detection) and takes about 1 second.
 - Charging has no temperature steps yet: Android reduces the current above 45 °C and stops
   at 50 °C.
 - Under Plasma Mobile the keyboard did not always open in the SIM PIN popup. Enter the PIN in

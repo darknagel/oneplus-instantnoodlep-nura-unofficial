@@ -1,0 +1,784 @@
+From 7807205895c471c0267a7aed390b1f8810414db4 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 19:10:54 +0100
+Subject: [PATCH 67/68] linux-postmarketos-qcom-sm8250: telephoto OIS and
+ binned camera modes
+
+New kernel patches:
+0152 lets an LC898128 run as a slave that gets the gyroscope data from
+another one, 0153 adds the telephoto OIS to the OnePlus 8 Pro device
+tree, 0154 and 0155 add 2000x1500 4x4 binned modes to the IMX689 and
+IMX586 drivers (60 fps preview instead of 30), 0156 gives the telephoto
+sensor its actuator supply.
+---
+ ...28-Support-a-slave-without-its-own-g.patch | 263 ++++++++++++++++++
+ ...m8250-oneplus-instantnoodlep-Add-the.patch |  70 +++++
+ ...x689-Add-a-2000x1500-4x4-binned-mode.patch | 171 ++++++++++++
+ ...x586-Add-a-2000x1500-4x4-binned-mode.patch | 160 +++++++++++
+ ...m8250-oneplus-instantnoodlep-Give-th.patch |  26 ++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  12 +-
+ 6 files changed, 701 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0152-media-i2c-lc898128-Support-a-slave-without-its-own-g.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0153-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0154-media-i2c-imx689-Add-a-2000x1500-4x4-binned-mode.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0155-media-i2c-imx586-Add-a-2000x1500-4x4-binned-mode.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0156-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Give-th.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0152-media-i2c-lc898128-Support-a-slave-without-its-own-g.patch b/device/testing/linux-postmarketos-qcom-sm8250/0152-media-i2c-lc898128-Support-a-slave-without-its-own-g.patch
+new file mode 100644
+index 0000000000..a410085bb5
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0152-media-i2c-lc898128-Support-a-slave-without-its-own-g.patch
+@@ -0,0 +1,263 @@
++From cdcdba4caa0a1fdfc4f3e2d33180e93ae0301cb2 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sat, 14 Nov 2026 18:34:40 +0100
++Subject: [PATCH 152/156] media: i2c: lc898128: Support a slave without its own
++ gyroscope
++
++The telephoto module of the OnePlus 8 Pro has a second LC898128 but no
++gyroscope: the vendor kernel starts the main camera's controller as a
++master that passes the gyroscope data on over SPI (command 0xf017), and the
++telephoto controller as its slave.
++
++Add the "onnn,master" property for the slave. It keeps the master powered
++through a runtime PM device link and starts only once the master sends
++the gyroscope data. A master that is powered only for its slave reads the
++gyroscope but leaves its lens alone. Add an optional "vdig" core supply,
++for a controller whose core supply is not switched with its own sensor.
++---
++ drivers/media/i2c/lc898128.c | 131 +++++++++++++++++++++++++++++++++--
++ 1 file changed, 124 insertions(+), 7 deletions(-)
++
++diff --git a/drivers/media/i2c/lc898128.c b/drivers/media/i2c/lc898128.c
++index 06d9f6af2..d355db3d8 100644
++--- a/drivers/media/i2c/lc898128.c
+++++ b/drivers/media/i2c/lc898128.c
++@@ -11,6 +11,11 @@
++  * Starting the servo moves the lens audibly, and applications power the
++  * sensor up briefly just to list the cameras. The servo therefore starts
++  * only once the sensor has stayed powered for a while.
+++ *
+++ * A module without a gyroscope of its own gets the gyroscope data from
+++ * another LC898128 over SPI: the slave names it with "onnn,master" and keeps
+++ * it powered through a second device link. A master that runs only for its
+++ * slave, without its own sensor powered, does not start its servo.
++  */
++ 
++ #include <linux/delay.h>
++@@ -31,12 +36,14 @@
++ #define LC898128_SERVO_BOTH_ON		3
++ #define LC898128_CMD_OIS_ENABLE		0xf012
++ #define LC898128_CMD_GYRO_INIT		0xf015
+++#define LC898128_CMD_GYRO_TO_SLAVE	0xf017
++ #define LC898128_REG_STATUS		0xf100
++ #define LC898128_STATUS_BUSY		0x01000000
++ 
++ #define LC898128_READY_RETRIES		10
++ #define LC898128_START_DELAY_MS		1500
++ #define LC898128_BUSY_TIMEOUT_MS	3000
+++#define LC898128_MASTER_TIMEOUT_MS	8000
++ 
++ static bool enable = true;
++ module_param(enable, bool, 0644);
++@@ -50,9 +57,13 @@ static const char *const lc898128_supply_names[] = {
++ struct lc898128 {
++ 	struct i2c_client *client;
++ 	struct regulator_bulk_data supplies[ARRAY_SIZE(lc898128_supply_names)];
+++	struct regulator *vdig;
++ 	struct device_link *link;
+++	struct device_link *master_link;
+++	struct lc898128 *master;
++ 	struct delayed_work start_work;
++ 	bool started;
+++	bool gyro_started;
++ 	u32 gyro;
++ };
++ 
++@@ -135,16 +146,31 @@ static int lc898128_wait_idle(struct lc898128 *ois)
++ 	return -ETIMEDOUT;
++ }
++ 
++-static int lc898128_start(struct lc898128 *ois)
+++static int lc898128_start_gyro(struct lc898128 *ois)
++ {
++-	u32 val;
++ 	int ret;
++ 
++ 	ret = lc898128_write(ois, LC898128_CMD_GYRO_INIT, ois->gyro);
++ 	if (!ret)
++ 		ret = lc898128_wait_idle(ois);
+++
+++	/* A master passes the gyroscope data on to its slave */
+++	if (!ret && !ois->master)
+++		ret = lc898128_write(ois, LC898128_CMD_GYRO_TO_SLAVE, 1);
+++	if (!ret && !ois->master)
+++		ret = lc898128_wait_idle(ois);
++ 	if (!ret)
++-		ret = lc898128_write(ois, LC898128_CMD_SERVO, LC898128_SERVO_BOTH_ON);
+++		WRITE_ONCE(ois->gyro_started, true);
+++
+++	return ret;
+++}
+++
+++static int lc898128_start(struct lc898128 *ois)
+++{
+++	u32 val;
+++	int ret;
+++
+++	ret = lc898128_write(ois, LC898128_CMD_SERVO, LC898128_SERVO_BOTH_ON);
++ 	if (!ret)
++ 		ret = lc898128_wait_idle(ois);
++ 	if (!ret)
++@@ -162,6 +188,19 @@ static int lc898128_start(struct lc898128 *ois)
++ 	return 0;
++ }
++ 
+++static int lc898128_wait_master(struct lc898128 *ois)
+++{
+++	unsigned long timeout = jiffies + msecs_to_jiffies(LC898128_MASTER_TIMEOUT_MS);
+++
+++	while (!READ_ONCE(ois->master->gyro_started)) {
+++		if (time_after(jiffies, timeout))
+++			return -ETIMEDOUT;
+++		msleep(50);
+++	}
+++
+++	return 0;
+++}
+++
++ static void lc898128_start_work(struct work_struct *work)
++ {
++ 	struct lc898128 *ois = container_of(to_delayed_work(work),
++@@ -170,6 +209,17 @@ static void lc898128_start_work(struct work_struct *work)
++ 	int ret;
++ 
++ 	ret = lc898128_wait_ready(ois, &version);
+++
+++	/* The gyroscope data must flow before the slave starts */
+++	if (!ret && ois->master)
+++		ret = lc898128_wait_master(ois);
+++	if (!ret)
+++		ret = lc898128_start_gyro(ois);
+++
+++	/* Powered only for its slave: leave the lens alone */
+++	if (!ret && !pm_runtime_active(ois->link->consumer))
+++		return;
+++
++ 	if (!ret)
++ 		ret = lc898128_start(ois);
++ 	if (ret) {
++@@ -185,9 +235,18 @@ static int lc898128_runtime_resume(struct device *dev)
++ 	struct lc898128 *ois = dev_get_drvdata(dev);
++ 	int ret;
++ 
+++	if (ois->vdig) {
+++		ret = regulator_enable(ois->vdig);
+++		if (ret)
+++			return ret;
+++	}
+++
++ 	ret = regulator_bulk_enable(ARRAY_SIZE(ois->supplies), ois->supplies);
++-	if (ret)
+++	if (ret) {
+++		if (ois->vdig)
+++			regulator_disable(ois->vdig);
++ 		return ret;
+++	}
++ 
++ 	schedule_delayed_work(&ois->start_work,
++ 			      msecs_to_jiffies(LC898128_START_DELAY_MS));
++@@ -207,7 +266,40 @@ static int lc898128_runtime_suspend(struct device *dev)
++ 		lc898128_write(ois, LC898128_CMD_SERVO, LC898128_SERVO_OFF);
++ 		ois->started = false;
++ 	}
+++	WRITE_ONCE(ois->gyro_started, false);
++ 	regulator_bulk_disable(ARRAY_SIZE(ois->supplies), ois->supplies);
+++	if (ois->vdig)
+++		regulator_disable(ois->vdig);
+++
+++	return 0;
+++}
+++
+++static int lc898128_get_master(struct lc898128 *ois)
+++{
+++	struct device *dev = &ois->client->dev;
+++	struct i2c_client *master;
+++	struct device_node *np;
+++
+++	np = of_parse_phandle(dev->of_node, "onnn,master", 0);
+++	if (!np)
+++		return 0;
+++	master = of_find_i2c_device_by_node(np);
+++	of_node_put(np);
+++	if (!master)
+++		return -EPROBE_DEFER;
+++
+++	/* Wait until this driver has probed the master */
+++	if (master->dev.driver != dev->driver || !i2c_get_clientdata(master)) {
+++		put_device(&master->dev);
+++		return -EPROBE_DEFER;
+++	}
+++	ois->master = i2c_get_clientdata(master);
+++
+++	ois->master_link = device_link_add(dev, &master->dev,
+++					   DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
+++	put_device(&master->dev);
+++	if (!ois->master_link)
+++		return dev_err_probe(dev, -EINVAL, "failed to link to the master\n");
++ 
++ 	return 0;
++ }
++@@ -241,6 +333,15 @@ static int lc898128_probe(struct i2c_client *client)
++ 	if (ret)
++ 		return dev_err_probe(dev, ret, "failed to get regulators\n");
++ 
+++	/* Core supply, where it is not switched with the image sensor */
+++	ois->vdig = devm_regulator_get_optional(dev, "vdig");
+++	if (IS_ERR(ois->vdig)) {
+++		ret = PTR_ERR(ois->vdig);
+++		if (ret != -ENODEV)
+++			return dev_err_probe(dev, ret, "failed to get vdig\n");
+++		ois->vdig = NULL;
+++	}
+++
++ 	np = of_parse_phandle(dev->of_node, "onnn,camera", 0);
++ 	if (!np)
++ 		return dev_err_probe(dev, -EINVAL, "no onnn,camera\n");
++@@ -270,6 +371,12 @@ static int lc898128_probe(struct i2c_client *client)
++ 		return ret;
++ 	}
++ 
+++	ret = lc898128_get_master(ois);
+++	if (ret) {
+++		put_device(&sensor->dev);
+++		return ret;
+++	}
+++
++ 	pm_runtime_set_suspended(dev);
++ 	ret = devm_pm_runtime_enable(dev);
++ 	if (ret) {
++@@ -284,11 +391,19 @@ static int lc898128_probe(struct i2c_client *client)
++ 	ois->link = device_link_add(&sensor->dev, dev,
++ 				    DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
++ 	put_device(&sensor->dev);
++-	if (!ois->link)
+++	if (!ois->link) {
+++		if (ois->master_link)
+++			device_link_del(ois->master_link);
++ 		return dev_err_probe(dev, -EINVAL, "failed to link to the camera\n");
+++	}
++ 
++-	dev_info(dev, "firmware %08x, follows %s\n", version,
++-		 dev_name(ois->link->consumer));
+++	if (ois->master)
+++		dev_info(dev, "firmware %08x, follows %s, gyroscope from %s\n",
+++			 version, dev_name(ois->link->consumer),
+++			 dev_name(&ois->master->client->dev));
+++	else
+++		dev_info(dev, "firmware %08x, follows %s\n", version,
+++			 dev_name(ois->link->consumer));
++ 
++ 	return 0;
++ }
++@@ -298,6 +413,8 @@ static void lc898128_remove(struct i2c_client *client)
++ 	struct lc898128 *ois = i2c_get_clientdata(client);
++ 
++ 	device_link_del(ois->link);
+++	if (ois->master_link)
+++		device_link_del(ois->master_link);
++ }
++ 
++ static const struct of_device_id lc898128_of_match[] = {
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0153-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch b/device/testing/linux-postmarketos-qcom-sm8250/0153-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
+new file mode 100644
+index 0000000000..cc80ecfa94
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0153-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
+@@ -0,0 +1,70 @@
++From c9210116a769f619b7f84f8026ecb8c23f60d1f8 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sat, 14 Nov 2026 18:34:40 +0100
++Subject: [PATCH 153/156] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
++ the telephoto OIS
++
++The telephoto module has its own LC898128 at 0x24 on the second camera
++I2C bus, powered from PM8009 L6 (actuator), L4 (core) and L7 (I/O), and
++gets the gyroscope data from the main camera's controller. Give the main
++controller its core supply (PM8009 L1), which so far came on only with
++the main sensor.
++---
++ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 22 +++++++++++++++++--
++ 1 file changed, 20 insertions(+), 2 deletions(-)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 8f675d3fc..96ac444ca 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -1035,12 +1035,13 @@ cam_main_af: lens@c {
++ 	};
++ 
++ 	/* Optical image stabilisation of the main camera */
++-	ois@24 {
+++	ois_main: ois@24 {
++ 		compatible = "onnn,lc898128";
++ 		reg = <0x24>;
++ 
++ 		vdd-supply = <&vreg_l5f_2p8>;
++ 		vio-supply = <&vreg_l7f_1p8>;
+++		vdig-supply = <&vreg_l1f_1p1>;
++ 
++ 		onnn,camera = <&cam_main>;
++ 	};
++@@ -1132,7 +1133,7 @@ &cci1_i2c0 {
++ 	#size-cells = <0>;
++ 
++ 	/* Telephoto camera */
++-	camera@2d {
+++	cam_tele: camera@2d {
++ 		compatible = "samsung,s5k3m5";
++ 		reg = <0x2d>;
++ 
++@@ -1171,6 +1172,23 @@ cam_tele_af: lens@74 {
++ 		vana-supply = <&vreg_l6f_2p8>;
++ 		vio-supply = <&vreg_l7f_1p8>;
++ 	};
+++
+++	/*
+++	 * Optical image stabilisation of the telephoto camera. The module has
+++	 * no gyroscope of its own, the main camera's OIS controller passes
+++	 * its data on.
+++	 */
+++	ois@24 {
+++		compatible = "onnn,lc898128";
+++		reg = <0x24>;
+++
+++		vdd-supply = <&vreg_l6f_2p8>;
+++		vio-supply = <&vreg_l7f_1p8>;
+++		vdig-supply = <&vreg_l4f_1p05>;
+++
+++		onnn,camera = <&cam_tele>;
+++		onnn,master = <&ois_main>;
+++	};
++ };
++ 
++ &cci1_i2c1 {
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0154-media-i2c-imx689-Add-a-2000x1500-4x4-binned-mode.patch b/device/testing/linux-postmarketos-qcom-sm8250/0154-media-i2c-imx689-Add-a-2000x1500-4x4-binned-mode.patch
+new file mode 100644
+index 0000000000..8ce4d867f3
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0154-media-i2c-imx689-Add-a-2000x1500-4x4-binned-mode.patch
+@@ -0,0 +1,171 @@
++From 6862ad7c6b7c43397a8f2599096433d290ce993f Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sat, 14 Nov 2026 18:55:04 +0100
++Subject: [PATCH 154/156] media: i2c: imx689: Add a 2000x1500 4x4 binned mode
++
++The 4000x3000 mode moves 12 megapixels per frame through the CSI-2 link
++and the software ISP, which limits it to 30 fps and keeps the CPU busy.
++
++Add a 4x4 binned 2000x1500 mode over the full field of view: the
++registers the stock 2000x1128 mode changes for 4x4 binning and readout,
++with the full sensor height, a 1500 line output and the PLL settings of
++the 4000x3000 mode, so the link frequency stays at 422.4 MHz. A line of
++8240 clocks keeps the link load below that of the 4000x3000 mode; the
++default frame length gives 60 fps.
++---
++ drivers/media/i2c/imx689.c | 132 +++++++++++++++++++++++++++++++++++++
++ 1 file changed, 132 insertions(+)
++
++diff --git a/drivers/media/i2c/imx689.c b/drivers/media/i2c/imx689.c
++index 562706db1..5b16f8c5a 100644
++--- a/drivers/media/i2c/imx689.c
+++++ b/drivers/media/i2c/imx689.c
++@@ -3425,6 +3425,119 @@ static const struct cci_reg_sequence imx689_4000x3000_regs[] = {
++ 	{ CCI_REG8(0x3814), 0xff },
++ };
++ 
+++/*
+++ * 4x4 binned: the 4000x3000 settings with the binning, readout and output
+++ * registers of the stock 2000x1128 mode, over the full sensor height.
+++ */
+++static const struct cci_reg_sequence imx689_2000x1500_regs[] = {
+++	{ CCI_REG8(0x0112), 0x0a },
+++	{ CCI_REG8(0x0113), 0x0a },
+++	{ CCI_REG8(0x0114), 0x02 },
+++	{ CCI_REG8(0x0342), 0x20 },
+++	{ CCI_REG8(0x0343), 0x30 },
+++	{ CCI_REG8(0x0340), 0x08 },
+++	{ CCI_REG8(0x0341), 0xb3 },
+++	{ CCI_REG8(0x0344), 0x00 },
+++	{ CCI_REG8(0x0345), 0x00 },
+++	{ CCI_REG8(0x0346), 0x00 },
+++	{ CCI_REG8(0x0347), 0x00 },
+++	{ CCI_REG8(0x0348), 0x1f },
+++	{ CCI_REG8(0x0349), 0x3f },
+++	{ CCI_REG8(0x034a), 0x17 },
+++	{ CCI_REG8(0x034b), 0x6f },
+++	{ CCI_REG8(0x0220), 0x62 },
+++	{ CCI_REG8(0x0221), 0x11 },
+++	{ CCI_REG8(0x0222), 0x01 },
+++	{ CCI_REG8(0x0900), 0x01 },
+++	{ CCI_REG8(0x0901), 0x44 },
+++	{ CCI_REG8(0x0902), 0x08 },
+++	{ CCI_REG8(0x3005), 0x00 },
+++	{ CCI_REG8(0x30d0), 0x00 },
+++	{ CCI_REG8(0x30d8), 0x0a },
+++	{ CCI_REG8(0x30e0), 0x00 },
+++	{ CCI_REG8(0x3200), 0x43 },
+++	{ CCI_REG8(0x3201), 0x43 },
+++	{ CCI_REG8(0x350c), 0x00 },
+++	{ CCI_REG8(0x0401), 0x00 },
+++	{ CCI_REG8(0x0404), 0x00 },
+++	{ CCI_REG8(0x0405), 0x10 },
+++	{ CCI_REG8(0x0408), 0x00 },
+++	{ CCI_REG8(0x0409), 0x00 },
+++	{ CCI_REG8(0x040a), 0x00 },
+++	{ CCI_REG8(0x040b), 0x00 },
+++	{ CCI_REG8(0x040c), 0x07 },
+++	{ CCI_REG8(0x040d), 0xd0 },
+++	{ CCI_REG8(0x040e), 0x05 },
+++	{ CCI_REG8(0x040f), 0xdc },
+++	{ CCI_REG8(0x034c), 0x07 },
+++	{ CCI_REG8(0x034d), 0xd0 },
+++	{ CCI_REG8(0x034e), 0x05 },
+++	{ CCI_REG8(0x034f), 0xdc },
+++	{ CCI_REG8(0x0301), 0x08 },
+++	{ CCI_REG8(0x0303), 0x02 },
+++	{ CCI_REG8(0x0305), 0x03 },
+++	{ CCI_REG8(0x0306), 0x00 },
+++	{ CCI_REG8(0x0307), 0xac },
+++	{ CCI_REG8(0x030b), 0x04 },
+++	{ CCI_REG8(0x030d), 0x02 },
+++	{ CCI_REG8(0x030e), 0x01 },
+++	{ CCI_REG8(0x030f), 0x60 },
+++	{ CCI_REG8(0x0310), 0x01 },
+++	{ CCI_REG8(0x30e1), 0x00 },
+++	{ CCI_REG8(0x32d5), 0x00 },
+++	{ CCI_REG8(0x32d6), 0x01 },
+++	{ CCI_REG8(0x3800), 0x00 },
+++	{ CCI_REG8(0x3801), 0xc0 },
+++	{ CCI_REG8(0x3802), 0x00 },
+++	{ CCI_REG8(0x3803), 0x01 },
+++	{ CCI_REG8(0x3804), 0x1f },
+++	{ CCI_REG8(0x3814), 0x01 },
+++	{ CCI_REG8(0x3815), 0xff },
+++	{ CCI_REG8(0x38a0), 0x00 },
+++	{ CCI_REG8(0x38a1), 0x00 },
+++	{ CCI_REG8(0x38a4), 0x00 },
+++	{ CCI_REG8(0x38a5), 0x00 },
+++	{ CCI_REG8(0x38a6), 0x00 },
+++	{ CCI_REG8(0x38a7), 0x00 },
+++	{ CCI_REG8(0x38aa), 0x00 },
+++	{ CCI_REG8(0x38ab), 0x00 },
+++	{ CCI_REG8(0x38b8), 0x00 },
+++	{ CCI_REG8(0x38b9), 0x00 },
+++	{ CCI_REG8(0x38bc), 0x00 },
+++	{ CCI_REG8(0x38bd), 0x00 },
+++	{ CCI_REG8(0x38be), 0x00 },
+++	{ CCI_REG8(0x38bf), 0x00 },
+++	{ CCI_REG8(0xc006), 0xff },
+++	{ CCI_REG8(0xc007), 0xff },
+++	{ CCI_REG8(0x0202), 0x0b },
+++	{ CCI_REG8(0x0203), 0xd6 },
+++	{ CCI_REG8(0x0224), 0x01 },
+++	{ CCI_REG8(0x0225), 0xf4 },
+++	{ CCI_REG8(0x3116), 0x01 },
+++	{ CCI_REG8(0x3117), 0xf4 },
+++	{ CCI_REG8(0x0204), 0x00 },
+++	{ CCI_REG8(0x0205), 0x00 },
+++	{ CCI_REG8(0x0216), 0x00 },
+++	{ CCI_REG8(0x0217), 0x00 },
+++	{ CCI_REG8(0x0218), 0x01 },
+++	{ CCI_REG8(0x0219), 0x00 },
+++	{ CCI_REG8(0x020e), 0x01 },
+++	{ CCI_REG8(0x020f), 0x00 },
+++	{ CCI_REG8(0x3118), 0x00 },
+++	{ CCI_REG8(0x3119), 0x00 },
+++	{ CCI_REG8(0x311a), 0x01 },
+++	{ CCI_REG8(0x311b), 0x00 },
+++	{ CCI_REG8(0x309b), 0x00 },
+++	{ CCI_REG8(0x3094), 0x00 },
+++	{ CCI_REG8(0x3095), 0x00 },
+++	{ CCI_REG8(0x3098), 0x00 },
+++	{ CCI_REG8(0x3096), 0x00 },
+++	{ CCI_REG8(0x3097), 0x00 },
+++	{ CCI_REG8(0x3099), 0x00 },
+++	{ CCI_REG8(0x3813), 0x03 },
+++	{ CCI_REG8(0x3814), 0xff },
+++};
+++
++ static const struct imx689_mode imx689_supported_modes[] = {
++ 	{
++ 		/* 2x2 binned, 30 fps */
++@@ -3445,6 +3558,25 @@ static const struct imx689_mode imx689_supported_modes[] = {
++ 			.num_regs = ARRAY_SIZE(imx689_4000x3000_regs),
++ 		},
++ 	},
+++	{
+++		/* 4x4 binned, 60 fps */
+++		.width = 2000,
+++		.height = 1500,
+++		.hts = 4336,
+++		.vts = 2227,
+++		.link_freq_index = 0,
+++		.pixel_rate = 579290000,
+++		.crop = {
+++			.left = 0,
+++			.top = 0,
+++			.width = 8000,
+++			.height = 6000,
+++		},
+++		.reg_list = {
+++			.regs = imx689_2000x1500_regs,
+++			.num_regs = ARRAY_SIZE(imx689_2000x1500_regs),
+++		},
+++	},
++ };
++ 
++ static int imx689_set_ctrl(struct v4l2_ctrl *ctrl)
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0155-media-i2c-imx586-Add-a-2000x1500-4x4-binned-mode.patch b/device/testing/linux-postmarketos-qcom-sm8250/0155-media-i2c-imx586-Add-a-2000x1500-4x4-binned-mode.patch
+new file mode 100644
+index 0000000000..5e5bd8b628
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0155-media-i2c-imx586-Add-a-2000x1500-4x4-binned-mode.patch
+@@ -0,0 +1,160 @@
++From 08d32d9c586c18c059a0024db5383160993b5660 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sat, 14 Nov 2026 18:55:04 +0100
++Subject: [PATCH 155/156] media: i2c: imx586: Add a 2000x1500 4x4 binned mode
++
++Like the main camera: a 4x4 binned 2000x1500 mode over the full field of
++view, with the binning and readout registers of the stock 2000x1128 mode
++and the PLL settings of the 4000x3000 mode, so the link frequency stays at
++421.2 MHz. The default frame length gives 60 fps.
++---
++ drivers/media/i2c/imx586.c | 126 +++++++++++++++++++++++++++++++++++++
++ 1 file changed, 126 insertions(+)
++
++diff --git a/drivers/media/i2c/imx586.c b/drivers/media/i2c/imx586.c
++index 1fcb7a023..3ace68384 100644
++--- a/drivers/media/i2c/imx586.c
+++++ b/drivers/media/i2c/imx586.c
++@@ -1925,6 +1925,113 @@ static const struct cci_reg_sequence imx586_4000x3000_regs[] = {
++ 	{ CCI_REG8(0xa678), 0x20 },
++ };
++ 
+++/*
+++ * 4x4 binned: the 4000x3000 settings with the binning, readout and output
+++ * registers of the stock 2000x1128 mode, over the full sensor height.
+++ */
+++static const struct cci_reg_sequence imx586_2000x1500_regs[] = {
+++	{ CCI_REG8(0x0112), 0x0a },
+++	{ CCI_REG8(0x0113), 0x0a },
+++	{ CCI_REG8(0x0114), 0x02 },
+++	{ CCI_REG8(0x0342), 0x15 },
+++	{ CCI_REG8(0x0343), 0x60 },
+++	{ CCI_REG8(0x0340), 0x0a },
+++	{ CCI_REG8(0x0341), 0x6b },
+++	{ CCI_REG8(0x0344), 0x00 },
+++	{ CCI_REG8(0x0345), 0x00 },
+++	{ CCI_REG8(0x0346), 0x00 },
+++	{ CCI_REG8(0x0347), 0x00 },
+++	{ CCI_REG8(0x0348), 0x1f },
+++	{ CCI_REG8(0x0349), 0x3f },
+++	{ CCI_REG8(0x034a), 0x17 },
+++	{ CCI_REG8(0x034b), 0x6f },
+++	{ CCI_REG8(0x0220), 0x62 },
+++	{ CCI_REG8(0x0222), 0x01 },
+++	{ CCI_REG8(0x0900), 0x01 },
+++	{ CCI_REG8(0x0901), 0x44 },
+++	{ CCI_REG8(0x0902), 0x08 },
+++	{ CCI_REG8(0x3140), 0x00 },
+++	{ CCI_REG8(0x3246), 0x89 },
+++	{ CCI_REG8(0x3247), 0x89 },
+++	{ CCI_REG8(0x3f15), 0x00 },
+++	{ CCI_REG8(0x0401), 0x00 },
+++	{ CCI_REG8(0x0404), 0x00 },
+++	{ CCI_REG8(0x0405), 0x10 },
+++	{ CCI_REG8(0x0408), 0x00 },
+++	{ CCI_REG8(0x0409), 0x00 },
+++	{ CCI_REG8(0x040a), 0x00 },
+++	{ CCI_REG8(0x040b), 0x00 },
+++	{ CCI_REG8(0x040c), 0x07 },
+++	{ CCI_REG8(0x040d), 0xd0 },
+++	{ CCI_REG8(0x040e), 0x05 },
+++	{ CCI_REG8(0x040f), 0xdc },
+++	{ CCI_REG8(0x034c), 0x07 },
+++	{ CCI_REG8(0x034d), 0xd0 },
+++	{ CCI_REG8(0x034e), 0x05 },
+++	{ CCI_REG8(0x034f), 0xdc },
+++	{ CCI_REG8(0x0301), 0x05 },
+++	{ CCI_REG8(0x0303), 0x02 },
+++	{ CCI_REG8(0x0305), 0x02 },
+++	{ CCI_REG8(0x0306), 0x00 },
+++	{ CCI_REG8(0x0307), 0x72 },
+++	{ CCI_REG8(0x030b), 0x02 },
+++	{ CCI_REG8(0x030d), 0x0c },
+++	{ CCI_REG8(0x030e), 0x04 },
+++	{ CCI_REG8(0x030f), 0x1d },
+++	{ CCI_REG8(0x0310), 0x01 },
+++	{ CCI_REG8(0x3620), 0x00 },
+++	{ CCI_REG8(0x3621), 0x00 },
+++	{ CCI_REG8(0x3c11), 0x0c },
+++	{ CCI_REG8(0x3c12), 0x05 },
+++	{ CCI_REG8(0x3c13), 0x2c },
+++	{ CCI_REG8(0x3f0c), 0x00 },
+++	{ CCI_REG8(0x3f14), 0x00 },
+++	{ CCI_REG8(0x3f80), 0x02 },
+++	{ CCI_REG8(0x3f81), 0x67 },
+++	{ CCI_REG8(0x3f8c), 0x02 },
+++	{ CCI_REG8(0x3f8d), 0x44 },
+++	{ CCI_REG8(0x3ff8), 0x00 },
+++	{ CCI_REG8(0x3ff9), 0x00 },
+++	{ CCI_REG8(0x3ffe), 0x01 },
+++	{ CCI_REG8(0x3fff), 0x90 },
+++	{ CCI_REG8(0x0202), 0x0e },
+++	{ CCI_REG8(0x0203), 0x4a },
+++	{ CCI_REG8(0x0224), 0x01 },
+++	{ CCI_REG8(0x0225), 0xf4 },
+++	{ CCI_REG8(0x3fe0), 0x01 },
+++	{ CCI_REG8(0x3fe1), 0xf4 },
+++	{ CCI_REG8(0x0204), 0x00 },
+++	{ CCI_REG8(0x0205), 0x70 },
+++	{ CCI_REG8(0x0216), 0x00 },
+++	{ CCI_REG8(0x0217), 0x70 },
+++	{ CCI_REG8(0x0218), 0x01 },
+++	{ CCI_REG8(0x0219), 0x00 },
+++	{ CCI_REG8(0x020e), 0x01 },
+++	{ CCI_REG8(0x020f), 0x00 },
+++	{ CCI_REG8(0x0210), 0x01 },
+++	{ CCI_REG8(0x0211), 0x00 },
+++	{ CCI_REG8(0x0212), 0x01 },
+++	{ CCI_REG8(0x0213), 0x00 },
+++	{ CCI_REG8(0x0214), 0x01 },
+++	{ CCI_REG8(0x0215), 0x00 },
+++	{ CCI_REG8(0x3fe2), 0x00 },
+++	{ CCI_REG8(0x3fe3), 0x70 },
+++	{ CCI_REG8(0x3fe4), 0x01 },
+++	{ CCI_REG8(0x3fe5), 0x00 },
+++	{ CCI_REG8(0x3e20), 0x01 },
+++	{ CCI_REG8(0x3e37), 0x00 },
+++	{ CCI_REG8(0x3e20), 0x01 },
+++	{ CCI_REG8(0x3e3b), 0x00 },
+++	{ CCI_REG8(0x4434), 0x00 },
+++	{ CCI_REG8(0x4435), 0xf8 },
+++	{ CCI_REG8(0xa56b), 0x13 },
+++	{ CCI_REG8(0xa56a), 0x13 },
+++	{ CCI_REG8(0xa569), 0x06 },
+++	{ CCI_REG8(0xa67c), 0x01 },
+++	{ CCI_REG8(0xa67a), 0x01 },
+++	{ CCI_REG8(0xa678), 0x20 },
+++};
+++
++ static const struct imx586_mode imx586_supported_modes[] = {
++ 	{
++ 		/* 2x2 binned, 30 fps */
++@@ -1945,6 +2052,25 @@ static const struct imx586_mode imx586_supported_modes[] = {
++ 			.num_regs = ARRAY_SIZE(imx586_4000x3000_regs),
++ 		},
++ 	},
+++	{
+++		/* 4x4 binned, 60 fps */
+++		.width = 2000,
+++		.height = 1500,
+++		.hts = 3610,
+++		.vts = 2667,
+++		.link_freq_index = 0,
+++		.pixel_rate = 577650000,
+++		.crop = {
+++			.left = 0,
+++			.top = 0,
+++			.width = 8000,
+++			.height = 6000,
+++		},
+++		.reg_list = {
+++			.regs = imx586_2000x1500_regs,
+++			.num_regs = ARRAY_SIZE(imx586_2000x1500_regs),
+++		},
+++	},
++ };
++ 
++ static int imx586_set_ctrl(struct v4l2_ctrl *ctrl)
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0156-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Give-th.patch b/device/testing/linux-postmarketos-qcom-sm8250/0156-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Give-th.patch
+new file mode 100644
+index 0000000000..b77022dccf
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0156-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Give-th.patch
+@@ -0,0 +1,26 @@
++From b73ac22447e6e1eae30be0042c57ca57c97e6360 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sat, 14 Nov 2026 18:55:16 +0100
++Subject: [PATCH 156/156] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Give
++ the telephoto sensor its actuator supply
++
++The S5K3M5 driver asks for the actuator supply "afvdd" and used a dummy regulator without it. Pass the actuator regulator the focus lens uses as well.
++---
++ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 1 +
++ 1 file changed, 1 insertion(+)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 96ac444ca..641d1cfa7 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -1143,6 +1143,7 @@ cam_tele: camera@2d {
++ 
++ 		reset-gpios = <&tlmm 90 GPIO_ACTIVE_LOW>;
++ 
+++		afvdd-supply = <&vreg_cam_tele_vaf>;
++ 		vdda-supply = <&vreg_cam_tele_avdd>;
++ 		vddd-supply = <&vreg_l4f_1p05>;
++ 		vddio-supply = <&vreg_l7f_1p8>;
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index b3d7a675f0..04e5f12fa3 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=85
++pkgrel=86
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -177,6 +177,11 @@ source="
+ 	0145-drm-msm-dp-do-not-push-idle-on-a-link-that-is-down.patch
+ 	0146-drm-msm-dpu-cache-layer-mixers-for-encoder-cleanup.patch
+ 	0147-drm-msm-dpu-clean-up-command-mode-encoder-on-disable.patch
++	0152-media-i2c-lc898128-Support-a-slave-without-its-own-g.patch
++	0153-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
++	0154-media-i2c-imx689-Add-a-2000x1500-4x4-binned-mode.patch
++	0155-media-i2c-imx586-Add-a-2000x1500-4x4-binned-mode.patch
++	0156-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Give-th.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -361,4 +366,9 @@ f4de0c04450a74fcd907836614dfd2444fd47ca65485d671466be914fa1e958e845929d27ba996fb
+ 40ed000dd0c9c30b0e6c6bf7a30a0c6ab4a3bfdcac396d40b83f9cf76ae2c5aab5f5f5c63bd948e176ff2e2c668524191caf556eee4889f4b8b0efa2b01970cb  0145-drm-msm-dp-do-not-push-idle-on-a-link-that-is-down.patch
+ 6c8d1d5e061b60ed57a56fefccdb649fbc93806c141d44f92170ddfe5000384e2d61c8fb46bce927c0383614b4feae2327126050cd149fe15bc1fbbfb24926ae  0146-drm-msm-dpu-cache-layer-mixers-for-encoder-cleanup.patch
+ 87bea574b763f08a75e83d58ad6dcb9f245e34277a2a2c18c9b80d45fcc51f2f5ffcda7787b5a0e2d8c959efdb87dd3461a39bf73fc8389893f5ea48739d04db  0147-drm-msm-dpu-clean-up-command-mode-encoder-on-disable.patch
++f511b80c4e3fce3ea9a3e4ed097948d8ff4e60b7d2207e5741329c8a8304d170fba1abd477b8dab064821b096ce5745ffb3928b76bbffbfbe22f26a0018383c2  0152-media-i2c-lc898128-Support-a-slave-without-its-own-g.patch
++826978cd879c59a5b65107629215c0bd9e5bb36c3751a2098237bf4c8dc0574626da5d3f34b60906e66cd4c35fa4ee7dae4615c028323e82678402ef5d65d4df  0153-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
++54cdbacc74f73c75822768696a70cce440d9719c53717ab51b6852dc98497a071c35294cfdb58956b7ff639d5811acd25a12688fe5052cea6566e7c9c70e466a  0154-media-i2c-imx689-Add-a-2000x1500-4x4-binned-mode.patch
++1d70c87eb758650ccda96210a573833d01459a9d0d0cdf1c0e5afe259a18d61115217f92d4196107b77b48d8a06e87c332d150c7d82ca260453af0502cf927fb  0155-media-i2c-imx586-Add-a-2000x1500-4x4-binned-mode.patch
++2222f6e0f661204650349a7fc774e00f64b393d3711e0f768c7e94a8b963c4180776b03f312479bd7993b3597e4b645546cc24ddea48797731e8fec1f8ed9240  0156-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Give-th.patch
+ "
+-- 
+2.43.0
+

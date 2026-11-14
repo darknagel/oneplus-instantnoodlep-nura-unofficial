@@ -1,0 +1,39 @@
+From 7a51a6a2a5a12aa83bbd6842608a3e95136970cd Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 18:47:08 +0100
+Subject: [PATCH 12/12] ipa: libipa: awb: Add an optional minGain tuning value
+
+The colour gains are clamped to 1.0 and above, with green fixed at 1.0.
+When red or blue is stronger than green, the white balance then stays
+stuck at 1.0 and the picture keeps a colour cast: the colour filter
+camera of the OnePlus 8 Pro also sees near infrared and comes out red.
+
+Read a minGain value from the tuning file, for ISPs that can attenuate a
+channel like the software ISP. It defaults to 1.0 as before.
+---
+ src/ipa/libipa/awb.h | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/ipa/libipa/awb.h b/src/ipa/libipa/awb.h
+index 9952556..9e752f9 100644
+--- a/src/ipa/libipa/awb.h
++++ b/src/ipa/libipa/awb.h
+@@ -119,7 +119,14 @@ public:
+ 		if (ret)
+ 			return ret;
+ 
+-		gainMin_ = std::max(Q::TraitsType::min, 1.0f);
++		/*
++		 * Gains below 1.0 need an ISP that can attenuate, like the
++		 * software ISP. They keep the balance right when red or blue
++		 * is stronger than green, for example with a sensor that also
++		 * sees near infrared.
++		 */
++		const float minGain = static_cast<float>(tuningData["minGain"].get<double>(1.0));
++		gainMin_ = std::max(Q::TraitsType::min, minGain);
+ 		gainMax_ = Q::TraitsType::max;
+ 
+ 		controls_[&controls::ColourGains] =
+-- 
+2.43.0
+

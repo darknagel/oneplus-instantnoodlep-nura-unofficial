@@ -1,0 +1,70 @@
+From c9210116a769f619b7f84f8026ecb8c23f60d1f8 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 18:34:40 +0100
+Subject: [PATCH 153/156] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
+ the telephoto OIS
+
+The telephoto module has its own LC898128 at 0x24 on the second camera
+I2C bus, powered from PM8009 L6 (actuator), L4 (core) and L7 (I/O), and
+gets the gyroscope data from the main camera's controller. Give the main
+controller its core supply (PM8009 L1), which so far came on only with
+the main sensor.
+---
+ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 22 +++++++++++++++++--
+ 1 file changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 8f675d3fc..96ac444ca 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -1035,12 +1035,13 @@ cam_main_af: lens@c {
+ 	};
+ 
+ 	/* Optical image stabilisation of the main camera */
+-	ois@24 {
++	ois_main: ois@24 {
+ 		compatible = "onnn,lc898128";
+ 		reg = <0x24>;
+ 
+ 		vdd-supply = <&vreg_l5f_2p8>;
+ 		vio-supply = <&vreg_l7f_1p8>;
++		vdig-supply = <&vreg_l1f_1p1>;
+ 
+ 		onnn,camera = <&cam_main>;
+ 	};
+@@ -1132,7 +1133,7 @@ &cci1_i2c0 {
+ 	#size-cells = <0>;
+ 
+ 	/* Telephoto camera */
+-	camera@2d {
++	cam_tele: camera@2d {
+ 		compatible = "samsung,s5k3m5";
+ 		reg = <0x2d>;
+ 
+@@ -1171,6 +1172,23 @@ cam_tele_af: lens@74 {
+ 		vana-supply = <&vreg_l6f_2p8>;
+ 		vio-supply = <&vreg_l7f_1p8>;
+ 	};
++
++	/*
++	 * Optical image stabilisation of the telephoto camera. The module has
++	 * no gyroscope of its own, the main camera's OIS controller passes
++	 * its data on.
++	 */
++	ois@24 {
++		compatible = "onnn,lc898128";
++		reg = <0x24>;
++
++		vdd-supply = <&vreg_l6f_2p8>;
++		vio-supply = <&vreg_l7f_1p8>;
++		vdig-supply = <&vreg_l4f_1p05>;
++
++		onnn,camera = <&cam_tele>;
++		onnn,master = <&ois_main>;
++	};
+ };
+ 
+ &cci1_i2c1 {
+-- 
+2.43.0
+

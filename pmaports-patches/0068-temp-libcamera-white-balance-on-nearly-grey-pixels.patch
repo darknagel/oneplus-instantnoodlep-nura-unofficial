@@ -1,0 +1,569 @@
+From 8d288e496421e9dd6bc48cfbdbe64a28467d9842 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 19:10:55 +0100
+Subject: [PATCH 68/68] temp/libcamera: white balance on nearly grey pixels
+
+New libcamera patches:
+0013 collects the pixels that look nearly grey with the current white
+balance in separate statistics and bases the AWB on them, so large
+coloured areas no longer tint the picture; a greyWeight tuning value
+limits how much they count,
+0014 adds a minGain tuning value, so red or blue can be attenuated when
+they are stronger than green.
+
+Tuning: minGain 0.25 for all five cameras (the colour filter camera sees
+near infrared and was stuck with a red cast), and for the front camera
+the colour matrices of the stock tuning and greyWeight 0.5 (it mostly
+sees light from displays, which made it too cool).
+---
+ ...e-the-white-balance-on-nearly-grey-p.patch | 338 ++++++++++++++++++
+ ...Add-an-optional-minGain-tuning-value.patch |  39 ++
+ temp/libcamera/APKBUILD                       |  16 +-
+ temp/libcamera/gc5035.yaml                    |   3 +
+ temp/libcamera/imx471.yaml                    |  34 +-
+ temp/libcamera/imx586.yaml                    |   3 +
+ temp/libcamera/imx689.yaml                    |   3 +
+ temp/libcamera/s5k3m5.yaml                    |   3 +
+ 8 files changed, 430 insertions(+), 9 deletions(-)
+ create mode 100644 temp/libcamera/0013-software_isp-Base-the-white-balance-on-nearly-grey-p.patch
+ create mode 100644 temp/libcamera/0014-ipa-libipa-awb-Add-an-optional-minGain-tuning-value.patch
+
+diff --git a/temp/libcamera/0013-software_isp-Base-the-white-balance-on-nearly-grey-p.patch b/temp/libcamera/0013-software_isp-Base-the-white-balance-on-nearly-grey-p.patch
+new file mode 100644
+index 0000000000..b92a0e65bc
+--- /dev/null
++++ b/temp/libcamera/0013-software_isp-Base-the-white-balance-on-nearly-grey-p.patch
+@@ -0,0 +1,338 @@
++From 978072ff9c1ba977e5147fb79a0bd76ceda42368 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sat, 14 Nov 2026 18:41:42 +0100
++Subject: [PATCH 13/14] software_isp: Base the white balance on nearly grey
++ pixels
++
++The grey world white balance averages the whole frame, so a large coloured
++area (a blue wall, a green lawn) tints the whole picture in the
++complementary colour.
++
++Collect the pixels that look nearly grey with the white balance gains of
++the frame (red and blue within 25 % of green after the gains, unsaturated,
++not too dark) in separate sums of the statistics, and let the AWB use
++them: alone when they make up at least 10 % of the frame, blended with
++the plain grey world from 2 % on, and not at all below. The plain grey
++world keeps the gains moving when they are still far off.
++
++A greyWeight tuning value (0.0 to 1.0, default 1.0) limits how much the
++nearly grey pixels may count, for cameras that mostly see mixed light.
++---
++ .../internal/software_isp/swisp_stats.h       | 13 ++++
++ .../internal/software_isp/swstats_cpu.h       |  6 ++
++ src/ipa/softisp/algorithms/awb.cpp            | 38 ++++++++++
++ src/ipa/softisp/algorithms/awb.h              |  1 +
++ src/libcamera/software_isp/debayer_cpu.cpp    |  1 +
++ src/libcamera/software_isp/debayer_egl.cpp    |  1 +
++ src/libcamera/software_isp/swstats_cpu.cpp    | 75 +++++++++++++++++--
++ 7 files changed, 129 insertions(+), 6 deletions(-)
++
++diff --git a/include/libcamera/internal/software_isp/swisp_stats.h b/include/libcamera/internal/software_isp/swisp_stats.h
++index 247b4fa..fe8f062 100644
++--- a/include/libcamera/internal/software_isp/swisp_stats.h
+++++ b/include/libcamera/internal/software_isp/swisp_stats.h
++@@ -44,6 +44,19 @@ struct SwIspStats {
++ 	 * \brief Number of unsaturated pixels accumulated in \a sum_
++ 	 */
++ 	uint64_t numPixels_;
+++	/**
+++	 * \brief Sums of colour channels of the unsaturated pixels that look
+++	 * nearly grey with the white balance gains of the frame
+++	 *
+++	 * Large coloured areas pull a plain grey world white balance towards
+++	 * their complementary colour. Pixels that are nearly neutral already
+++	 * are a better reference for the illuminant.
+++	 */
+++	RGB<uint64_t> greySum_;
+++	/**
+++	 * \brief Number of pixels accumulated in \a greySum_
+++	 */
+++	uint64_t greyPixels_;
++ 	/**
++ 	 * \brief Number of bins in the yHistogram
++ 	 */
++diff --git a/include/libcamera/internal/software_isp/swstats_cpu.h b/include/libcamera/internal/software_isp/swstats_cpu.h
++index 8327695..82d876a 100644
++--- a/include/libcamera/internal/software_isp/swstats_cpu.h
+++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
++@@ -54,6 +54,7 @@ public:
++ 
++ 	int configure(const StreamConfiguration &inputCfg, unsigned int statsBufferCount = 1);
++ 	void setWindow(const Rectangle &window);
+++	void setGreyReference(const RGB<double> &gains, double blackLevel);
++ 	void startFrame(uint32_t frame);
++ 	void finishFrame(uint32_t frame, uint32_t bufferId);
++ 	void processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuffer &input);
++@@ -146,6 +147,11 @@ private:
++ 	unsigned int stride_;
++ 	unsigned int sumShift_;
++ 	bool quadBayer_;
+++
+++	/* White balance gains (1.0 = 256) and black level for the grey test */
+++	unsigned int greyGainR_ = 256;
+++	unsigned int greyGainB_ = 256;
+++	unsigned int greyBlack_ = 0;
++ 	BayerFormat::Order quadBayerOrder_ = BayerFormat::RGGB;
++ 
++ 	std::vector<SwIspStats> stats_;
++diff --git a/src/ipa/softisp/algorithms/awb.cpp b/src/ipa/softisp/algorithms/awb.cpp
++index fb9bcb0..f276344 100644
++--- a/src/ipa/softisp/algorithms/awb.cpp
+++++ b/src/ipa/softisp/algorithms/awb.cpp
++@@ -7,6 +7,7 @@
++ 
++ #include "awb.h"
++ 
+++#include <algorithm>
++ #include <stdint.h>
++ 
++ #include <libcamera/base/log.h>
++@@ -24,6 +25,13 @@ namespace ipa::softisp::algorithms {
++  */
++ static constexpr unsigned int kDefaultLux = 500;
++ 
+++/*
+++ * Use the nearly grey pixels from this fraction of all pixels on, and only
+++ * them from kGreyFullFraction on.
+++ */
+++static constexpr double kGreyMinFraction = 0.02;
+++static constexpr double kGreyFullFraction = 0.10;
+++
++ class SoftIspAwbStats final : public AwbStats
++ {
++ public:
++@@ -75,6 +83,13 @@ private:
++  */
++ int Awb::init(IPAContext &context, const ValueNode &tuningData)
++ {
+++	/*
+++	 * How much the nearly grey pixels may count at most, from 0.0 (plain
+++	 * grey world) to 1.0. A camera that mostly sees mixed light, like a
+++	 * front camera facing displays, can lower it.
+++	 */
+++	greyWeight_ = std::clamp(tuningData["greyWeight"].get<double>(1.0), 0.0, 1.0);
+++
++ 	return awbAlgo_.init(tuningData, context.ctrlMap);
++ }
++ 
++@@ -147,6 +162,29 @@ SoftIspAwbStats Awb::calculateRgbMeans(IPAContext &context,
++ 				   static_cast<double>(sum.g()) / nPixels,
++ 				   static_cast<double>(sum.b()) / nPixels } };
++ 
+++	/*
+++	 * Prefer the pixels that look nearly grey with the current gains:
+++	 * large coloured areas then no longer tint the whole picture. With
+++	 * few such pixels, for example while the gains are still far off,
+++	 * blend in the plain grey world, so the gains keep moving.
+++	 */
+++	const uint64_t nGrey = stats->greyPixels_;
+++	const double greyFraction = static_cast<double>(nGrey) / nPixels;
+++	if (greyFraction >= kGreyMinFraction) {
+++		const uint64_t greyOffset = blackLevel * nGrey;
+++		const RGB<uint64_t> greySum =
+++			stats->greySum_.max(greyOffset + minValid) - greyOffset;
+++		const RGB<double> greyMeans = { { static_cast<double>(greySum.r()) / nGrey,
+++						  static_cast<double>(greySum.g()) / nGrey,
+++						  static_cast<double>(greySum.b()) / nGrey } };
+++		const double weight = greyWeight_ *
+++				      std::min(1.0, greyFraction / kGreyFullFraction);
+++
+++		/* Compare ratios: the grey pixels are darker or brighter overall */
+++		const double scale = rgbMeans.g() / greyMeans.g();
+++		rgbMeans = greyMeans * (scale * weight) + rgbMeans * (1.0 - weight);
+++	}
+++
++ 	return SoftIspAwbStats(rgbMeans);
++ }
++ 
++diff --git a/src/ipa/softisp/algorithms/awb.h b/src/ipa/softisp/algorithms/awb.h
++index c92bdbf..b07a3c7 100644
++--- a/src/ipa/softisp/algorithms/awb.h
+++++ b/src/ipa/softisp/algorithms/awb.h
++@@ -57,6 +57,7 @@ private:
++ 	 * reasonable.
++ 	 */
++ 	AwbAlgorithm<UQ<2, 8>> awbAlgo_;
+++	double greyWeight_ = 1.0;
++ };
++ 
++ } /* namespace ipa::softisp::algorithms */
++diff --git a/src/libcamera/software_isp/debayer_cpu.cpp b/src/libcamera/software_isp/debayer_cpu.cpp
++index 91867ba..66df129 100644
++--- a/src/libcamera/software_isp/debayer_cpu.cpp
+++++ b/src/libcamera/software_isp/debayer_cpu.cpp
++@@ -1070,6 +1070,7 @@ void DebayerCpu::process(uint32_t frame, FrameBuffer *input, FrameBuffer *output
++ 		return;
++ 	}
++ 
+++	stats_->setGreyReference(params.gains, params.blackLevel.g());
++ 	stats_->startFrame(frame);
++ 
++ 	workPendingMutex_.lock();
++diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
++index 7f0b0ab..e29d5e3 100644
++--- a/src/libcamera/software_isp/debayer_egl.cpp
+++++ b/src/libcamera/software_isp/debayer_egl.cpp
++@@ -676,6 +676,7 @@ void DebayerEGL::process(uint32_t frame, FrameBuffer *input, FrameBuffer *output
++ 			inDmaSyncer.emplace(input->planes()[0].fd, DmaSyncer::SyncType::Read);
++ 			inMapped.emplace(input, MappedFrameBuffer::MapFlag::Read);
++ 		}
+++		stats_->setGreyReference(params.gains, params.blackLevel.g());
++ 		stats_->processFrame(frame, 0, inMapped.value());
++ 	}
++ 	inDmaSyncer.reset();
++diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
++index 1095179..9aaadc1 100644
++--- a/src/libcamera/software_isp/swstats_cpu.cpp
+++++ b/src/libcamera/software_isp/swstats_cpu.cpp
++@@ -11,6 +11,7 @@
++ 
++ #include "libcamera/internal/software_isp/swstats_cpu.h"
++ 
+++#include <algorithm>
++ #include <stdlib.h>
++ 
++ #include <libcamera/base/log.h>
++@@ -187,10 +188,39 @@ SwStatsCpu::SwStatsCpu(const CameraManager &cm, bool quadBayer)
++  */
++ static constexpr unsigned int kSaturationThreshold = 0.95 * 256;
++ 
+++/*
+++ * A pixel counts as nearly grey for the white balance when its red and blue
+++ * values, with the current white balance gains applied, are within this
+++ * fraction (1.0 = 256) of its green value.
+++ */
+++static constexpr int kGreyTolerance = 64; /* 0.25 * 256 */
+++
++ static constexpr unsigned int kRedYMul = 77; /* 0.299 * 256 */
++ static constexpr unsigned int kGreenYMul = 150; /* 0.587 * 256 */
++ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
++ 
+++/* Skip pixels too dark for a reliable colour, in 8-bit units */
+++static constexpr int kGreyMinGreen = 8;
+++
+++#define SWSTATS_ACCUMULATE_GREY(div)                                        \
+++	{                                                                   \
+++		const int black = greyBlack_ * (div);                       \
+++		const int gg = static_cast<int>(g) - black;                 \
+++		if (gg > kGreyMinGreen * (div)) {                           \
+++			const int rr = ((static_cast<int>(r) - black) *     \
+++					static_cast<int>(greyGainR_)) >> 8; \
+++			const int bb = ((static_cast<int>(b) - black) *     \
+++					static_cast<int>(greyGainB_)) >> 8; \
+++			const int tol = (gg * kGreyTolerance) >> 8;         \
+++			if (abs(rr - gg) < tol && abs(bb - gg) < tol) {     \
+++				greyR += r;                                 \
+++				greyG += g;                                 \
+++				greyB += b;                                 \
+++				nGrey++;                                    \
+++			}                                                   \
+++		}                                                           \
+++	}
+++
++ #define SWSTATS_START_LINE_STATS(pixel_t) \
++ 	pixel_t r, g, g2, b;              \
++ 	uint64_t yVal;                    \
++@@ -198,7 +228,11 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
++ 	uint64_t sumR = 0;                \
++ 	uint64_t sumG = 0;                \
++ 	uint64_t sumB = 0;                \
++-	uint64_t nSamples = 0;
+++	uint64_t nSamples = 0;            \
+++	uint64_t greyR = 0;               \
+++	uint64_t greyG = 0;               \
+++	uint64_t greyB = 0;               \
+++	uint64_t nGrey = 0;
++ 
++ #define SWSTATS_ACCUMULATE_LINE_STATS(div)      \
++ 	if (r < kSaturationThreshold * (div) && \
++@@ -208,6 +242,7 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
++ 		sumG += g;                      \
++ 		sumB += b;                      \
++ 		nSamples++;                     \
+++		SWSTATS_ACCUMULATE_GREY(div)    \
++ 	}                                       \
++                                                 \
++ 	yVal = r * kRedYMul;                    \
++@@ -215,11 +250,15 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
++ 	yVal += b * kBlueYMul;                  \
++ 	stats.yHistogram[yVal * SwIspStats::kYHistogramSize / (256 * 256 * (div))]++;
++ 
++-#define SWSTATS_FINISH_LINE_STATS() \
++-	stats.sum_.r() += sumR;     \
++-	stats.sum_.g() += sumG;     \
++-	stats.sum_.b() += sumB;     \
++-	stats.numPixels_ += nSamples;
+++#define SWSTATS_FINISH_LINE_STATS()  \
+++	stats.sum_.r() += sumR;      \
+++	stats.sum_.g() += sumG;      \
+++	stats.sum_.b() += sumB;      \
+++	stats.numPixels_ += nSamples; \
+++	stats.greySum_.r() += greyR; \
+++	stats.greySum_.g() += greyG; \
+++	stats.greySum_.b() += greyB; \
+++	stats.greyPixels_ += nGrey;
++ 
++ void SwStatsCpu::statsBGGR8Line0(const uint8_t *src[], SwIspStats &stats)
++ {
++@@ -472,6 +511,23 @@ void SwStatsCpu::statsGBRG12PLine0(const uint8_t *src[], SwIspStats &stats)
++ 	SWSTATS_FINISH_LINE_STATS()
++ }
++ 
+++/**
+++ * \brief Set the white balance the grey pixel test is made with
+++ * \param[in] gains The white balance gains of the frame
+++ * \param[in] blackLevel The black level of the frame, 1.0 = full scale
+++ *
+++ * The statistics collect the pixels that look nearly grey with these gains
+++ * separately, see SwIspStats::greySum_.
+++ */
+++void SwStatsCpu::setGreyReference(const RGB<double> &gains, double blackLevel)
+++{
+++	const double g = gains.g() > 0.0 ? gains.g() : 1.0;
+++
+++	greyGainR_ = static_cast<unsigned int>(std::clamp(gains.r() / g, 0.0, 16.0) * 256);
+++	greyGainB_ = static_cast<unsigned int>(std::clamp(gains.b() / g, 0.0, 16.0) * 256);
+++	greyBlack_ = static_cast<unsigned int>(std::clamp(blackLevel, 0.0, 1.0) * 255);
+++}
+++
++ /**
++  * \brief Reset state to start statistics gathering for a new frame
++  * \param[in] frame The frame number
++@@ -489,6 +545,8 @@ void SwStatsCpu::startFrame(uint32_t frame)
++ 	for (auto &s : stats_) {
++ 		s.sum_ = RGB<uint64_t>({ 0, 0, 0 });
++ 		s.numPixels_ = 0;
+++		s.greySum_ = RGB<uint64_t>({ 0, 0, 0 });
+++		s.greyPixels_ = 0;
++ 		s.yHistogram.fill(0);
++ 		s.sharpness = 0;
++ 		s.sharpnessBase = 0;
++@@ -509,12 +567,16 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
++ 	if (valid) {
++ 		sharedStats_->sum_ = RGB<uint64_t>({ 0, 0, 0 });
++ 		sharedStats_->numPixels_ = 0;
+++		sharedStats_->greySum_ = RGB<uint64_t>({ 0, 0, 0 });
+++		sharedStats_->greyPixels_ = 0;
++ 		sharedStats_->yHistogram.fill(0);
++ 		sharedStats_->sharpness = 0;
++ 		sharedStats_->sharpnessBase = 0;
++ 		for (const auto &s : stats_) {
++ 			sharedStats_->sum_ += s.sum_;
++ 			sharedStats_->numPixels_ += s.numPixels_;
+++			sharedStats_->greySum_ += s.greySum_;
+++			sharedStats_->greyPixels_ += s.greyPixels_;
++ 			sharedStats_->sharpness += s.sharpness;
++ 			sharedStats_->sharpnessBase += s.sharpnessBase;
++ 			for (unsigned int j = 0; j < SwIspStats::kYHistogramSize; j++)
++@@ -522,6 +584,7 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
++ 		}
++ 
++ 		sharedStats_->sum_ >>= sumShift_;
+++		sharedStats_->greySum_ >>= sumShift_;
++ 	}
++ 
++ 	sharedStats_->valid = valid;
++-- 
++2.43.0
++
+diff --git a/temp/libcamera/0014-ipa-libipa-awb-Add-an-optional-minGain-tuning-value.patch b/temp/libcamera/0014-ipa-libipa-awb-Add-an-optional-minGain-tuning-value.patch
+new file mode 100644
+index 0000000000..ead43a59e2
+--- /dev/null
++++ b/temp/libcamera/0014-ipa-libipa-awb-Add-an-optional-minGain-tuning-value.patch
+@@ -0,0 +1,39 @@
++From 7a51a6a2a5a12aa83bbd6842608a3e95136970cd Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sat, 14 Nov 2026 18:47:08 +0100
++Subject: [PATCH 14/14] ipa: libipa: awb: Add an optional minGain tuning value
++
++The colour gains are clamped to 1.0 and above, with green fixed at 1.0.
++When red or blue is stronger than green, the white balance then stays
++stuck at 1.0 and the picture keeps a colour cast: the colour filter
++camera of the OnePlus 8 Pro also sees near infrared and comes out red.
++
++Read a minGain value from the tuning file, for ISPs that can attenuate a
++channel like the software ISP. It defaults to 1.0 as before.
++---
++ src/ipa/libipa/awb.h | 9 ++++++++-
++ 1 file changed, 8 insertions(+), 1 deletion(-)
++
++diff --git a/src/ipa/libipa/awb.h b/src/ipa/libipa/awb.h
++index 9952556..9e752f9 100644
++--- a/src/ipa/libipa/awb.h
+++++ b/src/ipa/libipa/awb.h
++@@ -119,7 +119,14 @@ public:
++ 		if (ret)
++ 			return ret;
++ 
++-		gainMin_ = std::max(Q::TraitsType::min, 1.0f);
+++		/*
+++		 * Gains below 1.0 need an ISP that can attenuate, like the
+++		 * software ISP. They keep the balance right when red or blue
+++		 * is stronger than green, for example with a sensor that also
+++		 * sees near infrared.
+++		 */
+++		const float minGain = static_cast<float>(tuningData["minGain"].get<double>(1.0));
+++		gainMin_ = std::max(Q::TraitsType::min, minGain);
++ 		gainMax_ = Q::TraitsType::max;
++ 
++ 		controls_[&controls::ColourGains] =
++-- 
++2.43.0
++
+diff --git a/temp/libcamera/APKBUILD b/temp/libcamera/APKBUILD
+index cf725c3d98..fc8ee39b70 100644
+--- a/temp/libcamera/APKBUILD
++++ b/temp/libcamera/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Robert Mader <robert.mader@collabora.com>"
+ pkgname=libcamera
+ _pkgver=0.8.0
+ pkgver=9999$_pkgver
+-pkgrel=17
++pkgrel=18
+ pkgdesc="Linux camera framework"
+ url="https://libcamera.org/"
+ arch="all"
+@@ -78,6 +78,8 @@ source="https://gitlab.freedesktop.org/camera/libcamera/-/archive/v$_pkgver/libc
+ 	0010-software_isp-debayer_egl-Calculate-the-statistics-ov.patch
+ 	0011-software_isp-Calculate-the-statistics-for-every-seco.patch
+ 	0012-ipa-softisp-af-Climb-from-the-current-lens-position.patch
++	0013-software_isp-Base-the-white-balance-on-nearly-grey-p.patch
++	0014-ipa-libipa-awb-Add-an-optional-minGain-tuning-value.patch
+ 	qcam.desktop
+ 	$_tuning_files
+ 	"
+@@ -196,6 +198,8 @@ e90c4a8ec40fc0b887849810910cc60972aab6445fb4cc36a3d5e5ca500221f6698852e999fa7db4
+ 8af0a6f2501e7e9ba6159ed4b2b49b180b135c35e3bf38bc460e3fe910e0662f464327c95517292a38c8e45105a745dc8c4045020194ee138b777742d0ff371f  0010-software_isp-debayer_egl-Calculate-the-statistics-ov.patch
+ 1aea27b2cb926cbc8b933100780d821bb3952a89311d636e6f997427ada814a0ad3e7253204b98bcadca952150996a81f1d4ec9b84bb6432838a02014cd98309  0011-software_isp-Calculate-the-statistics-for-every-seco.patch
+ 96cfe42477d9672a2b179920eb6a84c9272da97d511a9f1e5f2aedc1b3d083c246ce07c2da89ae7399cfeb933fada01c1a8744194bd507e2d37fb305954f18f3  0012-ipa-softisp-af-Climb-from-the-current-lens-position.patch
++6c4a05275cd6ffbc3e37594de08fa355e8668d8af5f9de8460c0d1f00b289f1e1a13569c703450e5ace24ef05743f45c4ea51529e344e26f15c4ee8d51d3a763  0013-software_isp-Base-the-white-balance-on-nearly-grey-p.patch
++1c2c5959e4144a5c1e2d887109fac52686a9373e37c67971c0c8a16ac56a2aed9cf733bbeb182365f029970272c0b131c39961f237eb43eb7c24027f70271a6d  0014-ipa-libipa-awb-Add-an-optional-minGain-tuning-value.patch
+ 22167a4eceb6d1b40b0b7c45fdf116c71684f5340de7f767535cb8e160ad9d2ae0f00cb3d461f73a344520a48a4641cf46226841d78bee06bfbfd2a91337f754  qcam.desktop
+ 926933ed5aa6bc005471d8ddbbf49afaeb5034ac776c78bcba6655adc05b68be858923aac7887f8a8451a424113ed4d11c78856229a728abf031ebe747684e14  hi846.yaml
+ 4942edd551dcf51630246f71e600c17760d3574d5d45e5530d6cfeefe2c9ab1a812fbe220f8e89d92e19a499c592b2507c801ca4eb74cd15fcecb60bff5c650b  imx355.yaml
+@@ -207,9 +211,9 @@ e90c4a8ec40fc0b887849810910cc60972aab6445fb4cc36a3d5e5ca500221f6698852e999fa7db4
+ 55dab9dcb9b1982143b9d63e4e51138c5bffd7c8f4a8e4e122750b3ad9d475446956bc297d9f564819ade4be75a575d06633a064e14f8ba3ef77986783c5f067  imx858.yaml
+ 926933ed5aa6bc005471d8ddbbf49afaeb5034ac776c78bcba6655adc05b68be858923aac7887f8a8451a424113ed4d11c78856229a728abf031ebe747684e14  s5k3l6xx.yaml
+ d59020e62520ee622282c85ce7bcdfe453c99becf48cc1005c5f8a4bb8b2511b19c89f38fb3c994e7c6a79d1f84e2ed5f5a09b4c5bdc1dc4a44b071dbccf0d44  s5kjn1.yaml
+-2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  gc5035.yaml
+-7f9b4b1a0627611abb8ee49381c01937a51fe1078300a5eedbe4c61db99dd6cda2236734c39bf5e97d2626e43468d243034a55a0111d3f4ff08211dd313a9f5a  imx471.yaml
+-0a07251d119134a4f8dddeeae6f299f9c50085d87040f5b29651ccd1553f790de265a1caa3a0b6463cf5150f8124251acb28daec24425c64f98314b003fe8cbc  imx586.yaml
+-87049da5cc501e342150f6789250579b8fb2aa8835b9e4cb9c4df299df9357f75d7b9e1030f64b5588a63a2432af5249528e245ab7b134293a776ba664ce631a  imx689.yaml
+-9709d21e14d5b6b224c95668a2bbb75ed4581101185ac4923a7058dbe0e88c1ad86b649ded2faed83f0c840a4e35a375c291233b26a2aafec2709bf593c9417b  s5k3m5.yaml
++f786990d186998808c1374a84f18dff72d30161b92a9df0185e656506ce92858238f82526445a9eb68e0bb6884723935960b0a63f35b2f69f725494999197008  gc5035.yaml
++95ecfad936e19f3f24d773e7cd50bf525344433f7c60d91200016b23630b72a2070a082b5ce0b246518973787ef865ab96cf424ddf3228ebdefb89bba2b59b58  imx471.yaml
++b7db28082483c8a53407244d663f1400df40a738f6af309814b05ff1c5898d930681280d5c5c196ba25a8190dbf63b4d1f54aa16be2482ff6a86c517fb3274db  imx586.yaml
++40ef509d3338b5be2130c90360d8ea4093358fecf085e15285330ca8e79e923aef04439e636f4d1f87f7b86f7f3a13d10086a80c356e4a3dd9ca84957f5324e2  imx689.yaml
++2997e3b4811b98d9f130605e41bcc22af07168e821777b57e9f28d7d5c5d3ae7e208862addb800ef3dc4d40da4a473419b739d09b68ecfd9feb63dc09a854b9f  s5k3m5.yaml
+ "
+diff --git a/temp/libcamera/gc5035.yaml b/temp/libcamera/gc5035.yaml
+index e903d96a8f..58154b499e 100755
+--- a/temp/libcamera/gc5035.yaml
++++ b/temp/libcamera/gc5035.yaml
+@@ -6,6 +6,9 @@ algorithms:
+   - BlackLevel:
+       blackLevel: 4096
+   - Awb:
++      # Gains below 1.0 keep the balance when red or blue is stronger
++      # than green
++      minGain: 0.25
+   - Adjust:
+   - Agc:
+ ...
+diff --git a/temp/libcamera/imx471.yaml b/temp/libcamera/imx471.yaml
+index 09b7659b3e..57eb00cfc5 100755
+--- a/temp/libcamera/imx471.yaml
++++ b/temp/libcamera/imx471.yaml
+@@ -6,9 +6,37 @@ algorithms:
+   - BlackLevel:
+       blackLevel: 4096
+   - Awb:
+-  # Ccm from the stock tuning left out for now: with the grey world AWB it
+-  # amplified colour casts in mixed scenes (yellow kitchen next to a blue
+-  # display reflection).
++      # Gains below 1.0 keep the balance when red or blue is stronger
++      # than green
++      minGain: 0.25
++      # Mostly mixed light from displays: let the nearly grey pixels count
++      # only half, they are often lit by the displays
++      greyWeight: 0.5
++  - Ccm:
++      # From the OnePlus 8 Pro stock tuning (com.qti.tuned.truly_imx471.bin,
++      # normal light region). Stock CCT ranges: <=2550, 2800-3350,
++      # 3800-4250, 4500-5400, >=6000 K.
++      ccms:
++        - ct: 2500
++          ccm: [ 1.6350, -0.2980, -0.3370,
++                -0.2698,  1.1344,  0.1354,
++                -0.0114, -1.5334,  2.5448 ]
++        - ct: 3100
++          ccm: [ 1.6682, -0.5158, -0.1524,
++                -0.1479,  1.2902, -0.1423,
++                 0.1047, -0.8194,  1.7147 ]
++        - ct: 4000
++          ccm: [ 1.6764, -0.6343, -0.0421,
++                -0.1719,  1.3584, -0.1865,
++                 0.1501, -0.6519,  1.5018 ]
++        - ct: 5000
++          ccm: [ 1.7233, -0.6775, -0.0458,
++                -0.1020,  1.3212, -0.2192,
++                 0.1187, -0.5971,  1.4784 ]
++        - ct: 6500
++          ccm: [ 1.6180, -0.5172, -0.1008,
++                -0.1766,  1.4518, -0.2752,
++                 0.0580, -0.4425,  1.3845 ]
+   - Lsc:
+       sets:
+         - ct: 2700
+diff --git a/temp/libcamera/imx586.yaml b/temp/libcamera/imx586.yaml
+index 17b567b373..c6d3afe3cf 100755
+--- a/temp/libcamera/imx586.yaml
++++ b/temp/libcamera/imx586.yaml
+@@ -6,6 +6,9 @@ algorithms:
+   - BlackLevel:
+       blackLevel: 4096
+   - Awb:
++      # Gains below 1.0 keep the balance when red or blue is stronger
++      # than green
++      minGain: 0.25
+   - Ccm:
+       # From the OnePlus 8 Pro stock tuning (com.qti.tuned.semco_imx586.bin, cc13,
+       # normal light region).
+diff --git a/temp/libcamera/imx689.yaml b/temp/libcamera/imx689.yaml
+index f92490666f..0540591058 100755
+--- a/temp/libcamera/imx689.yaml
++++ b/temp/libcamera/imx689.yaml
+@@ -6,6 +6,9 @@ algorithms:
+   - BlackLevel:
+       blackLevel: 4096
+   - Awb:
++      # Gains below 1.0 keep the balance when red or blue is stronger
++      # than green
++      minGain: 0.25
+   - Ccm:
+       # From the OnePlus 8 Pro stock tuning (com.qti.tuned.semco_imx689.bin,
+       # cc13, normal light region). Stock CCT ranges: <=2450, 2650-3400,
+diff --git a/temp/libcamera/s5k3m5.yaml b/temp/libcamera/s5k3m5.yaml
+index 4e293189b0..9c39bd24d1 100755
+--- a/temp/libcamera/s5k3m5.yaml
++++ b/temp/libcamera/s5k3m5.yaml
+@@ -6,6 +6,9 @@ algorithms:
+   - BlackLevel:
+       blackLevel: 4096
+   - Awb:
++      # Gains below 1.0 keep the balance when red or blue is stronger
++      # than green
++      minGain: 0.25
+   - Ccm:
+       # From the OnePlus 8 Pro stock tuning (com.qti.tuned.semco_s5k3m5.bin, cc13,
+       # normal light region).
+-- 
+2.43.0
+

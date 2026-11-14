@@ -1,0 +1,338 @@
+From 978072ff9c1ba977e5147fb79a0bd76ceda42368 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 18:41:42 +0100
+Subject: [PATCH 11/12] software_isp: Base the white balance on nearly grey
+ pixels
+
+The grey world white balance averages the whole frame, so a large coloured
+area (a blue wall, a green lawn) tints the whole picture in the
+complementary colour.
+
+Collect the pixels that look nearly grey with the white balance gains of
+the frame (red and blue within 25 % of green after the gains, unsaturated,
+not too dark) in separate sums of the statistics, and let the AWB use
+them: alone when they make up at least 10 % of the frame, blended with
+the plain grey world from 2 % on, and not at all below. The plain grey
+world keeps the gains moving when they are still far off.
+
+A greyWeight tuning value (0.0 to 1.0, default 1.0) limits how much the
+nearly grey pixels may count, for cameras that mostly see mixed light.
+---
+ .../internal/software_isp/swisp_stats.h       | 13 ++++
+ .../internal/software_isp/swstats_cpu.h       |  6 ++
+ src/ipa/softisp/algorithms/awb.cpp            | 38 ++++++++++
+ src/ipa/softisp/algorithms/awb.h              |  1 +
+ src/libcamera/software_isp/debayer_cpu.cpp    |  1 +
+ src/libcamera/software_isp/debayer_egl.cpp    |  1 +
+ src/libcamera/software_isp/swstats_cpu.cpp    | 75 +++++++++++++++++--
+ 7 files changed, 129 insertions(+), 6 deletions(-)
+
+diff --git a/include/libcamera/internal/software_isp/swisp_stats.h b/include/libcamera/internal/software_isp/swisp_stats.h
+index 247b4fa..fe8f062 100644
+--- a/include/libcamera/internal/software_isp/swisp_stats.h
++++ b/include/libcamera/internal/software_isp/swisp_stats.h
+@@ -44,6 +44,19 @@ struct SwIspStats {
+ 	 * \brief Number of unsaturated pixels accumulated in \a sum_
+ 	 */
+ 	uint64_t numPixels_;
++	/**
++	 * \brief Sums of colour channels of the unsaturated pixels that look
++	 * nearly grey with the white balance gains of the frame
++	 *
++	 * Large coloured areas pull a plain grey world white balance towards
++	 * their complementary colour. Pixels that are nearly neutral already
++	 * are a better reference for the illuminant.
++	 */
++	RGB<uint64_t> greySum_;
++	/**
++	 * \brief Number of pixels accumulated in \a greySum_
++	 */
++	uint64_t greyPixels_;
+ 	/**
+ 	 * \brief Number of bins in the yHistogram
+ 	 */
+diff --git a/include/libcamera/internal/software_isp/swstats_cpu.h b/include/libcamera/internal/software_isp/swstats_cpu.h
+index 8327695..82d876a 100644
+--- a/include/libcamera/internal/software_isp/swstats_cpu.h
++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
+@@ -54,6 +54,7 @@ public:
+ 
+ 	int configure(const StreamConfiguration &inputCfg, unsigned int statsBufferCount = 1);
+ 	void setWindow(const Rectangle &window);
++	void setGreyReference(const RGB<double> &gains, double blackLevel);
+ 	void startFrame(uint32_t frame);
+ 	void finishFrame(uint32_t frame, uint32_t bufferId);
+ 	void processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuffer &input);
+@@ -146,6 +147,11 @@ private:
+ 	unsigned int stride_;
+ 	unsigned int sumShift_;
+ 	bool quadBayer_;
++
++	/* White balance gains (1.0 = 256) and black level for the grey test */
++	unsigned int greyGainR_ = 256;
++	unsigned int greyGainB_ = 256;
++	unsigned int greyBlack_ = 0;
+ 	BayerFormat::Order quadBayerOrder_ = BayerFormat::RGGB;
+ 
+ 	std::vector<SwIspStats> stats_;
+diff --git a/src/ipa/softisp/algorithms/awb.cpp b/src/ipa/softisp/algorithms/awb.cpp
+index fb9bcb0..f276344 100644
+--- a/src/ipa/softisp/algorithms/awb.cpp
++++ b/src/ipa/softisp/algorithms/awb.cpp
+@@ -7,6 +7,7 @@
+ 
+ #include "awb.h"
+ 
++#include <algorithm>
+ #include <stdint.h>
+ 
+ #include <libcamera/base/log.h>
+@@ -24,6 +25,13 @@ namespace ipa::softisp::algorithms {
+  */
+ static constexpr unsigned int kDefaultLux = 500;
+ 
++/*
++ * Use the nearly grey pixels from this fraction of all pixels on, and only
++ * them from kGreyFullFraction on.
++ */
++static constexpr double kGreyMinFraction = 0.02;
++static constexpr double kGreyFullFraction = 0.10;
++
+ class SoftIspAwbStats final : public AwbStats
+ {
+ public:
+@@ -75,6 +83,13 @@ private:
+  */
+ int Awb::init(IPAContext &context, const ValueNode &tuningData)
+ {
++	/*
++	 * How much the nearly grey pixels may count at most, from 0.0 (plain
++	 * grey world) to 1.0. A camera that mostly sees mixed light, like a
++	 * front camera facing displays, can lower it.
++	 */
++	greyWeight_ = std::clamp(tuningData["greyWeight"].get<double>(1.0), 0.0, 1.0);
++
+ 	return awbAlgo_.init(tuningData, context.ctrlMap);
+ }
+ 
+@@ -147,6 +162,29 @@ SoftIspAwbStats Awb::calculateRgbMeans(IPAContext &context,
+ 				   static_cast<double>(sum.g()) / nPixels,
+ 				   static_cast<double>(sum.b()) / nPixels } };
+ 
++	/*
++	 * Prefer the pixels that look nearly grey with the current gains:
++	 * large coloured areas then no longer tint the whole picture. With
++	 * few such pixels, for example while the gains are still far off,
++	 * blend in the plain grey world, so the gains keep moving.
++	 */
++	const uint64_t nGrey = stats->greyPixels_;
++	const double greyFraction = static_cast<double>(nGrey) / nPixels;
++	if (greyFraction >= kGreyMinFraction) {
++		const uint64_t greyOffset = blackLevel * nGrey;
++		const RGB<uint64_t> greySum =
++			stats->greySum_.max(greyOffset + minValid) - greyOffset;
++		const RGB<double> greyMeans = { { static_cast<double>(greySum.r()) / nGrey,
++						  static_cast<double>(greySum.g()) / nGrey,
++						  static_cast<double>(greySum.b()) / nGrey } };
++		const double weight = greyWeight_ *
++				      std::min(1.0, greyFraction / kGreyFullFraction);
++
++		/* Compare ratios: the grey pixels are darker or brighter overall */
++		const double scale = rgbMeans.g() / greyMeans.g();
++		rgbMeans = greyMeans * (scale * weight) + rgbMeans * (1.0 - weight);
++	}
++
+ 	return SoftIspAwbStats(rgbMeans);
+ }
+ 
+diff --git a/src/ipa/softisp/algorithms/awb.h b/src/ipa/softisp/algorithms/awb.h
+index c92bdbf..b07a3c7 100644
+--- a/src/ipa/softisp/algorithms/awb.h
++++ b/src/ipa/softisp/algorithms/awb.h
+@@ -57,6 +57,7 @@ private:
+ 	 * reasonable.
+ 	 */
+ 	AwbAlgorithm<UQ<2, 8>> awbAlgo_;
++	double greyWeight_ = 1.0;
+ };
+ 
+ } /* namespace ipa::softisp::algorithms */
+diff --git a/src/libcamera/software_isp/debayer_cpu.cpp b/src/libcamera/software_isp/debayer_cpu.cpp
+index 91867ba..66df129 100644
+--- a/src/libcamera/software_isp/debayer_cpu.cpp
++++ b/src/libcamera/software_isp/debayer_cpu.cpp
+@@ -1070,6 +1070,7 @@ void DebayerCpu::process(uint32_t frame, FrameBuffer *input, FrameBuffer *output
+ 		return;
+ 	}
+ 
++	stats_->setGreyReference(params.gains, params.blackLevel.g());
+ 	stats_->startFrame(frame);
+ 
+ 	workPendingMutex_.lock();
+diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+index 7f0b0ab..e29d5e3 100644
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -676,6 +676,7 @@ void DebayerEGL::process(uint32_t frame, FrameBuffer *input, FrameBuffer *output
+ 			inDmaSyncer.emplace(input->planes()[0].fd, DmaSyncer::SyncType::Read);
+ 			inMapped.emplace(input, MappedFrameBuffer::MapFlag::Read);
+ 		}
++		stats_->setGreyReference(params.gains, params.blackLevel.g());
+ 		stats_->processFrame(frame, 0, inMapped.value());
+ 	}
+ 	inDmaSyncer.reset();
+diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+index 1095179..9aaadc1 100644
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -11,6 +11,7 @@
+ 
+ #include "libcamera/internal/software_isp/swstats_cpu.h"
+ 
++#include <algorithm>
+ #include <stdlib.h>
+ 
+ #include <libcamera/base/log.h>
+@@ -187,10 +188,39 @@ SwStatsCpu::SwStatsCpu(const CameraManager &cm, bool quadBayer)
+  */
+ static constexpr unsigned int kSaturationThreshold = 0.95 * 256;
+ 
++/*
++ * A pixel counts as nearly grey for the white balance when its red and blue
++ * values, with the current white balance gains applied, are within this
++ * fraction (1.0 = 256) of its green value.
++ */
++static constexpr int kGreyTolerance = 64; /* 0.25 * 256 */
++
+ static constexpr unsigned int kRedYMul = 77; /* 0.299 * 256 */
+ static constexpr unsigned int kGreenYMul = 150; /* 0.587 * 256 */
+ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
+ 
++/* Skip pixels too dark for a reliable colour, in 8-bit units */
++static constexpr int kGreyMinGreen = 8;
++
++#define SWSTATS_ACCUMULATE_GREY(div)                                        \
++	{                                                                   \
++		const int black = greyBlack_ * (div);                       \
++		const int gg = static_cast<int>(g) - black;                 \
++		if (gg > kGreyMinGreen * (div)) {                           \
++			const int rr = ((static_cast<int>(r) - black) *     \
++					static_cast<int>(greyGainR_)) >> 8; \
++			const int bb = ((static_cast<int>(b) - black) *     \
++					static_cast<int>(greyGainB_)) >> 8; \
++			const int tol = (gg * kGreyTolerance) >> 8;         \
++			if (abs(rr - gg) < tol && abs(bb - gg) < tol) {     \
++				greyR += r;                                 \
++				greyG += g;                                 \
++				greyB += b;                                 \
++				nGrey++;                                    \
++			}                                                   \
++		}                                                           \
++	}
++
+ #define SWSTATS_START_LINE_STATS(pixel_t) \
+ 	pixel_t r, g, g2, b;              \
+ 	uint64_t yVal;                    \
+@@ -198,7 +228,11 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
+ 	uint64_t sumR = 0;                \
+ 	uint64_t sumG = 0;                \
+ 	uint64_t sumB = 0;                \
+-	uint64_t nSamples = 0;
++	uint64_t nSamples = 0;            \
++	uint64_t greyR = 0;               \
++	uint64_t greyG = 0;               \
++	uint64_t greyB = 0;               \
++	uint64_t nGrey = 0;
+ 
+ #define SWSTATS_ACCUMULATE_LINE_STATS(div)      \
+ 	if (r < kSaturationThreshold * (div) && \
+@@ -208,6 +242,7 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
+ 		sumG += g;                      \
+ 		sumB += b;                      \
+ 		nSamples++;                     \
++		SWSTATS_ACCUMULATE_GREY(div)    \
+ 	}                                       \
+                                                 \
+ 	yVal = r * kRedYMul;                    \
+@@ -215,11 +250,15 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
+ 	yVal += b * kBlueYMul;                  \
+ 	stats.yHistogram[yVal * SwIspStats::kYHistogramSize / (256 * 256 * (div))]++;
+ 
+-#define SWSTATS_FINISH_LINE_STATS() \
+-	stats.sum_.r() += sumR;     \
+-	stats.sum_.g() += sumG;     \
+-	stats.sum_.b() += sumB;     \
+-	stats.numPixels_ += nSamples;
++#define SWSTATS_FINISH_LINE_STATS()  \
++	stats.sum_.r() += sumR;      \
++	stats.sum_.g() += sumG;      \
++	stats.sum_.b() += sumB;      \
++	stats.numPixels_ += nSamples; \
++	stats.greySum_.r() += greyR; \
++	stats.greySum_.g() += greyG; \
++	stats.greySum_.b() += greyB; \
++	stats.greyPixels_ += nGrey;
+ 
+ void SwStatsCpu::statsBGGR8Line0(const uint8_t *src[], SwIspStats &stats)
+ {
+@@ -472,6 +511,23 @@ void SwStatsCpu::statsGBRG12PLine0(const uint8_t *src[], SwIspStats &stats)
+ 	SWSTATS_FINISH_LINE_STATS()
+ }
+ 
++/**
++ * \brief Set the white balance the grey pixel test is made with
++ * \param[in] gains The white balance gains of the frame
++ * \param[in] blackLevel The black level of the frame, 1.0 = full scale
++ *
++ * The statistics collect the pixels that look nearly grey with these gains
++ * separately, see SwIspStats::greySum_.
++ */
++void SwStatsCpu::setGreyReference(const RGB<double> &gains, double blackLevel)
++{
++	const double g = gains.g() > 0.0 ? gains.g() : 1.0;
++
++	greyGainR_ = static_cast<unsigned int>(std::clamp(gains.r() / g, 0.0, 16.0) * 256);
++	greyGainB_ = static_cast<unsigned int>(std::clamp(gains.b() / g, 0.0, 16.0) * 256);
++	greyBlack_ = static_cast<unsigned int>(std::clamp(blackLevel, 0.0, 1.0) * 255);
++}
++
+ /**
+  * \brief Reset state to start statistics gathering for a new frame
+  * \param[in] frame The frame number
+@@ -489,6 +545,8 @@ void SwStatsCpu::startFrame(uint32_t frame)
+ 	for (auto &s : stats_) {
+ 		s.sum_ = RGB<uint64_t>({ 0, 0, 0 });
+ 		s.numPixels_ = 0;
++		s.greySum_ = RGB<uint64_t>({ 0, 0, 0 });
++		s.greyPixels_ = 0;
+ 		s.yHistogram.fill(0);
+ 		s.sharpness = 0;
+ 		s.sharpnessBase = 0;
+@@ -509,12 +567,16 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
+ 	if (valid) {
+ 		sharedStats_->sum_ = RGB<uint64_t>({ 0, 0, 0 });
+ 		sharedStats_->numPixels_ = 0;
++		sharedStats_->greySum_ = RGB<uint64_t>({ 0, 0, 0 });
++		sharedStats_->greyPixels_ = 0;
+ 		sharedStats_->yHistogram.fill(0);
+ 		sharedStats_->sharpness = 0;
+ 		sharedStats_->sharpnessBase = 0;
+ 		for (const auto &s : stats_) {
+ 			sharedStats_->sum_ += s.sum_;
+ 			sharedStats_->numPixels_ += s.numPixels_;
++			sharedStats_->greySum_ += s.greySum_;
++			sharedStats_->greyPixels_ += s.greyPixels_;
+ 			sharedStats_->sharpness += s.sharpness;
+ 			sharedStats_->sharpnessBase += s.sharpnessBase;
+ 			for (unsigned int j = 0; j < SwIspStats::kYHistogramSize; j++)
+@@ -522,6 +584,7 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
+ 		}
+ 
+ 		sharedStats_->sum_ >>= sumShift_;
++		sharedStats_->greySum_ >>= sumShift_;
+ 	}
+ 
+ 	sharedStats_->valid = valid;
+-- 
+2.43.0
+

@@ -1,0 +1,263 @@
+From cdcdba4caa0a1fdfc4f3e2d33180e93ae0301cb2 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 18:34:40 +0100
+Subject: [PATCH 152/156] media: i2c: lc898128: Support a slave without its own
+ gyroscope
+
+The telephoto module of the OnePlus 8 Pro has a second LC898128 but no
+gyroscope: the vendor kernel starts the main camera's controller as a
+master that passes the gyroscope data on over SPI (command 0xf017), and the
+telephoto controller as its slave.
+
+Add the "onnn,master" property for the slave. It keeps the master powered
+through a runtime PM device link and starts only once the master sends
+the gyroscope data. A master that is powered only for its slave reads the
+gyroscope but leaves its lens alone. Add an optional "vdig" core supply,
+for a controller whose core supply is not switched with its own sensor.
+---
+ drivers/media/i2c/lc898128.c | 131 +++++++++++++++++++++++++++++++++--
+ 1 file changed, 124 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/media/i2c/lc898128.c b/drivers/media/i2c/lc898128.c
+index 06d9f6af2..d355db3d8 100644
+--- a/drivers/media/i2c/lc898128.c
++++ b/drivers/media/i2c/lc898128.c
+@@ -11,6 +11,11 @@
+  * Starting the servo moves the lens audibly, and applications power the
+  * sensor up briefly just to list the cameras. The servo therefore starts
+  * only once the sensor has stayed powered for a while.
++ *
++ * A module without a gyroscope of its own gets the gyroscope data from
++ * another LC898128 over SPI: the slave names it with "onnn,master" and keeps
++ * it powered through a second device link. A master that runs only for its
++ * slave, without its own sensor powered, does not start its servo.
+  */
+ 
+ #include <linux/delay.h>
+@@ -31,12 +36,14 @@
+ #define LC898128_SERVO_BOTH_ON		3
+ #define LC898128_CMD_OIS_ENABLE		0xf012
+ #define LC898128_CMD_GYRO_INIT		0xf015
++#define LC898128_CMD_GYRO_TO_SLAVE	0xf017
+ #define LC898128_REG_STATUS		0xf100
+ #define LC898128_STATUS_BUSY		0x01000000
+ 
+ #define LC898128_READY_RETRIES		10
+ #define LC898128_START_DELAY_MS		1500
+ #define LC898128_BUSY_TIMEOUT_MS	3000
++#define LC898128_MASTER_TIMEOUT_MS	8000
+ 
+ static bool enable = true;
+ module_param(enable, bool, 0644);
+@@ -50,9 +57,13 @@ static const char *const lc898128_supply_names[] = {
+ struct lc898128 {
+ 	struct i2c_client *client;
+ 	struct regulator_bulk_data supplies[ARRAY_SIZE(lc898128_supply_names)];
++	struct regulator *vdig;
+ 	struct device_link *link;
++	struct device_link *master_link;
++	struct lc898128 *master;
+ 	struct delayed_work start_work;
+ 	bool started;
++	bool gyro_started;
+ 	u32 gyro;
+ };
+ 
+@@ -135,16 +146,31 @@ static int lc898128_wait_idle(struct lc898128 *ois)
+ 	return -ETIMEDOUT;
+ }
+ 
+-static int lc898128_start(struct lc898128 *ois)
++static int lc898128_start_gyro(struct lc898128 *ois)
+ {
+-	u32 val;
+ 	int ret;
+ 
+ 	ret = lc898128_write(ois, LC898128_CMD_GYRO_INIT, ois->gyro);
+ 	if (!ret)
+ 		ret = lc898128_wait_idle(ois);
++
++	/* A master passes the gyroscope data on to its slave */
++	if (!ret && !ois->master)
++		ret = lc898128_write(ois, LC898128_CMD_GYRO_TO_SLAVE, 1);
++	if (!ret && !ois->master)
++		ret = lc898128_wait_idle(ois);
+ 	if (!ret)
+-		ret = lc898128_write(ois, LC898128_CMD_SERVO, LC898128_SERVO_BOTH_ON);
++		WRITE_ONCE(ois->gyro_started, true);
++
++	return ret;
++}
++
++static int lc898128_start(struct lc898128 *ois)
++{
++	u32 val;
++	int ret;
++
++	ret = lc898128_write(ois, LC898128_CMD_SERVO, LC898128_SERVO_BOTH_ON);
+ 	if (!ret)
+ 		ret = lc898128_wait_idle(ois);
+ 	if (!ret)
+@@ -162,6 +188,19 @@ static int lc898128_start(struct lc898128 *ois)
+ 	return 0;
+ }
+ 
++static int lc898128_wait_master(struct lc898128 *ois)
++{
++	unsigned long timeout = jiffies + msecs_to_jiffies(LC898128_MASTER_TIMEOUT_MS);
++
++	while (!READ_ONCE(ois->master->gyro_started)) {
++		if (time_after(jiffies, timeout))
++			return -ETIMEDOUT;
++		msleep(50);
++	}
++
++	return 0;
++}
++
+ static void lc898128_start_work(struct work_struct *work)
+ {
+ 	struct lc898128 *ois = container_of(to_delayed_work(work),
+@@ -170,6 +209,17 @@ static void lc898128_start_work(struct work_struct *work)
+ 	int ret;
+ 
+ 	ret = lc898128_wait_ready(ois, &version);
++
++	/* The gyroscope data must flow before the slave starts */
++	if (!ret && ois->master)
++		ret = lc898128_wait_master(ois);
++	if (!ret)
++		ret = lc898128_start_gyro(ois);
++
++	/* Powered only for its slave: leave the lens alone */
++	if (!ret && !pm_runtime_active(ois->link->consumer))
++		return;
++
+ 	if (!ret)
+ 		ret = lc898128_start(ois);
+ 	if (ret) {
+@@ -185,9 +235,18 @@ static int lc898128_runtime_resume(struct device *dev)
+ 	struct lc898128 *ois = dev_get_drvdata(dev);
+ 	int ret;
+ 
++	if (ois->vdig) {
++		ret = regulator_enable(ois->vdig);
++		if (ret)
++			return ret;
++	}
++
+ 	ret = regulator_bulk_enable(ARRAY_SIZE(ois->supplies), ois->supplies);
+-	if (ret)
++	if (ret) {
++		if (ois->vdig)
++			regulator_disable(ois->vdig);
+ 		return ret;
++	}
+ 
+ 	schedule_delayed_work(&ois->start_work,
+ 			      msecs_to_jiffies(LC898128_START_DELAY_MS));
+@@ -207,7 +266,40 @@ static int lc898128_runtime_suspend(struct device *dev)
+ 		lc898128_write(ois, LC898128_CMD_SERVO, LC898128_SERVO_OFF);
+ 		ois->started = false;
+ 	}
++	WRITE_ONCE(ois->gyro_started, false);
+ 	regulator_bulk_disable(ARRAY_SIZE(ois->supplies), ois->supplies);
++	if (ois->vdig)
++		regulator_disable(ois->vdig);
++
++	return 0;
++}
++
++static int lc898128_get_master(struct lc898128 *ois)
++{
++	struct device *dev = &ois->client->dev;
++	struct i2c_client *master;
++	struct device_node *np;
++
++	np = of_parse_phandle(dev->of_node, "onnn,master", 0);
++	if (!np)
++		return 0;
++	master = of_find_i2c_device_by_node(np);
++	of_node_put(np);
++	if (!master)
++		return -EPROBE_DEFER;
++
++	/* Wait until this driver has probed the master */
++	if (master->dev.driver != dev->driver || !i2c_get_clientdata(master)) {
++		put_device(&master->dev);
++		return -EPROBE_DEFER;
++	}
++	ois->master = i2c_get_clientdata(master);
++
++	ois->master_link = device_link_add(dev, &master->dev,
++					   DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
++	put_device(&master->dev);
++	if (!ois->master_link)
++		return dev_err_probe(dev, -EINVAL, "failed to link to the master\n");
+ 
+ 	return 0;
+ }
+@@ -241,6 +333,15 @@ static int lc898128_probe(struct i2c_client *client)
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "failed to get regulators\n");
+ 
++	/* Core supply, where it is not switched with the image sensor */
++	ois->vdig = devm_regulator_get_optional(dev, "vdig");
++	if (IS_ERR(ois->vdig)) {
++		ret = PTR_ERR(ois->vdig);
++		if (ret != -ENODEV)
++			return dev_err_probe(dev, ret, "failed to get vdig\n");
++		ois->vdig = NULL;
++	}
++
+ 	np = of_parse_phandle(dev->of_node, "onnn,camera", 0);
+ 	if (!np)
+ 		return dev_err_probe(dev, -EINVAL, "no onnn,camera\n");
+@@ -270,6 +371,12 @@ static int lc898128_probe(struct i2c_client *client)
+ 		return ret;
+ 	}
+ 
++	ret = lc898128_get_master(ois);
++	if (ret) {
++		put_device(&sensor->dev);
++		return ret;
++	}
++
+ 	pm_runtime_set_suspended(dev);
+ 	ret = devm_pm_runtime_enable(dev);
+ 	if (ret) {
+@@ -284,11 +391,19 @@ static int lc898128_probe(struct i2c_client *client)
+ 	ois->link = device_link_add(&sensor->dev, dev,
+ 				    DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
+ 	put_device(&sensor->dev);
+-	if (!ois->link)
++	if (!ois->link) {
++		if (ois->master_link)
++			device_link_del(ois->master_link);
+ 		return dev_err_probe(dev, -EINVAL, "failed to link to the camera\n");
++	}
+ 
+-	dev_info(dev, "firmware %08x, follows %s\n", version,
+-		 dev_name(ois->link->consumer));
++	if (ois->master)
++		dev_info(dev, "firmware %08x, follows %s, gyroscope from %s\n",
++			 version, dev_name(ois->link->consumer),
++			 dev_name(&ois->master->client->dev));
++	else
++		dev_info(dev, "firmware %08x, follows %s\n", version,
++			 dev_name(ois->link->consumer));
+ 
+ 	return 0;
+ }
+@@ -298,6 +413,8 @@ static void lc898128_remove(struct i2c_client *client)
+ 	struct lc898128 *ois = i2c_get_clientdata(client);
+ 
+ 	device_link_del(ois->link);
++	if (ois->master_link)
++		device_link_del(ois->master_link);
+ }
+ 
+ static const struct of_device_id lc898128_of_match[] = {
+-- 
+2.43.0
+

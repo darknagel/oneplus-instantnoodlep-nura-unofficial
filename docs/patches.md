@@ -66,7 +66,11 @@
 | Sound in PipeWire: DisplayPort audio as its own UCM use case, since without a monitor it made PipeWire drop the speakers and microphones; the speaker amplifiers get 16-bit samples, at 24 bit they play far too quietly | works | pmaports 0049, `system/61-oneplus-instantnoodlep-speaker-s16.conf` |
 | Camera tuning from the stock OnePlus tuning: colour matrices (main, ultrawide, telephoto) and lens shading tables (all four), new AGC limits so bright areas no longer clip; noise robust autofocus sharpness, and the GPU debayer statistics now cover the whole frame instead of its top left corner (autofocus, exposure and white balance measured only that corner) | works | libcamera 0007–0008, pmaports 0055 |
 | Autofocus faster and calmer: statistics for every second frame, and a climb from the current lens position (large steps where the image is evenly blurred, coarse steps near the peak, Gaussian fit instead of a fine sweep) instead of a full sweep from the far end for every scan; time to focus main 4.6 → 1.2 s, ultrawide 4.3 → 1.1 s, telephoto 2.7 → 0.6 s | works | libcamera 0009–0010, pmaports 0066 |
-| OIS of the telephoto camera (second LC898128), colour tuning of the front camera, calls | not done | – |
+| OIS of the telephoto camera: its LC898128 has no gyroscope of its own and runs as a slave of the main camera's controller, which passes the gyroscope data on (as in the vendor kernel); the main controller gets its core supply PM8009 L1 | works, about 10 % sharper hand-held telephoto frames | kernel 0152–0153, pmaports 0067 |
+| Faster preview: 2000×1500 4×4 binned modes for main and ultrawide over the full field of view, built from the stock 2000×1128 settings at the link rate of the 4000×3000 mode; libcamera picks them for previews up to 1280×960 | works, 60 fps instead of 30; the 4×4 mode needs about twice the analogue gain | kernel 0154–0155, pmaports 0067 |
+| Telephoto sensor supply `afvdd` was missing (dummy regulator) | works | kernel 0156, pmaports 0067 |
+| White balance: the AWB uses the pixels that look nearly grey with the current gains, so large coloured areas no longer tint the picture; gains below 1.0 allowed (`minGain`), which removes the red cast of the colour filter camera; colour matrices of the stock tuning for the front camera, where the nearly grey pixels count only half (`greyWeight` 0.5): it mostly sees display light | works | libcamera 0011–0012, pmaports 0068 |
+| Phase detection autofocus | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
 `camnoc_axi_src` clock was never scaled, so full resolution RDI capture never completed a
@@ -78,8 +82,11 @@ OnePlus 8 Pro: two hardware sources per sensor and seven algorithm records. It b
 virtual-sensor writes to those seven records and preserves the existing layout rules.
 Without it, the sensor device-info driver fails to bind with `-EINVAL`.
 
-The telephoto module has two chips next to the sensor: an LC898128 at 0x24, which only
-drives the optical image stabilisation, and the LC898217XC at 0x74 that moves the lens.
+The telephoto module has two chips next to the sensor: an LC898128 at 0x24 for the optical
+image stabilisation and the LC898217XC at 0x74 that moves the lens. The module has no
+gyroscope; the main camera's LC898128 reads the gyroscope and passes the data on over SPI
+(command 0xf017), so it is powered while the telephoto camera runs, without moving its
+own lens.
 While the telephoto camera streams, its bus also answers at 0x75, which no driver uses.
 It reads back only zeros and is most likely a second address of the LC898217XC, not
 another actuator. Main (AK7377 at 0x0c) and ultrawide (AK7377 at 0x0f) are the other
@@ -94,8 +101,6 @@ again when the sharpness changes for 0.4 s.
 
 ## Other notes
 
-- The first focus command right after the actuator is powered on times out on the CCI bus.
-  Later commands work, so this has no visible effect.
 - `bootmac` sets the Bluetooth address at boot, the chip has none of its own. Without it,
   BlueZ ignores the controller.
 - Mobile data runs on the MHI channel `IP_HW0` without doorbell burst mode (kernel 0031).
@@ -143,7 +148,9 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   adds kernel 0115 (panel powered off again when the DSC parameters cannot be sent) and
   0116 (bounds check in the sensor devinfo SAR parser). The DisplayPort stack
   follows these patches; see the table above. 0066 adds libcamera 0009–0010 (faster autofocus)
-  and its tuning. Package numbers 0050, 0051 and 0053
+  and its tuning, 0067 adds kernel 0152–0156 (telephoto OIS, binned modes) and 0068
+  adds libcamera 0011–0012 (white balance) with the tuning. Package numbers 0062–0065
+  and kernel numbers 0148–0151 are left for the open DisplayPort pull requests. Package numbers 0050, 0051 and 0053
   and kernel numbers 0105–0113 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
@@ -156,10 +163,11 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   Nura `temp/libcamera`: sensor helpers for S5K3M5 (0001) and IMX586, IMX689 and GC5035
   (0002), the autofocus series (0003–0005), a shorter autofocus scan (0006), a noise
   robust sharpness measure (0007) and whole-frame statistics for the GPU debayer (0008),
-  statistics for every second frame (0009) and an autofocus that climbs from the current
-  lens position (0010). The IMX471
+  statistics for every second frame (0009), an autofocus that climbs from the current
+  lens position (0010), a white balance on nearly grey pixels (0011) and a `minGain`
+  tuning value for the AWB (0012). The IMX471
   helper is upstream since v0.8.0. The autofocus and image tuning is in the sensor files of
-  pmaports patches 0034, 0055 and 0066.
+  pmaports patches 0034, 0055, 0066 and 0068.
 - `system/` – small files the image adds: the `ois-gyro` service, which keeps the
   gyroscope running while the main camera's OIS is active, the AK7375 option without the
   lens ramp, camera names for PipeWire and 16-bit samples for the speakers.

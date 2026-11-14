@@ -1,0 +1,160 @@
+From 08d32d9c586c18c059a0024db5383160993b5660 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 18:55:04 +0100
+Subject: [PATCH 155/156] media: i2c: imx586: Add a 2000x1500 4x4 binned mode
+
+Like the main camera: a 4x4 binned 2000x1500 mode over the full field of
+view, with the binning and readout registers of the stock 2000x1128 mode
+and the PLL settings of the 4000x3000 mode, so the link frequency stays at
+421.2 MHz. The default frame length gives 60 fps.
+---
+ drivers/media/i2c/imx586.c | 126 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 126 insertions(+)
+
+diff --git a/drivers/media/i2c/imx586.c b/drivers/media/i2c/imx586.c
+index 1fcb7a023..3ace68384 100644
+--- a/drivers/media/i2c/imx586.c
++++ b/drivers/media/i2c/imx586.c
+@@ -1925,6 +1925,113 @@ static const struct cci_reg_sequence imx586_4000x3000_regs[] = {
+ 	{ CCI_REG8(0xa678), 0x20 },
+ };
+ 
++/*
++ * 4x4 binned: the 4000x3000 settings with the binning, readout and output
++ * registers of the stock 2000x1128 mode, over the full sensor height.
++ */
++static const struct cci_reg_sequence imx586_2000x1500_regs[] = {
++	{ CCI_REG8(0x0112), 0x0a },
++	{ CCI_REG8(0x0113), 0x0a },
++	{ CCI_REG8(0x0114), 0x02 },
++	{ CCI_REG8(0x0342), 0x15 },
++	{ CCI_REG8(0x0343), 0x60 },
++	{ CCI_REG8(0x0340), 0x0a },
++	{ CCI_REG8(0x0341), 0x6b },
++	{ CCI_REG8(0x0344), 0x00 },
++	{ CCI_REG8(0x0345), 0x00 },
++	{ CCI_REG8(0x0346), 0x00 },
++	{ CCI_REG8(0x0347), 0x00 },
++	{ CCI_REG8(0x0348), 0x1f },
++	{ CCI_REG8(0x0349), 0x3f },
++	{ CCI_REG8(0x034a), 0x17 },
++	{ CCI_REG8(0x034b), 0x6f },
++	{ CCI_REG8(0x0220), 0x62 },
++	{ CCI_REG8(0x0222), 0x01 },
++	{ CCI_REG8(0x0900), 0x01 },
++	{ CCI_REG8(0x0901), 0x44 },
++	{ CCI_REG8(0x0902), 0x08 },
++	{ CCI_REG8(0x3140), 0x00 },
++	{ CCI_REG8(0x3246), 0x89 },
++	{ CCI_REG8(0x3247), 0x89 },
++	{ CCI_REG8(0x3f15), 0x00 },
++	{ CCI_REG8(0x0401), 0x00 },
++	{ CCI_REG8(0x0404), 0x00 },
++	{ CCI_REG8(0x0405), 0x10 },
++	{ CCI_REG8(0x0408), 0x00 },
++	{ CCI_REG8(0x0409), 0x00 },
++	{ CCI_REG8(0x040a), 0x00 },
++	{ CCI_REG8(0x040b), 0x00 },
++	{ CCI_REG8(0x040c), 0x07 },
++	{ CCI_REG8(0x040d), 0xd0 },
++	{ CCI_REG8(0x040e), 0x05 },
++	{ CCI_REG8(0x040f), 0xdc },
++	{ CCI_REG8(0x034c), 0x07 },
++	{ CCI_REG8(0x034d), 0xd0 },
++	{ CCI_REG8(0x034e), 0x05 },
++	{ CCI_REG8(0x034f), 0xdc },
++	{ CCI_REG8(0x0301), 0x05 },
++	{ CCI_REG8(0x0303), 0x02 },
++	{ CCI_REG8(0x0305), 0x02 },
++	{ CCI_REG8(0x0306), 0x00 },
++	{ CCI_REG8(0x0307), 0x72 },
++	{ CCI_REG8(0x030b), 0x02 },
++	{ CCI_REG8(0x030d), 0x0c },
++	{ CCI_REG8(0x030e), 0x04 },
++	{ CCI_REG8(0x030f), 0x1d },
++	{ CCI_REG8(0x0310), 0x01 },
++	{ CCI_REG8(0x3620), 0x00 },
++	{ CCI_REG8(0x3621), 0x00 },
++	{ CCI_REG8(0x3c11), 0x0c },
++	{ CCI_REG8(0x3c12), 0x05 },
++	{ CCI_REG8(0x3c13), 0x2c },
++	{ CCI_REG8(0x3f0c), 0x00 },
++	{ CCI_REG8(0x3f14), 0x00 },
++	{ CCI_REG8(0x3f80), 0x02 },
++	{ CCI_REG8(0x3f81), 0x67 },
++	{ CCI_REG8(0x3f8c), 0x02 },
++	{ CCI_REG8(0x3f8d), 0x44 },
++	{ CCI_REG8(0x3ff8), 0x00 },
++	{ CCI_REG8(0x3ff9), 0x00 },
++	{ CCI_REG8(0x3ffe), 0x01 },
++	{ CCI_REG8(0x3fff), 0x90 },
++	{ CCI_REG8(0x0202), 0x0e },
++	{ CCI_REG8(0x0203), 0x4a },
++	{ CCI_REG8(0x0224), 0x01 },
++	{ CCI_REG8(0x0225), 0xf4 },
++	{ CCI_REG8(0x3fe0), 0x01 },
++	{ CCI_REG8(0x3fe1), 0xf4 },
++	{ CCI_REG8(0x0204), 0x00 },
++	{ CCI_REG8(0x0205), 0x70 },
++	{ CCI_REG8(0x0216), 0x00 },
++	{ CCI_REG8(0x0217), 0x70 },
++	{ CCI_REG8(0x0218), 0x01 },
++	{ CCI_REG8(0x0219), 0x00 },
++	{ CCI_REG8(0x020e), 0x01 },
++	{ CCI_REG8(0x020f), 0x00 },
++	{ CCI_REG8(0x0210), 0x01 },
++	{ CCI_REG8(0x0211), 0x00 },
++	{ CCI_REG8(0x0212), 0x01 },
++	{ CCI_REG8(0x0213), 0x00 },
++	{ CCI_REG8(0x0214), 0x01 },
++	{ CCI_REG8(0x0215), 0x00 },
++	{ CCI_REG8(0x3fe2), 0x00 },
++	{ CCI_REG8(0x3fe3), 0x70 },
++	{ CCI_REG8(0x3fe4), 0x01 },
++	{ CCI_REG8(0x3fe5), 0x00 },
++	{ CCI_REG8(0x3e20), 0x01 },
++	{ CCI_REG8(0x3e37), 0x00 },
++	{ CCI_REG8(0x3e20), 0x01 },
++	{ CCI_REG8(0x3e3b), 0x00 },
++	{ CCI_REG8(0x4434), 0x00 },
++	{ CCI_REG8(0x4435), 0xf8 },
++	{ CCI_REG8(0xa56b), 0x13 },
++	{ CCI_REG8(0xa56a), 0x13 },
++	{ CCI_REG8(0xa569), 0x06 },
++	{ CCI_REG8(0xa67c), 0x01 },
++	{ CCI_REG8(0xa67a), 0x01 },
++	{ CCI_REG8(0xa678), 0x20 },
++};
++
+ static const struct imx586_mode imx586_supported_modes[] = {
+ 	{
+ 		/* 2x2 binned, 30 fps */
+@@ -1945,6 +2052,25 @@ static const struct imx586_mode imx586_supported_modes[] = {
+ 			.num_regs = ARRAY_SIZE(imx586_4000x3000_regs),
+ 		},
+ 	},
++	{
++		/* 4x4 binned, 60 fps */
++		.width = 2000,
++		.height = 1500,
++		.hts = 3610,
++		.vts = 2667,
++		.link_freq_index = 0,
++		.pixel_rate = 577650000,
++		.crop = {
++			.left = 0,
++			.top = 0,
++			.width = 8000,
++			.height = 6000,
++		},
++		.reg_list = {
++			.regs = imx586_2000x1500_regs,
++			.num_regs = ARRAY_SIZE(imx586_2000x1500_regs),
++		},
++	},
+ };
+ 
+ static int imx586_set_ctrl(struct v4l2_ctrl *ctrl)
+-- 
+2.43.0
+

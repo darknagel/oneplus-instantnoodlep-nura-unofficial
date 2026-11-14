@@ -1,0 +1,26 @@
+From b73ac22447e6e1eae30be0042c57ca57c97e6360 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 18:55:16 +0100
+Subject: [PATCH 156/156] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Give
+ the telephoto sensor its actuator supply
+
+The S5K3M5 driver asks for the actuator supply "afvdd" and used a dummy regulator without it. Pass the actuator regulator the focus lens uses as well.
+---
+ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 96ac444ca..641d1cfa7 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -1143,6 +1143,7 @@ cam_tele: camera@2d {
+ 
+ 		reset-gpios = <&tlmm 90 GPIO_ACTIVE_LOW>;
+ 
++		afvdd-supply = <&vreg_cam_tele_vaf>;
+ 		vdda-supply = <&vreg_cam_tele_avdd>;
+ 		vddd-supply = <&vreg_l4f_1p05>;
+ 		vddio-supply = <&vreg_l7f_1p8>;
+-- 
+2.43.0
+
