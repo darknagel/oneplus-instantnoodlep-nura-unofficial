@@ -1,0 +1,83 @@
+From 2ff88d33136005419f5f930c870bcdcebc523831 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Fri, 13 Nov 2026 19:35:25 +0000
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: allow an unplugged
+ DisplayPort audio probe
+
+Add kernel patch 0127, upstream d858770e86e7, allowing unplugged audio capability probing. Advance to release 85.
+---
+ ...-allow-audio-probe-when-disconnected.patch | 37 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  4 +-
+ 2 files changed, 40 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0127-drm-msm-dp-allow-audio-probe-when-disconnected.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0127-drm-msm-dp-allow-audio-probe-when-disconnected.patch b/device/testing/linux-postmarketos-qcom-sm8250/0127-drm-msm-dp-allow-audio-probe-when-disconnected.patch
+new file mode 100644
+index 0000000..17aaa4b
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0127-drm-msm-dp-allow-audio-probe-when-disconnected.patch
+@@ -0,0 +1,37 @@
++From d858770e86e75bf78429b9f5210b7556ef431033 Mon Sep 17 00:00:00 2001
++From: Kumar Anurag <kumar.singh@oss.qualcomm.com>
++Date: Tue, 16 Jun 2026 08:12:52 -0700
++Subject: [PATCH] drm/msm/dp: return 0 from audio_prepare when cable is
++ disconnected
++
++PipeWire treats a non-zero return from prepare as fatal, marking the
++DP audio device as a dummy sink when the cable is unplugged. The
++active_stream_cnt guard already prevents any unclocked hardware access,
++so return success instead of -EINVAL when the link is not active.
++
++Signed-off-by: Kumar Anurag <kumar.singh@oss.qualcomm.com>
++Suggested-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
++Reviewed-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com> # same behaviour
++Patchwork: https://patchwork.freedesktop.org/patch/733663/
++Link: https://lore.kernel.org/r/20260616151252.3599089-2-kumar.singh@oss.qualcomm.com
++Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
++---
++ drivers/gpu/drm/msm/dp/dp_audio.c | 4 +---
++ 1 file changed, 1 insertion(+), 3 deletions(-)
++
++diff --git a/drivers/gpu/drm/msm/dp/dp_audio.c b/drivers/gpu/drm/msm/dp/dp_audio.c
++index 41018e82efa10e..df222943ae57f9 100644
++--- a/drivers/gpu/drm/msm/dp/dp_audio.c
+++++ b/drivers/gpu/drm/msm/dp/dp_audio.c
++@@ -284,10 +284,8 @@ int msm_dp_audio_prepare(struct drm_bridge *bridge,
++ 	 * such cases check for connection status and bail out if not
++ 	 * connected.
++ 	 */
++-	if (!msm_dp_display->power_on) {
++-		rc = -EINVAL;
+++	if (!msm_dp_display->power_on)
++ 		goto end;
++-	}
++ 
++ 	audio = msm_dp_audio_get_data(msm_dp_display);
++ 	if (IS_ERR(audio)) {
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 91eed5a..f3b35ff 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=84
++pkgrel=85
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -156,6 +156,7 @@ source="
+ 	0124-drm-msm-dp-do-not-push-idle-on-a-link-that-is-down.patch
+ 	0125-drm-msm-dpu-cache-layer-mixers-for-encoder-cleanup.patch
+ 	0126-drm-msm-dpu-clean-up-command-mode-encoder-on-disable.patch
++	0127-drm-msm-dp-allow-audio-probe-when-disconnected.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -319,4 +320,5 @@ f4de0c04450a74fcd907836614dfd2444fd47ca65485d671466be914fa1e958e845929d27ba996fb
+ 40ed000dd0c9c30b0e6c6bf7a30a0c6ab4a3bfdcac396d40b83f9cf76ae2c5aab5f5f5c63bd948e176ff2e2c668524191caf556eee4889f4b8b0efa2b01970cb  0124-drm-msm-dp-do-not-push-idle-on-a-link-that-is-down.patch
+ 6c8d1d5e061b60ed57a56fefccdb649fbc93806c141d44f92170ddfe5000384e2d61c8fb46bce927c0383614b4feae2327126050cd149fe15bc1fbbfb24926ae  0125-drm-msm-dpu-cache-layer-mixers-for-encoder-cleanup.patch
+ 87bea574b763f08a75e83d58ad6dcb9f245e34277a2a2c18c9b80d45fcc51f2f5ffcda7787b5a0e2d8c959efdb87dd3461a39bf73fc8389893f5ea48739d04db  0126-drm-msm-dpu-clean-up-command-mode-encoder-on-disable.patch
++c80bb37f924a64d3f66ba0797c42c056b35add5abfc731179d54754c21eda86a9e006c3ecb4596753777e3e441d02cefc3294241b6bd93ec70068485e4942734  0127-drm-msm-dp-allow-audio-probe-when-disconnected.patch
+ "

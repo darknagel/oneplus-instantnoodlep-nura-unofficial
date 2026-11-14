@@ -1,0 +1,29 @@
+From 0812ec3505ab0f42570828b730c43dbb27f445b2 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Wed, 11 Nov 2026 01:38:17 +0000
+Subject: [PATCH] arm64: dts: qcom: instantnoodlep: allow DisplayPort link
+ rates up to HBR3
+
+Without link-frequencies the DP driver caps the link at HBR2. The
+SM8250 controller and combo PHY support 8.1 Gbps per lane, so list all
+four rates. Link training still falls back when a sink or cable cannot
+hold the higher rate.
+---
+ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 09d082e0e..407a273d1 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -1305,6 +1305,7 @@ &mdss_dp {
+ 
+ &mdss_dp_out {
+ 	data-lanes = <0 1 2 3>;
++	link-frequencies = /bits/ 64 <1620000000 2700000000 5400000000 8100000000>;
+ 	remote-endpoint = <&usb_1_qmpphy_dp_in>;
+ };
+ 
+-- 
+2.51.2
+
