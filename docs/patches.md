@@ -7,6 +7,7 @@
 | Display (Samsung AMS678UW01, new panel driver, 1440×3168 @ 120 Hz) | works | kernel 0001–0003, pmaports 0001 |
 | GPU (Adreno 650, Mesa freedreno), Phosh accelerated | works | kernel 0004, pmaports 0001 |
 | USB-C DisplayPort: video with USB2 alongside, VBUS supply and power-role swap, audio | works | kernel 0088–0103, pmaports 0045–0047, 0049; [notes](displayport.md) |
+| DisplayPort HBR3 and HDR signalling (`Colorspace`, `HDR_OUTPUT_METADATA`) | draft | kernel 0117–0122, pmaports 0058; [notes](displayport.md#hdr) |
 | Charger input limit from USB-C/PD or USB-A detection, 2 A battery current | works | kernel 0082–0087, pmaports 0044; [notes](charging.md) |
 | Speakers + 3 microphones (VA macro, mic bias as in vendor DT) | works | kernel 0005, pmaports 0002, 0007 |
 | False headset detection with an ordinary USB cable, codec runtime-PM errors and unsorted RX register defaults | fixed; analog USB-C headsets untested | kernel 0055–0060, pmaports 0030; [notes](audio.md) |
@@ -127,8 +128,9 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   and 0055 adds the camera tuning and libcamera 0007–0008. 0056 reserves 256 MiB CMA
   (full-resolution camera output) and restarts iio-sensor-proxy when it crashes. 0057
   adds kernel 0115 (panel powered off again when the DSC parameters cannot be sent) and
-  0116 (bounds check in the sensor devinfo SAR parser). 0050,
-  0051, 0053 and kernel 0105–0113 are left for the open DisplayPort pull requests.
+  0116 (bounds check in the sensor devinfo SAR parser). The DisplayPort stack
+  follows these patches; see the table above. Package numbers 0050, 0051 and 0053
+  and kernel numbers 0105–0113 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `firmware/` – boot service that copies SLPI, Venus and CDSP firmware from your own phone.
