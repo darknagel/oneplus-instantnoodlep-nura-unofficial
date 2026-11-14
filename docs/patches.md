@@ -65,6 +65,7 @@
 | Torch: the stock camera drives both PM8150L flash channels together as one flash; describing it as one LED with both sources also gives it the name `white:flash`, which the Plasma Mobile and Phosh torch switches look for | works | kernel 0104, pmaports 0048 |
 | Sound in PipeWire: DisplayPort audio as its own UCM use case, since without a monitor it made PipeWire drop the speakers and microphones; the speaker amplifiers get 16-bit samples, at 24 bit they play far too quietly | works | pmaports 0049, `system/61-oneplus-instantnoodlep-speaker-s16.conf` |
 | Camera tuning from the stock OnePlus tuning: colour matrices (main, ultrawide, telephoto) and lens shading tables (all four), new AGC limits so bright areas no longer clip; noise robust autofocus sharpness, and the GPU debayer statistics now cover the whole frame instead of its top left corner (autofocus, exposure and white balance measured only that corner) | works | libcamera 0007–0008, pmaports 0055 |
+| Autofocus faster and calmer: statistics for every second frame, and a climb from the current lens position (large steps where the image is evenly blurred, coarse steps near the peak, Gaussian fit instead of a fine sweep) instead of a full sweep from the far end for every scan; time to focus main 4.6 → 1.2 s, ultrawide 4.3 → 1.1 s, telephoto 2.7 → 0.6 s | works | libcamera 0009–0010, pmaports 0066 |
 | OIS of the telephoto camera (second LC898128), colour tuning of the front camera, calls | not done | – |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
@@ -79,8 +80,17 @@ Without it, the sensor device-info driver fails to bind with `-EINVAL`.
 
 The telephoto module has two chips next to the sensor: an LC898128 at 0x24, which only
 drives the optical image stabilisation, and the LC898217XC at 0x74 that moves the lens.
-The autofocus sweeps the lens in coarse and then fine steps and picks the sharpest
-position; in continuous mode it scans again when the sharpness changes.
+While the telephoto camera streams, its bus also answers at 0x75, which no driver uses.
+It reads back only zeros and is most likely a second address of the LC898217XC, not
+another actuator. Main (AK7377 at 0x0c) and ultrawide (AK7377 at 0x0f) are the other
+cameras with a focus actuator; the stock module files list none for the front camera
+and the colour filter camera, which have fixed focus.
+
+The autofocus starts at the current lens position and climbs the sharpness curve: large
+steps while the image is evenly blurred, coarse steps near the peak, a turn when the
+first step makes the image clearly less sharp. The final position is the top of a
+Gaussian through the sharpest position and its neighbours. In continuous mode it scans
+again when the sharpness changes for 0.4 s.
 
 ## Other notes
 
@@ -132,7 +142,8 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   (full-resolution camera output) and restarts iio-sensor-proxy when it crashes. 0057
   adds kernel 0115 (panel powered off again when the DSC parameters cannot be sent) and
   0116 (bounds check in the sensor devinfo SAR parser). The DisplayPort stack
-  follows these patches; see the table above. Package numbers 0050, 0051 and 0053
+  follows these patches; see the table above. 0066 adds libcamera 0009–0010 (faster autofocus)
+  and its tuning. Package numbers 0050, 0051 and 0053
   and kernel numbers 0105–0113 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
@@ -144,9 +155,11 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
 - `libcamera-patches/` – against libcamera v0.8.0 plus the patches already carried in
   Nura `temp/libcamera`: sensor helpers for S5K3M5 (0001) and IMX586, IMX689 and GC5035
   (0002), the autofocus series (0003–0005), a shorter autofocus scan (0006), a noise
-  robust sharpness measure (0007) and whole-frame statistics for the GPU debayer (0008). The IMX471
+  robust sharpness measure (0007) and whole-frame statistics for the GPU debayer (0008),
+  statistics for every second frame (0009) and an autofocus that climbs from the current
+  lens position (0010). The IMX471
   helper is upstream since v0.8.0. The autofocus and image tuning is in the sensor files of
-  pmaports patches 0034 and 0055.
+  pmaports patches 0034, 0055 and 0066.
 - `system/` – small files the image adds: the `ois-gyro` service, which keeps the
   gyroscope running while the main camera's OIS is active, the AK7375 option without the
   lens ramp, camera names for PipeWire and 16-bit samples for the speakers.

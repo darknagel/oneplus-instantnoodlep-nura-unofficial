@@ -1,0 +1,31 @@
+From 48aee6f27bbf8cf91d5d6241e0c7990b1b166202 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 18:21:39 +0100
+Subject: [PATCH 09/10] software_isp: Calculate the statistics for every second
+ frame
+
+The autofocus waits for a statistics frame after every lens move, so with
+statistics for only every fourth frame a focus step takes eight frames,
+and a scan over the lens range takes several seconds. Statistics for every
+second frame halve that. The AGC uses the exposure and gain of the frame
+the statistics belong to, so it is not affected by the higher rate.
+---
+ include/libcamera/internal/software_isp/swstats_cpu.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/include/libcamera/internal/software_isp/swstats_cpu.h b/include/libcamera/internal/software_isp/swstats_cpu.h
+index abf2a60..8327695 100644
+--- a/include/libcamera/internal/software_isp/swstats_cpu.h
++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
+@@ -44,7 +44,7 @@ public:
+ 	 * Run stats once every 4 frames to ensure any previous
+ 	 * exposure changes have been applied.
+ 	 */
+-	static constexpr uint32_t kStatPerNumFrames = 4;
++	static constexpr uint32_t kStatPerNumFrames = 2;
+ 
+ 	bool isValid() const { return sharedStats_.fd().isValid(); }
+ 
+-- 
+2.43.0
+

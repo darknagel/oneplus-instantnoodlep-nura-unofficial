@@ -239,7 +239,7 @@ For the compass and sensor setup on old images see [`docs/sensors.md`](docs/sens
 - Cameras: colours, shading and exposure come from the stock tuning, but white balance is a
   simple grey world: large coloured areas tint the picture (the front camera has no colour
   matrix for that reason). Main and ultrawide have one mode each (4000×3000 at 30 fps);
-  autofocus is contrast only and takes about 3 seconds.
+  autofocus is contrast only and takes about 1 second.
 - Charging has no temperature steps yet: Android reduces the current above 45 °C and stops
   at 50 °C.
 - Under Plasma Mobile the keyboard did not always open in the SIM PIN popup. Enter the PIN in

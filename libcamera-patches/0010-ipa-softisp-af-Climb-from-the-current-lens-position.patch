@@ -1,0 +1,607 @@
+From 5c276546a348b7759ef4bf1c10c09ff2c2f5a213 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 18:21:39 +0100
+Subject: [PATCH 10/10] ipa: softisp: af: Climb from the current lens position
+
+Every scan ran the lens to the far end of its range and swept the whole
+range in coarse steps, followed by a fine sweep around the best position.
+That took up to 21 steps, and the lens visibly ran through the whole range
+even when the scene had changed only a little.
+
+Start the scan at the current lens position instead and climb the
+sharpness curve: large steps (flatStep) while the curve is flat, coarse
+steps once it rises, turn around when the first step clearly loses
+sharpness, and search the other side of the start position when the end
+of the range is reached without a peak. Replace the fine sweep by the top
+of a Gaussian fitted through the best position and its neighbours,
+measuring a missing neighbour at coarse step distance first. A scan
+without a clear peak ends in AfStateFailed.
+
+A neighbour of the peak that is less sharp than the sample beyond it is
+measured once more, as single bad measurements right after a lens move
+happen now and then.
+
+The lens keeps its position from the previous session, so move it to
+initialPosition (default: start of the range) before the first
+measurement.
+---
+ src/ipa/softisp/algorithms/af.cpp | 368 +++++++++++++++++++++++-------
+ src/ipa/softisp/algorithms/af.h   |  36 ++-
+ 2 files changed, 311 insertions(+), 93 deletions(-)
+
+diff --git a/src/ipa/softisp/algorithms/af.cpp b/src/ipa/softisp/algorithms/af.cpp
+index 59a555e..c2506ef 100755
+--- a/src/ipa/softisp/algorithms/af.cpp
++++ b/src/ipa/softisp/algorithms/af.cpp
+@@ -7,6 +7,8 @@
+ 
+ #include <algorithm>
+ #include <cmath>
++#include <cstdlib>
++#include <iterator>
+ 
+ #include <linux/v4l2-controls.h>
+ 
+@@ -22,27 +24,41 @@ namespace ipa::softisp::algorithms {
+  * \class Af
+  * \brief Contrast detection autofocus for the software ISP
+  *
+- * The lens is swept over its range in coarse steps while the sharpness
+- * measure of the statistics is recorded. A fine sweep around the sharpest
+- * coarse position then picks the final lens position. In continuous mode a
+- * new scan starts when the sharpness changes significantly for a few
+- * statistics frames in a row, for example because the scene changed.
++ * A scan starts at the current lens position and climbs the sharpness curve.
++ * Far from focus the curve is flat, so the lens moves in large steps
++ * (flatStep) there and in smaller steps (coarseStep) once the sharpness
++ * rises. When the first step from the start position makes the image clearly
++ * less sharp, the scan turns around; when it reaches the end of the range
++ * without a peak, it searches the other side of the start position. The scan
++ * stops once the sharpness has dropped well below the best value for a few
++ * steps. The final position is the top of a Gaussian fitted through the best
++ * position and its two neighbours, which replaces a fine sweep.
+  *
+- * The sharpness is normalised by the brightness of the measured area, so
+- * exposure changes from the AGC do not look like focus changes.
++ * Starting at the current position keeps rescans short and the lens close to
++ * focus, instead of running it to one end of the range for every scan. When
++ * the camera starts, the lens is moved to initialPosition (default: the start
++ * of the range) first, as it still holds the position of the last session.
++ *
++ * In continuous mode a new scan starts when the sharpness changes
++ * significantly for a few statistics frames in a row, for example because
++ * the scene changed.
+  *
+- * Statistics are only calculated for every fourth frame, and the lens needs
+- * time to settle after a move. The statistics frames that follow a move are
+- * therefore skipped, so that every measurement belongs to the lens position
+- * it is recorded for.
++ * The sharpness is normalised by the brightness of the measured area, so
++ * exposure changes from the AGC do not look like focus changes. The
++ * statistics frames that follow a lens move are skipped, so that every
++ * measurement belongs to the lens position it is recorded for. A single
++ * measurement next to the peak that breaks the monotonic fall-off is taken
++ * once more before the peak is fitted.
+  */
+ 
+ LOG_DEFINE_CATEGORY(IPASoftAf)
+ 
+ int Af::init(IPAContext &context, const ValueNode &tuningData)
+ {
++	initialPosition_ = tuningData["initialPosition"].get<int32_t>(initialPosition_);
+ 	coarseStep_ = tuningData["coarseStep"].get<int32_t>(coarseStep_);
+-	fineSteps_ = tuningData["fineSteps"].get<uint32_t>(fineSteps_);
++	flatStep_ = tuningData["flatStep"].get<int32_t>(coarseStep_);
++	flatRatio_ = tuningData["flatRatio"].get<double>(flatRatio_);
+ 	warmup_ = tuningData["warmup"].get<uint32_t>(warmup_);
+ 	changeThreshold_ = tuningData["changeThreshold"].get<double>(changeThreshold_);
+ 	changeCount_ = tuningData["changeCount"].get<uint32_t>(changeCount_);
+@@ -51,6 +67,9 @@ int Af::init(IPAContext &context, const ValueNode &tuningData)
+ 	stopCount_ = tuningData["stopCount"].get<uint32_t>(stopCount_);
+ 	minPeak_ = tuningData["minPeak"].get<double>(minPeak_);
+ 
++	coarseStep_ = std::max<int32_t>(coarseStep_, 1);
++	flatStep_ = std::max<int32_t>(flatStep_, coarseStep_);
++
+ 	context.ctrlMap[&controls::AfMode] =
+ 		ControlInfo(controls::AfModeValues,
+ 			    ControlValue(static_cast<int32_t>(controls::AfModeContinuous)));
+@@ -60,6 +79,16 @@ int Af::init(IPAContext &context, const ValueNode &tuningData)
+ 	return 0;
+ }
+ 
++void Af::reset()
++{
++	state_ = State::Idle;
++	afState_ = controls::AfStateIdle;
++	refSharpness_ = 0.0;
++	refPending_ = false;
++	validFrames_ = 0;
++	changed_ = 0;
++}
++
+ int Af::configure(IPAContext &context, const IPAConfigInfo &configInfo)
+ {
+ 	auto &af = context.configuration.af;
+@@ -73,19 +102,22 @@ int Af::configure(IPAContext &context, const IPAConfigInfo &configInfo)
+ 
+ 	af.min = it->second.min().get<int32_t>();
+ 	af.max = it->second.max().get<int32_t>();
++	min_ = af.min;
++	max_ = af.max;
+ 
+ 	context.activeState.af.position = af.min;
+ 	context.activeState.af.update = false;
+ 
+-	state_ = State::Idle;
+-	afState_ = controls::AfStateIdle;
+-	position_ = af.min;
++	reset();
++	position_ = initialPosition_ < 0 ? af.min
++					 : std::clamp(initialPosition_, af.min, af.max);
+ 	settle_ = 0;
+-	refSharpness_ = 0.0;
+-	refPending_ = false;
+-	validFrames_ = 0;
+-	changed_ = 0;
+ 	triggered_ = false;
++	/*
++	 * The lens keeps the position of the previous session until it is
++	 * moved. Move it to the start position before the first measurement.
++	 */
++	lensKnown_ = false;
+ 
+ 	LOG(IPASoftAf, Info) << "Lens range " << af.min << "-" << af.max;
+ 
+@@ -100,17 +132,15 @@ void Af::queueRequest([[maybe_unused]] IPAContext &context,
+ 	const auto &mode = controls.get(controls::AfMode);
+ 	if (mode.has_value() && *mode != mode_) {
+ 		mode_ = static_cast<controls::AfModeEnum>(*mode);
+-		state_ = State::Idle;
+-		afState_ = controls::AfStateIdle;
+-		refSharpness_ = 0.0;
++		reset();
+ 		LOG(IPASoftAf, Debug) << "Mode " << mode_;
+ 	}
+ 
+ 	const auto &trigger = controls.get(controls::AfTrigger);
+ 	if (trigger.has_value()) {
+-		if (*trigger == controls::AfTriggerStart)
++		if (*trigger == controls::AfTriggerStart) {
+ 			triggered_ = true;
+-		else if (*trigger == controls::AfTriggerCancel) {
++		} else if (*trigger == controls::AfTriggerCancel) {
+ 			triggered_ = false;
+ 			state_ = State::Idle;
+ 			afState_ = controls::AfStateIdle;
+@@ -120,45 +150,237 @@ void Af::queueRequest([[maybe_unused]] IPAContext &context,
+ 
+ void Af::moveTo(IPAContext &context, int32_t position)
+ {
+-	const auto &af = context.configuration.af;
++	position = std::clamp(position, min_, max_);
++
++	/* Long moves take the lens longer to settle. */
++	settle_ = settleFrames_;
++	if (std::abs(position - position_) > 2 * flatStep_)
++		settle_++;
+ 
+-	position_ = std::clamp(position, af.min, af.max);
++	position_ = position;
+ 	context.activeState.af.position = position_;
+ 	context.activeState.af.update = true;
+-	settle_ = settleFrames_;
+ }
+ 
+-void Af::startScan(IPAContext &context)
++void Af::record(int32_t position, double sharpness)
+ {
+-	const auto &af = context.configuration.af;
++	samples_[position] = sharpness;
+ 
+-	state_ = State::Coarse;
+-	afState_ = controls::AfStateScanning;
+-	step_ = coarseStep_;
+-	scanEnd_ = af.max;
++	if (minSharpness_ == 0.0 || sharpness < minSharpness_)
++		minSharpness_ = sharpness;
++
++	if (sharpness > bestSharpness_) {
++		bestSharpness_ = sharpness;
++		bestPosition_ = position;
++		belowBest_ = 0;
++	} else if (sharpness < bestSharpness_ * stopRatio_) {
++		belowBest_++;
++	}
++}
++
++bool Af::hasPeak() const
++{
++	return bestSharpness_ >= minSharpness_ * minPeak_;
++}
++
++void Af::startScan(IPAContext &context, double sharpness)
++{
++	samples_.clear();
+ 	bestSharpness_ = 0.0;
+-	bestPosition_ = af.min;
++	bestPosition_ = position_;
+ 	minSharpness_ = 0.0;
+ 	belowBest_ = 0;
+ 	changed_ = 0;
+ 
+-	moveTo(context, af.min);
+-	/* The first move can cross the whole range, give it more time. */
+-	settle_ = settleFrames_ * 2;
++	state_ = State::Climb;
++	afState_ = controls::AfStateScanning;
++	origin_ = position_;
++	reversed_ = false;
++	remeasured_ = false;
++	/* Search the larger part of the range first. */
++	direction_ = max_ - position_ >= position_ - min_ ? 1 : -1;
++
++	/* The current frame was taken at the start position. */
++	LOG(IPASoftAf, Debug) << "Climb " << position_ << ": " << sharpness;
++	record(position_, sharpness);
++	climb(context);
+ }
+ 
+-void Af::record(int32_t position, double sharpness)
++/*
++ * Near its peak the sharpness falls off monotonically on both sides. A
++ * neighbour of the best position that is less sharp than the sample beyond
++ * it is a bad measurement (seen now and then right after a lens move), which
++ * would pull the fitted peak away. Measure it once more.
++ */
++bool Af::remeasureDip(IPAContext &context)
+ {
+-	if (minSharpness_ == 0.0 || sharpness < minSharpness_)
+-		minSharpness_ = sharpness;
++	if (remeasured_ || !hasPeak())
++		return false;
++
++	auto it = samples_.find(bestPosition_);
++	if (it == samples_.end())
++		return false;
++
++	for (int side : { -1, 1 }) {
++		auto n1 = it, n2 = it;
++		if (side < 0) {
++			if (it == samples_.begin() || std::prev(it) == samples_.begin())
++				continue;
++			n1 = std::prev(it);
++			n2 = std::prev(n1);
++		} else {
++			n1 = std::next(it);
++			if (n1 == samples_.end() || std::next(n1) == samples_.end())
++				continue;
++			n2 = std::next(n1);
++		}
+ 
+-	if (sharpness > bestSharpness_) {
+-		bestSharpness_ = sharpness;
+-		bestPosition_ = position;
++		if (n1->second >= n2->second)
++			continue;
++
++		LOG(IPASoftAf, Debug)
++			<< "Dip at " << n1->first << ": " << n1->second
++			<< ", measuring again";
++		remeasured_ = true;
++		state_ = State::Refine;
++		moveTo(context, n1->first);
++		return true;
++	}
++
++	return false;
++}
++
++/*
++ * Measure the neighbours of the best position at coarseStep distance when the
++ * scan passed it with a larger step, so that the peak is fitted on a fine
++ * enough grid.
++ */
++bool Af::refineNeighbour(IPAContext &context)
++{
++	if (!hasPeak())
++		return false;
++
++	for (int side : { -1, 1 }) {
++		int32_t target = bestPosition_ + side * coarseStep_;
++		if (target < min_ || target > max_ || samples_.count(target))
++			continue;
++
++		auto it = samples_.find(bestPosition_);
++		auto next = side < 0 ? (it == samples_.begin() ? samples_.end() : std::prev(it))
++				     : std::next(it);
++		if (next != samples_.end() &&
++		    std::abs(next->first - bestPosition_) <= coarseStep_)
++			continue;
++
++		state_ = State::Refine;
++		moveTo(context, target);
++		return true;
++	}
++
++	return false;
++}
++
++int32_t Af::interpolate() const
++{
++	auto it = samples_.find(bestPosition_);
++	if (it == samples_.end() || it == samples_.begin() ||
++	    std::next(it) == samples_.end())
++		return bestPosition_;
++
++	auto lo = std::prev(it);
++	auto hi = std::next(it);
++	if (lo->second <= 0.0 || hi->second <= 0.0 || it->second <= 0.0)
++		return bestPosition_;
++
++	/* Fit a parabola through the logarithms, i.e. a Gaussian. */
++	double x1 = lo->first, x2 = it->first, x3 = hi->first;
++	double y1 = std::log(lo->second);
++	double y2 = std::log(it->second);
++	double y3 = std::log(hi->second);
++
++	double den = (x2 - x1) * (y2 - y3) - (x2 - x3) * (y2 - y1);
++	if (den <= 0.0)
++		return bestPosition_;
++
++	double num = (x2 - x1) * (x2 - x1) * (y2 - y3) -
++		     (x2 - x3) * (x2 - x3) * (y2 - y1);
++	double x = x2 - 0.5 * num / den;
++
++	x = std::clamp(x, (x1 + x2) / 2, (x2 + x3) / 2);
++	return static_cast<int32_t>(std::lround(x));
++}
++
++void Af::finish(IPAContext &context)
++{
++	if (remeasureDip(context) || refineNeighbour(context))
++		return;
++
++	int32_t target = interpolate();
++	bool peak = hasPeak();
++
++	LOG(IPASoftAf, Debug)
++		<< (peak ? "Focused at " : "No peak, resting at ") << target
++		<< " (best " << bestPosition_ << ": " << bestSharpness_
++		<< ", " << samples_.size() << " samples)";
++
++	moveTo(context, target);
++	state_ = State::Idle;
++	afState_ = peak ? controls::AfStateFocused : controls::AfStateFailed;
++	refPending_ = true;
++	validFrames_ = 0;
++}
++
++void Af::climb(IPAContext &context)
++{
++	/* The first step from the start position went the wrong way. */
++	if (!reversed_ && bestPosition_ == origin_ && belowBest_ >= 1) {
++		reversed_ = true;
++		direction_ = -direction_;
+ 		belowBest_ = 0;
+-	} else if (sharpness < bestSharpness_ * stopRatio_) {
+-		belowBest_++;
++		int32_t next = origin_ + direction_ * coarseStep_;
++		if (next >= min_ && next <= max_) {
++			moveTo(context, next);
++			return;
++		}
++	}
++
++	/* Well past a clear peak. */
++	if (hasPeak() && belowBest_ >= stopCount_) {
++		finish(context);
++		return;
++	}
++
++	/* Large steps while the curve is flat, small ones near the peak. */
++	double flat = minSharpness_ * flatRatio_;
++	int32_t step = bestSharpness_ < flat ? flatStep_ : coarseStep_;
++	int32_t next = position_ + direction_ * step;
++	int32_t edge = direction_ > 0 ? max_ : min_;
++
++	if (next < min_ || next > max_) {
++		/* Measure the end of the range unless it is close. */
++		if (std::abs(edge - position_) > step / 2)
++			next = edge;
++	}
++
++	if (next >= min_ && next <= max_ && next != position_) {
++		moveTo(context, next);
++		return;
+ 	}
++
++	/* End of the range: search the other side of the start position. */
++	bool peakHere = hasPeak() && bestPosition_ != origin_;
++	if (!reversed_ && !peakHere) {
++		reversed_ = true;
++		direction_ = -direction_;
++		belowBest_ = 0;
++		next = origin_ + direction_ * coarseStep_;
++		if (next >= min_ && next <= max_) {
++			moveTo(context, next);
++			return;
++		}
++	}
++
++	finish(context);
+ }
+ 
+ void Af::process(IPAContext &context,
+@@ -175,6 +397,14 @@ void Af::process(IPAContext &context,
+ 	if (!stats->valid || !stats->sharpnessBase)
+ 		return;
+ 
++	if (!lensKnown_) {
++		lensKnown_ = true;
++		int32_t start = position_;
++		position_ = start == max_ ? min_ : max_;
++		moveTo(context, start);
++		return;
++	}
++
+ 	if (settle_) {
+ 		settle_--;
+ 		return;
+@@ -194,7 +424,7 @@ void Af::process(IPAContext &context,
+ 		if (mode_ == controls::AfModeAuto) {
+ 			if (triggered_) {
+ 				triggered_ = false;
+-				startScan(context);
++				startScan(context, sharpness);
+ 			}
+ 			return;
+ 		}
+@@ -204,7 +434,7 @@ void Af::process(IPAContext &context,
+ 
+ 		if (refSharpness_ == 0.0) {
+ 			if (++validFrames_ >= warmup_)
+-				startScan(context);
++				startScan(context, sharpness);
+ 			return;
+ 		}
+ 
+@@ -213,7 +443,7 @@ void Af::process(IPAContext &context,
+ 				LOG(IPASoftAf, Debug)
+ 					<< "Sharpness changed " << refSharpness_
+ 					<< " -> " << sharpness << ", rescanning";
+-				startScan(context);
++				startScan(context, sharpness);
+ 			}
+ 		} else {
+ 			changed_ = 0;
+@@ -221,46 +451,16 @@ void Af::process(IPAContext &context,
+ 		}
+ 		return;
+ 
+-	case State::Coarse:
++	case State::Climb:
++		LOG(IPASoftAf, Debug) << "Climb " << position_ << ": " << sharpness;
+ 		record(position_, sharpness);
+-		LOG(IPASoftAf, Debug)
+-			<< "Coarse " << position_ << ": " << sharpness;
+-
+-		/*
+-		 * Stop early once well past a clear peak. Without a peak the
+-		 * curve is flat and its noise says nothing, so keep scanning.
+-		 */
+-		if (position_ + step_ <= scanEnd_ &&
+-		    (belowBest_ < stopCount_ ||
+-		     bestSharpness_ < minSharpness_ * minPeak_)) {
+-			moveTo(context, position_ + step_);
+-			return;
+-		}
+-
+-		state_ = State::Fine;
+-		step_ = std::max<int32_t>(coarseStep_ * 2 / fineSteps_, 1);
+-		scanEnd_ = std::min(bestPosition_ + coarseStep_ / 2,
+-				    context.configuration.af.max);
+-		moveTo(context, bestPosition_ - coarseStep_ / 2);
++		climb(context);
+ 		return;
+ 
+-	case State::Fine:
++	case State::Refine:
++		LOG(IPASoftAf, Debug) << "Refine " << position_ << ": " << sharpness;
+ 		record(position_, sharpness);
+-		LOG(IPASoftAf, Debug)
+-			<< "Fine " << position_ << ": " << sharpness;
+-
+-		if (position_ + step_ <= scanEnd_) {
+-			moveTo(context, position_ + step_);
+-			return;
+-		}
+-
+-		LOG(IPASoftAf, Debug)
+-			<< "Focused at " << bestPosition_ << " (" << bestSharpness_ << ")";
+-		moveTo(context, bestPosition_);
+-		state_ = State::Idle;
+-		afState_ = controls::AfStateFocused;
+-		refPending_ = true;
+-		validFrames_ = 0;
++		finish(context);
+ 		return;
+ 	}
+ }
+diff --git a/src/ipa/softisp/algorithms/af.h b/src/ipa/softisp/algorithms/af.h
+index 4864e61..2da6e7c 100755
+--- a/src/ipa/softisp/algorithms/af.h
++++ b/src/ipa/softisp/algorithms/af.h
+@@ -5,6 +5,8 @@
+ 
+ #pragma once
+ 
++#include <map>
++
+ #include <libcamera/control_ids.h>
+ 
+ #include "algorithm.h"
+@@ -32,35 +34,51 @@ public:
+ private:
+ 	enum class State {
+ 		Idle,
+-		Coarse,
+-		Fine,
++		Climb,
++		Refine,
+ 	};
+ 
+-	void startScan(IPAContext &context);
++	void reset();
++	void startScan(IPAContext &context, double sharpness);
+ 	void moveTo(IPAContext &context, int32_t position);
+ 	void record(int32_t position, double sharpness);
++	bool hasPeak() const;
++	bool remeasureDip(IPAContext &context);
++	bool refineNeighbour(IPAContext &context);
++	int32_t interpolate() const;
++	void finish(IPAContext &context);
++	void climb(IPAContext &context);
+ 
++	int32_t initialPosition_ = -1;
+ 	int32_t coarseStep_ = 256;
+-	unsigned int fineSteps_ = 8;
++	int32_t flatStep_ = 256;
++	double flatRatio_ = 1.3;
+ 	unsigned int warmup_ = 16;
+ 	double changeThreshold_ = 0.3;
+ 	unsigned int changeCount_ = 3;
+ 	unsigned int settleFrames_ = 1;
+ 	double stopRatio_ = 0.7;
+-	unsigned int stopCount_ = 3;
+-	double minPeak_ = 1.1;
+-	double minSharpness_ = 0.0;
++	unsigned int stopCount_ = 2;
++	double minPeak_ = 1.5;
+ 
+ 	controls::AfModeEnum mode_ = controls::AfModeContinuous;
+ 	controls::AfStateEnum afState_ = controls::AfStateIdle;
+ 	State state_ = State::Idle;
+ 	bool triggered_ = false;
++	bool lensKnown_ = false;
+ 
++	int32_t min_ = 0;
++	int32_t max_ = 0;
+ 	int32_t position_ = 0;
+-	int32_t scanEnd_ = 0;
+-	int32_t step_ = 0;
++	int32_t origin_ = 0;
++	int direction_ = 1;
++	bool reversed_ = false;
++	bool remeasured_ = false;
++
++	std::map<int32_t, double> samples_;
+ 	int32_t bestPosition_ = 0;
+ 	double bestSharpness_ = 0.0;
++	double minSharpness_ = 0.0;
+ 	unsigned int belowBest_ = 0;
+ 
+ 	double refSharpness_ = 0.0;
+-- 
+2.43.0
+
