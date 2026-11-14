@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 12:54:35 +0100
+Subject: [PATCH 116/116] soc: qcom: oneplus-sensor-devinfo: bound the SAR
+ channel count index
+
+parse_sar() stores the channel count at feature[n / 2], where n is the
+number of register values read from "sensor-reg". n can be up to
+PARAMETER_NUM - 1 = 24, which puts the index past the 10-entry feature
+array and into the next sensor entry. No current device tree reaches
+that, but skip the store instead of writing out of bounds.
+
+Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
+---
+ drivers/soc/qcom/oneplus-sensor-devinfo.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/soc/qcom/oneplus-sensor-devinfo.c b/drivers/soc/qcom/oneplus-sensor-devinfo.c
+index e72a85273..76732a471 100755
+--- a/drivers/soc/qcom/oneplus-sensor-devinfo.c
++++ b/drivers/soc/qcom/oneplus-sensor-devinfo.c
+@@ -225,7 +225,7 @@ static void parse_sar(struct sensor_hw *hw, struct device_node *np)
+ 
+ 	/* The downstream driver stores the channel count after the register pairs */
+ 	if (!of_property_read_u32(np, "channel-num", &channels) &&
+-	    channels < SAR_MAX_CH_NUM)
++	    channels < SAR_MAX_CH_NUM && n / 2 < FEATURE_NUM)
+ 		hw->feature.feature[n / 2] = channels;
+ 
+ 	read_s32(np, "is-dc-offset", &dc_offset);
+-- 
+2.43.0
+

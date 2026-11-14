@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 12:50:45 +0100
+Subject: [PATCH] device-oneplus-instantnoodlep: reserve 256 MiB CMA, restart
+ iio-sensor-proxy
+
+The default 32 MiB CMA pool is too small for the camera pipeline at full
+resolution; the stock kernel reserves far more. Reserve 256 MiB on the
+kernel command line (the phone has 8 or 12 GiB).
+
+iio-sensor-proxy segfaults when the SLPI goes away (subsystem restart,
+recovery after suspend) and its unit has Restart=no, so rotation stays
+dead until the next reboot. Ship a drop-in that restarts it on failure.
+---
+ device/testing/device-oneplus-instantnoodlep/APKBUILD    | 8 ++++++--
+ .../iio-sensor-proxy-restart.conf                        | 9 +++++++++
+ .../device-oneplus-instantnoodlep/kernel-cmdline.conf    | 1 +
+ 3 files changed, 16 insertions(+), 2 deletions(-)
+ create mode 100644 device/testing/device-oneplus-instantnoodlep/iio-sensor-proxy-restart.conf
+
+diff --git a/device/testing/device-oneplus-instantnoodlep/APKBUILD b/device/testing/device-oneplus-instantnoodlep/APKBUILD
+index 2f199d922b..8f8c65941c 100644
+--- a/device/testing/device-oneplus-instantnoodlep/APKBUILD
++++ b/device/testing/device-oneplus-instantnoodlep/APKBUILD
+@@ -3,7 +3,7 @@ maintainer="kouling <k0ul1ng@proton.me>"
+ pkgname=device-oneplus-instantnoodlep
+ pkgdesc="OnePlus 8 Pro"
+ pkgver=7
+-pkgrel=7
++pkgrel=8
+ url="https://postmarketos.org"
+ license="MIT"
+ arch="aarch64"
+@@ -29,6 +29,7 @@ source="
+ 	81-libssc-oneplus-instantnoodlep.rules
+ 	hexagonrpcd-sdsp.conf
+ 	hexagonrpcd.tmpfiles
++	iio-sensor-proxy-restart.conf
+ 	kernel-cmdline.conf
+ 	modules-initfs
+ 	sm8250-oneplus-instantnoodlep-empty.dts
+@@ -51,6 +52,8 @@ package() {
+ 		"$pkgdir"/usr/lib/systemd/system/hexagonrpcd-sdsp.service.d/writable-registry.conf
+ 	install -Dm644 "$srcdir"/hexagonrpcd.tmpfiles \
+ 		"$pkgdir"/usr/lib/tmpfiles.d/hexagonrpcd-oneplus-instantnoodlep.conf
++	install -Dm644 "$srcdir"/iio-sensor-proxy-restart.conf \
++		"$pkgdir"/usr/lib/systemd/system/iio-sensor-proxy.service.d/restart.conf
+ }
+ 
+ sha512sums="
+@@ -58,7 +61,8 @@ cdf5ea60993c40d7d8b4fd850c182b55df62d94c0f83268820216d5a9921b3fe11c74d831fe64d42
+ d0e8f2e378130130ac72703aed957f7638e2dd75acf4aa421e1b4592c6cb6d296b652db0d9c242be4e56326760ce18d28c1e36ae553d0b7a7f91e12ab0353f22  81-libssc-oneplus-instantnoodlep.rules
+ 7b225a3513d3846089e6e04faf54682e0734dec8367c96393dbd48b983cfdb9efbef5331503f4f90bf8da321b4cd713a8d244666c5b8c3a85f24b4cf88fc5367  hexagonrpcd-sdsp.conf
+ 340ee153d351d6f42cd8b77207ceb7e793520a4031f2b24b3469700871f38e20e3c3c8b80ed5724893df48b6d712a8bf3ccd6371603535fb4caed8f428bd394a  hexagonrpcd.tmpfiles
+-04cc87ed6b0041ede7edb2693ee4dd58d6ac8f1b036a0b37e1a86cce57b66e35d9f400a3ea75d75278b028132535033915f3a2fff919866e85336c5f92a68ffe  kernel-cmdline.conf
++afc87e64d16f946fb885949c7529578a0efbd664e53ce8ab6a6965bae28f47b13527b6671dd1d3d26c969de33cfa96b4ed2d82730c5fabcb14fd2fc7691642a8  iio-sensor-proxy-restart.conf
++2513cfa092f010e4d29fd374408d0471a5f3c6d0a34b72fb045610b823e647d61eeed8f7e095650b6dfd883c78a9e38a050ea0d86432ac36dd97be123587d2b6  kernel-cmdline.conf
+ a514e9ba59f434ff3cbd2f918246885c2b670ff3f07020a7c3dd9887f1d3ee619ff7d8a402c4fe68a84c86ae956262a817a92de9970995252f5d2f11ad31143d  modules-initfs
+ 06269dcbd405a18576a476bb976d39bcf91e8c7885a87716f510d66abc2ffe3bfabe56c286ad6fc88878de07427e58965ac833ac0e8cfa7ad393c2fa3b535c88  sm8250-oneplus-instantnoodlep-empty.dts
+ "
+diff --git a/device/testing/device-oneplus-instantnoodlep/iio-sensor-proxy-restart.conf b/device/testing/device-oneplus-instantnoodlep/iio-sensor-proxy-restart.conf
+new file mode 100644
+index 0000000000..5de0ad9163
+--- /dev/null
++++ b/device/testing/device-oneplus-instantnoodlep/iio-sensor-proxy-restart.conf
+@@ -0,0 +1,9 @@
++# iio-sensor-proxy crashes when the SLPI goes away (subsystem restart, suspend
++# recovery). Bring it back instead of leaving rotation dead until reboot.
++[Unit]
++StartLimitIntervalSec=120
++StartLimitBurst=10
++
++[Service]
++Restart=on-failure
++RestartSec=3
+diff --git a/device/testing/device-oneplus-instantnoodlep/kernel-cmdline.conf b/device/testing/device-oneplus-instantnoodlep/kernel-cmdline.conf
+index ef54640973..063352fade 100644
+--- a/device/testing/device-oneplus-instantnoodlep/kernel-cmdline.conf
++++ b/device/testing/device-oneplus-instantnoodlep/kernel-cmdline.conf
+@@ -1,2 +1,3 @@
+ clk_ignore_unused
+ pd_ignore_unused
++cma=256M
+-- 
+2.43.0
+

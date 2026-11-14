@@ -56,6 +56,8 @@
 | ModemManager without the MediaTek and Rolling plugins, whose shared module fails to load on musl | works, modem comes up with the `qcom-soc` plugin | pmaports 0041 |
 | Flash limits as in the vendor device tree: 1500 mA flash for up to 1280 ms and 500 mA torch per channel | works | kernel 0079, pmaports 0042 |
 | Resume from suspend: the freezer interrupted the waiting FastRPC call of `hexagonrpcd`, the restarted system call sent it a second time and the sensor DSP crashed (taking iio-sensor-proxy and the rotation with it); the touchscreen driver enabled its interrupt before powering the controller up, so resume failed with -19 and sensing stayed off | works | kernel 0080–0081, pmaports 0043 |
+| iio-sensor-proxy segfaults when the sensor DSP stops (subsystem restart, shutdown) and its unit has `Restart=no`, so rotation stayed dead until reboot | restarted after 3 s | pmaports 0056 |
+| Camera buffers: the default 32 MiB CMA pool was too small for full-resolution outputs | 256 MiB, 4000×3000 at 30 fps | pmaports 0056 |
 | Torch: the stock camera drives both PM8150L flash channels together as one flash; describing it as one LED with both sources also gives it the name `white:flash`, which the Plasma Mobile and Phosh torch switches look for | works | kernel 0104, pmaports 0048 |
 | Sound in PipeWire: DisplayPort audio as its own UCM use case, since without a monitor it made PipeWire drop the speakers and microphones; the speaker amplifiers get 16-bit samples, at 24 bit they play far too quietly | works | pmaports 0049, `system/61-oneplus-instantnoodlep-speaker-s16.conf` |
 | Camera tuning from the stock OnePlus tuning: colour matrices (main, ultrawide, telephoto) and lens shading tables (all four), new AGC limits so bright areas no longer clip; noise robust autofocus sharpness, and the GPU debayer statistics now cover the whole frame instead of its top left corner (autofocus, exposure and white balance measured only that corner) | works | libcamera 0007–0008, pmaports 0055 |
@@ -119,7 +121,14 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   charger follow USB-C limits, with USB-A detection and this board's 2 A battery
   charge-current ceiling; 0045 adds DisplayPort alt mode with USB2 alongside and
   the PHY fixes; 0046 adds the external VBUS supply and power-role swaps;
-  0047 adds DP audio and PCM restart recovery. 0054 runs the front camera binned mode at 30 fps (kernel 0114) and 0055 adds the camera tuning and libcamera 0007–0008; 0050–0053 and kernel 0105–0113 are left for the open DisplayPort and charger pull requests.
+  0047 adds DP audio and PCM restart recovery. 0048 drives both flash channels as one
+  torch (kernel 0104), 0049 adds the DisplayPort UCM use case and 0052 puts the charger
+  ADC into the initramfs. 0054 runs the front camera binned mode at 30 fps (kernel 0114)
+  and 0055 adds the camera tuning and libcamera 0007–0008. 0056 reserves 256 MiB CMA
+  (full-resolution camera output) and restarts iio-sensor-proxy when it crashes. 0057
+  adds kernel 0115 (panel powered off again when the DSC parameters cannot be sent) and
+  0116 (bounds check in the sensor devinfo SAR parser). 0050,
+  0051, 0053 and kernel 0105–0113 are left for the open DisplayPort pull requests.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `firmware/` – boot service that copies SLPI, Venus and CDSP firmware from your own phone.
