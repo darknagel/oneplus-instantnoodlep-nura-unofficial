@@ -34,7 +34,7 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 | Charging over USB-C PD and USB-A | works, see [`docs/charging.md`](docs/charging.md) |
 | Vibration, torch | work |
 | External display and audio over USB-C (DisplayPort), with USB hub and charging | works, see [`docs/displayport.md`](docs/displayport.md) |
-| Calls (2G, earpiece and speaker) | work; no echo cancellation, no VoLTE, see [`modem/`](modem/) |
+| Calls (VoLTE and 2G, earpiece and speaker) | work; no echo cancellation, see [`modem/`](modem/) |
 | Fingerprint reader, fast and wireless charging | not done |
 
 Tested on IN2023 phones (EU) with the Samsung AMS678UW01 panel. With another panel the

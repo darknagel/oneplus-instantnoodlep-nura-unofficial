@@ -26,7 +26,8 @@
 | SIM with PIN, network registration (LTE/5G) | works, see [`modem/`](../modem/) | pmaports 0019 |
 | Mobile data (IPv6 only, tested on congstar) | works, see [`modem/`](../modem/) | pmaports 0019, 0020 |
 | SMS, send and receive (`mmcli`, Spacebar under Plasma Mobile) | works, see [`modem/`](../modem/) | – |
-| Voice calls: Q6Voice with a PCIe mailbox for the external modem, QRTR forwarding between modem and ADSP (flow control release to the right modem node), MHI satellite, vocproc without Tx topology, amplifier switch and gain for the earpiece | work, outgoing tested over 2G; patches still WIP, see [`modem/`](../modem/) | kernel 0117–0137, pmaports 0058 |
+| Voice calls: Q6Voice with a PCIe mailbox for the external modem, QRTR forwarding between modem and ADSP (flow control release to the right modem node), MHI satellite, vocproc without Tx topology, amplifier switch and gain for the earpiece | work, outgoing tested over VoLTE and 2G; patches still WIP, see [`modem/`](../modem/) | kernel 0117–0137, pmaports 0058 |
+| VoLTE: 81voltd (IMS Data service for the modem) accepts the SDX55 on QRTR node 3 (`qrtr3`) | works, tested on congstar | pmaports 0069 |
 | NFC (NXP chip, reading tags with `neard`; PCIe 1 is disabled because it took the enable pin) | works | kernel 0032, pmaports 0021 |
 | C-PHY on SM8250 CAMSS (posted series, see below) | works | kernel 0033–0041, pmaports 0022 |
 | Main camera Sony IMX689 (new driver, 3 C-PHY trios, 4000×3000 @ 30) | works | kernel 0042, 0045, pmaports 0022, libcamera 0006 |

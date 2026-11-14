@@ -1,0 +1,169 @@
+From b72cb705f8f23cf1a18870654dc76d3fe14bbe25 Mon Sep 17 00:00:00 2001
+From: darknagel <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 00:21:02 +0100
+Subject: [PATCH] temp/81voltd: accept the QRTR modem on any node
+
+ModemManager calls the QMI port of the external SDX55 qrtr3, and 81voltd
+only looked for qrtr0, so the modem never got its IMS data connection
+and VoLTE did not register. Fork the Alpine package with a patch that
+accepts every qrtr* port.
+---
+ ...-modem-accept-QRTR-ports-of-any-node.patch | 97 +++++++++++++++++++
+ temp/81voltd/APKBUILD                         | 41 ++++++++
+ 2 files changed, 138 insertions(+)
+ create mode 100644 temp/81voltd/0001-qvd-modem-accept-QRTR-ports-of-any-node.patch
+ create mode 100644 temp/81voltd/APKBUILD
+
+diff --git a/temp/81voltd/0001-qvd-modem-accept-QRTR-ports-of-any-node.patch b/temp/81voltd/0001-qvd-modem-accept-QRTR-ports-of-any-node.patch
+new file mode 100644
+index 0000000000..9815c3904b
+--- /dev/null
++++ b/temp/81voltd/0001-qvd-modem-accept-QRTR-ports-of-any-node.patch
+@@ -0,0 +1,97 @@
++From 2788998df6f11631ceaa9f03d7286db90c250bb3 Mon Sep 17 00:00:00 2001
++From: darknagel <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 15 Nov 2026 00:15:50 +0100
++Subject: [PATCH] qvd-modem: accept QRTR ports of any node
++
++ModemManager names the QMI port of a QRTR modem after its QRTR node.
++That is qrtr0 for a modem inside the SoC, but an external modem such as
++the SDX55 on the OnePlus 8 Pro (PCIe/MHI) shows up as qrtr3, so
++81voltd never found the modem and VoLTE could not register.
++
++Accept every QMI port whose name starts with qrtr.
++---
++ qvd-modem.c | 40 +++++++++++++++++++++++-----------------
++ 1 file changed, 23 insertions(+), 17 deletions(-)
++
++diff --git a/qvd-modem.c b/qvd-modem.c
++index efee61f..162dea3 100644
++--- a/qvd-modem.c
+++++ b/qvd-modem.c
++@@ -187,6 +187,24 @@ static void on_modem_props_changed(GDBusProxy *modem,
++ 	g_variant_unref(prop);
++ }
++ 
+++/*
+++ * ModemManager names QRTR control ports after the QRTR node of the modem:
+++ * "qrtr0" for a modem in the SoC, but e.g. "qrtr3" for an external SDX55
+++ * connected over PCIe/MHI. Accept any QMI port with the "qrtr" prefix.
+++ */
+++static gboolean has_qrtr_port(const MMModemPortInfo *ports, guint n_ports)
+++{
+++	guint i;
+++
+++	for (i = 0; i < n_ports; i++) {
+++		if (ports[i].type == MM_MODEM_PORT_TYPE_QMI
+++		 && g_str_has_prefix(ports[i].name, "qrtr"))
+++			return TRUE;
+++	}
+++
+++	return FALSE;
+++}
+++
++ static void on_object_added(QVDConnection *conn,
++ 			    GDBusObject *object,
++ 			    gpointer data)
++@@ -195,7 +213,7 @@ static void on_object_added(QVDConnection *conn,
++ 	const MMModemPortInfo *ports;
++ 	struct qvd_pending_bearer *pending;
++ 	guint n_ports = 0, i;
++-	gboolean is_qrtr = FALSE;
+++	gboolean is_qrtr;
++ 	QVDModem *ctx = QVD_MODEM(data);
++ 
++ 	modem = mm_object_get_modem(MM_OBJECT(object));
++@@ -204,13 +222,7 @@ static void on_object_added(QVDConnection *conn,
++ 
++ 	mm_modem_peek_ports(modem, &ports, &n_ports);
++ 
++-	for (i = 0; i < n_ports; i++) {
++-		if (ports[i].type == MM_MODEM_PORT_TYPE_QMI
++-		 && !strcmp(ports[i].name, "qrtr0")) {
++-			is_qrtr = TRUE;
++-			break;
++-		}
++-	}
+++	is_qrtr = has_qrtr_port(ports, n_ports);
++ 
++ 	if (is_qrtr) {
++ 		g_info("New ModemManager QRTR modem detected: path: %s\n", mm_modem_get_path(modem));
++@@ -267,8 +279,8 @@ static void find_modem(gpointer memb, gpointer data)
++ 	MMModem **out = data;
++ 	MMModem *modem;
++ 	const MMModemPortInfo *ports;
++-	guint n_ports = 0, i;
++-	gboolean is_qrtr = FALSE;
+++	guint n_ports = 0;
+++	gboolean is_qrtr;
++ 
++ 	modem = mm_object_get_modem(memb);
++ 	if (modem == NULL)
++@@ -276,13 +288,7 @@ static void find_modem(gpointer memb, gpointer data)
++ 
++ 	mm_modem_peek_ports(modem, &ports, &n_ports);
++ 
++-	for (i = 0; i < n_ports; i++) {
++-		if (ports[i].type == MM_MODEM_PORT_TYPE_QMI
++-		 && !strcmp(ports[i].name, "qrtr0")) {
++-			is_qrtr = TRUE;
++-			break;
++-		}
++-	}
+++	is_qrtr = has_qrtr_port(ports, n_ports);
++ 
++ 	if (is_qrtr)
++ 		*out = g_object_ref(modem);
++-- 
++2.43.0
++
+diff --git a/temp/81voltd/APKBUILD b/temp/81voltd/APKBUILD
+new file mode 100644
+index 0000000000..6a38065384
+--- /dev/null
++++ b/temp/81voltd/APKBUILD
+@@ -0,0 +1,41 @@
++# Forked from Alpine: accept QRTR modems on any node, so that the external
++# SDX55 of the OnePlus 8 Pro (ModemManager port qrtr3) gets VoLTE.
++maintainer="Achill Gilgenast <achill@achill.org>"
++pkgname=81voltd
++pkgver=1.2.0
++pkgrel=2
++pkgdesc="Server-side implementation of IMS Data service on QMI/QRTR"
++url="https://gitlab.nura.eco/modem/81voltd"
++arch="all"
++license="GPL-2.0-or-later"
++makedepends="
++	libqmi-dev
++	meson
++	modemmanager-dev
++	qmi-utils
++	qrtr-dev
++	"
++subpackages="$pkgname-doc $pkgname-openrc $pkgname-systemd"
++source="https://gitlab.nura.eco/modem/81voltd/-/archive/v$pkgver/81voltd-v$pkgver.tar.gz
++	0001-qvd-modem-accept-QRTR-ports-of-any-node.patch
++	"
++builddir="$srcdir/$pkgname-v$pkgver"
++
++build() {
++	abuild-meson \
++		output .
++	meson compile -C output
++}
++
++check() {
++	meson test --print-errorlogs -C output
++}
++
++package() {
++	DESTDIR="$pkgdir" meson install --no-rebuild -C output
++}
++
++sha512sums="
++23927aae6a0e4585a7f31589fe033a0fbe2dc65f820206d3e9427ee5d5b0cc7e8dea7d1240c50a1f3b6fe8b78da58a28dace779293c31cea613e5cf1499377fe  81voltd-v1.2.0.tar.gz
++02098ffddbb09915fb76cd952d2a93ad41cfd81de1bda2ea47f0868d73fcf89c37a834279e44a9945d50528059ab9053228d4e4400db850d9549516ef4a90333  0001-qvd-modem-accept-QRTR-ports-of-any-node.patch
++"
+-- 
+2.43.0
+

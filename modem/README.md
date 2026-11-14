@@ -42,7 +42,7 @@ with the country code (`+49...`).
 ## Calls
 
 Voice calls work with audio in both directions (kernel patches 0117–0137, pmaports 0058),
-tested outgoing over 2G (CSFB) on congstar with `plasma-dialer`. The vocoder runs in the
+tested outgoing over VoLTE and over 2G (CSFB) on congstar with `plasma-dialer`. The vocoder runs in the
 ADSP of the SM8250; the modem and the ADSP exchange the speech frames over PCIe through a
 shared mailbox and talk to each other over QRTR, which the kernel forwards between the MHI
 link and GLINK.
@@ -59,7 +59,7 @@ link and GLINK.
   starts `callaudiod`, put the same service file into `~/.local/share/dbus-1/services/`.
 
 Limits: no echo cancellation or noise suppression (the vocproc runs without a Tx topology,
-`q6cvp.tx_topology`, because there is no calibration data), no VoLTE, incoming calls with
+`q6cvp.tx_topology`, because there is no calibration data), incoming calls with
 audio are untested, and several of the kernel patches are still marked WIP: which of the
 mailbox placement patches are really needed has not been narrowed down.
 
@@ -67,6 +67,24 @@ What made it work in the end: the SDX55 has two QRTR nodes behind its MHI link. 
 control packets were addressed to the first one, so the flow control release (RESUME_TX)
 from the ADSP never reached the node the modem's voice task sends from, and its eleventh
 command, the one that selects the mailbox, blocked forever.
+
+### VoLTE
+
+The IMS stack (SIP registration, IPsec, the voice call itself) runs inside the modem, but
+the modem asks the AP for its IMS data connection through the QMI IMS Data service. On
+Linux `81voltd` provides that service and creates the bearer through ModemManager.
+Upstream 81voltd only accepts a modem whose QMI port is called `qrtr0`; ModemManager calls
+the external SDX55 `qrtr3` (its QRTR node), so pmaports 0069 forks the package with a patch
+that accepts any `qrtr*` port. With it the modem brings up APN `ims` (profile 2, IPv6),
+registers at `ims.telekom.de` (AKA + IPsec) and calls stay on LTE; the audio path is the
+same as for 2G calls. The carrier configuration `Commercial-DT-VOLTE` was already selected
+by the modem. Tested on congstar (Telekom network).
+
+Build and install: `pmbootstrap build --arch aarch64 81voltd`, install `81voltd` and
+`81voltd-systemd` on the phone; the service is enabled on install.
+
+Known limit of 81voltd: if ModemManager fails to create the bearer, the modem is not told
+and does not ask again until 81voltd restarts (`systemctl restart 81voltd`).
 
 ## Facts
 
