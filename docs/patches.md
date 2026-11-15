@@ -14,6 +14,7 @@
 | Charger input limit from USB-C/PD or USB-A detection, 2 A battery current | works | kernel 0082–0087, pmaports 0044; [notes](charging.md) |
 | Speakers + 3 microphones (VA macro, mic bias as in vendor DT) | works | kernel 0005, pmaports 0002, 0007 |
 | False headset detection with an ordinary USB cable, codec runtime-PM errors and unsorted RX register defaults | fixed; analog USB-C headsets untested | kernel 0055–0060, pmaports 0030; [notes](audio.md) |
+| USB hub or monitor touchscreen attached at boot stayed off until plugged in again: usb-signaller switched the USB role from host to device when it applied its default mode and when it stopped | fixed | pmaports 0080, usb-signaller 0001 |
 | A/B boot counter (qbootctl marks boot successful) | works | pmaports 0003 |
 | Accelerometer, light, proximity via SLPI (SMEM item 130 filled by new driver) | works, needs the stock sensor files | kernel 0006–0008, 0049, pmaports 0004–0006, 0026, hexagonrpc 0001–0005 |
 | Telephoto camera Samsung S5K3M5 via CAMSS + libcamera (4208×3120 @ 30, 2104×1184 @ 60, AGC, green tint) | works | kernel 0009–0010, pmaports 0008–0009, libcamera 0001 |
@@ -119,6 +120,13 @@ make your changes and export them again with `git format-patch` into the kernel 
 directory (`device/testing/linux-postmarketos-qcom-sm8250/`), add them to `source=` in the
 APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
 
+## Patch numbers in use
+
+The next free numbers are kernel 0168 and package 0081. Kernel 0164 is kept for the
+DisplayPort DSC draft. Most package patches change the release and the checksums of the
+kernel package, so a new one has to be made on top of the last one; package numbers
+0070–0074 cannot be filled in later.
+
 ## Repository
 
 - `kernel-patches/` – against the Nura SM8250 kernel tag `sm8250-7.2.0_git20261010`
@@ -164,6 +172,9 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
 - `iio-sensor-proxy-patches/` – against https://gitlab.freedesktop.org/hadess/iio-sensor-proxy tag `3.9`.
 - `hexagonrpc-patches/` – against https://github.com/linux-msm/hexagonrpc tag `v0.5.0`.
   Adds a writable sensor registry (`-w DIR`), needed by the OnePlus sensor DSP.
+- `usb-signaller-patches/` – against https://codeberg.org/DylanVanAssche/usb-signaller tag
+  `v0.4.3`, carried in `temp/usb-signaller` by package patch 0080. Keeps the USB host role
+  that the Type-C port controller picks when a hub or monitor is attached at boot.
 - `libcamera-patches/` – against libcamera v0.8.0 plus the patches already carried in
   Nura `temp/libcamera`: sensor helpers for S5K3M5 (0001) and IMX586, IMX689 and GC5035
   (0002), the autofocus series (0003–0005), a shorter autofocus scan (0006), a noise
