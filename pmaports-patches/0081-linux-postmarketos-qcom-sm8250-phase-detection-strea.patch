@@ -1,0 +1,254 @@
+From 84c0f7e05a1710a2a9074814f2c5fe08a7a818b8 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 17:15:38 +0100
+Subject: [PATCH 81/82] linux-postmarketos-qcom-sm8250: phase detection stream
+ of the main camera
+
+Add kernel 0168: the CSID can pass a second CSI-2 stream to its next RDI
+(module parameters rdi_vc and rdi_dt), and several RDIs of one CSID can
+stream at the same time.
+---
+ ...-Let-a-second-RDI-capture-another-CS.patch | 203 ++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |   4 +-
+ 2 files changed, 206 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0168-media-qcom-camss-Let-a-second-RDI-capture-another-CS.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0168-media-qcom-camss-Let-a-second-RDI-capture-another-CS.patch b/device/testing/linux-postmarketos-qcom-sm8250/0168-media-qcom-camss-Let-a-second-RDI-capture-another-CS.patch
+new file mode 100644
+index 0000000000..0f2883c5ed
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0168-media-qcom-camss-Let-a-second-RDI-capture-another-CS.patch
+@@ -0,0 +1,203 @@
++From a8ec5f60c9437153c07e482fb6a8b65b4e7f9190 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sat, 14 Nov 2026 20:51:11 +0100
++Subject: [PATCH] media: qcom: camss: Let a second RDI capture another CSI-2
++ stream
++
++Phase detection sensors send their phase data as a second stream on its
++own virtual channel and data type (the IMX689 of the OnePlus 8 Pro uses
++virtual channel 1, data type 0x30). The gen2 CSID gave every RDI virtual
++channel 0 and the data type of the pad format, so that stream was dropped.
++
++Add the module parameters rdi_vc and rdi_dt to pick the virtual channel
++and data type per RDI, and let several RDI video nodes of one CSID share
++the running CSID, CSIPHY and sensor: only the first to start streams them
++and only the last to stop stops them.
++
++Stopping one VFE line reset the whole VFE, which stopped the other lines
++as well. Reset it only when the last line stops; otherwise wait for the
++reg update that latches the stopped write master, so that it no longer
++writes to the buffers that are released next.
++---
++ .../platform/qcom/camss/camss-csid-gen2.c     | 17 ++++++++--
++ .../media/platform/qcom/camss/camss-csid.h    |  2 ++
++ drivers/media/platform/qcom/camss/camss-vfe.c | 24 +++++++++++++-
++ .../media/platform/qcom/camss/camss-video.c   | 31 +++++++++++++++++++
++ 4 files changed, 71 insertions(+), 3 deletions(-)
++
++diff --git a/drivers/media/platform/qcom/camss/camss-csid-gen2.c b/drivers/media/platform/qcom/camss/camss-csid-gen2.c
++index 52ef730b1..225837c32 100644
++--- a/drivers/media/platform/qcom/camss/camss-csid-gen2.c
+++++ b/drivers/media/platform/qcom/camss/camss-csid-gen2.c
++@@ -171,6 +171,19 @@
++ #define		TPG_COLOR_BOX_CFG_MODE		0
++ #define		TPG_COLOR_BOX_PATTERN_SEL	2
++ 
+++/*
+++ * Virtual channel and data type per RDI. A data type of 0 takes the one of
+++ * the pad format, so by default every RDI gets virtual channel 0 and the
+++ * pixel data. Setting them lets a second RDI pick up another stream of the
+++ * sensor, for example phase detection data on virtual channel 1.
+++ */
+++static int rdi_vc[MSM_CSID_MAX_SRC_STREAMS];
+++static int rdi_dt[MSM_CSID_MAX_SRC_STREAMS];
+++module_param_array(rdi_vc, int, NULL, 0644);
+++MODULE_PARM_DESC(rdi_vc, "CSI-2 virtual channel per RDI");
+++module_param_array(rdi_dt, int, NULL, 0644);
+++MODULE_PARM_DESC(rdi_dt, "CSI-2 data type per RDI, 0 for the one of the format");
+++
++ static void __csid_configure_rx(struct csid_device *csid,
++ 				struct csid_phy_config *phy, int vc)
++ {
++@@ -282,7 +295,7 @@ static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8
++ 	val |= 1 << RDI_CFG0_TIMESTAMP_EN;
++ 	/* note: for non-RDI path, this should be format->decode_format */
++ 	val |= DECODE_FORMAT_PAYLOAD_ONLY << RDI_CFG0_DECODE_FORMAT;
++-	val |= format->data_type << RDI_CFG0_DATA_TYPE;
+++	val |= (rdi_dt[port] ? rdi_dt[port] & 0x3f : format->data_type) << RDI_CFG0_DATA_TYPE;
++ 	val |= vc << RDI_CFG0_VIRTUAL_CHANNEL;
++ 	val |= dt_id << RDI_CFG0_DT_ID;
++ 	writel_relaxed(val, csid->base + CSID_RDI_CFG0(port));
++@@ -334,7 +347,7 @@ static void csid_configure_stream(struct csid_device *csid, u8 enable)
++ 			if (tg->enabled)
++ 				__csid_configure_testgen(csid, enable, i, 0);
++ 
++-			__csid_configure_rdi_stream(csid, enable, i, 0);
+++			__csid_configure_rdi_stream(csid, enable, i, rdi_vc[i] & 0x1f);
++ 			__csid_configure_rx(csid, &csid->phy, 0);
++ 			__csid_ctrl_rdi(csid, enable, i);
++ 		}
++diff --git a/drivers/media/platform/qcom/camss/camss-csid.h b/drivers/media/platform/qcom/camss/camss-csid.h
++index 00e2669db..31ee3248e 100644
++--- a/drivers/media/platform/qcom/camss/camss-csid.h
+++++ b/drivers/media/platform/qcom/camss/camss-csid.h
++@@ -70,6 +70,8 @@ struct csid_phy_config {
++ 	u32 lane_assign;
++ 	u32 en_vc;
++ 	u8 need_vc_update;
+++	/* RDI video nodes streaming from this CSID */
+++	unsigned int stream_count;
++ 	bool cphy;
++ };
++ 
++diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
++index 8d3cffc28..9ab1677c5 100644
++--- a/drivers/media/platform/qcom/camss/camss-vfe.c
+++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
++@@ -814,14 +814,36 @@ static int vfe_disable_output(struct vfe_line *line)
++ 	struct vfe_output *output = &line->output;
++ 	unsigned long flags;
++ 	unsigned int i;
+++	bool last;
+++
+++	/* A reset stops all lines, so leave it to the last one */
+++	mutex_lock(&vfe->stream_lock);
+++	last = vfe->stream_count <= 1;
+++	mutex_unlock(&vfe->stream_lock);
++ 
++ 	spin_lock_irqsave(&vfe->output_lock, flags);
++ 	for (i = 0; i < output->wm_num; i++)
++ 		vfe->res->hw_ops->vfe_wm_stop(vfe, output->wm_idx[i]);
++ 	output->gen2.active_num = 0;
+++	if (!last) {
+++		/*
+++		 * The write master registers are latched at the next reg
+++		 * update, so wait for it before the buffers are released.
+++		 */
+++		output->wait_reg_update = 1;
+++		reinit_completion(&output->reg_update);
+++		vfe->res->hw_ops->reg_update(vfe, line->id);
+++	}
++ 	spin_unlock_irqrestore(&vfe->output_lock, flags);
++ 
++-	return vfe_reset(vfe);
+++	if (last)
+++		return vfe_reset(vfe);
+++
+++	if (!wait_for_completion_timeout(&output->reg_update,
+++					 msecs_to_jiffies(500)))
+++		dev_warn(vfe->camss->dev, "VFE line %d stop timeout\n", line->id);
+++
+++	return 0;
++ }
++ 
++ /*
++diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
++index 0852eb6f1..117cae8ff 100644
++--- a/drivers/media/platform/qcom/camss/camss-video.c
+++++ b/drivers/media/platform/qcom/camss/camss-video.c
++@@ -249,12 +249,29 @@ static int video_prepare_streaming(struct vb2_queue *q)
++ 	return ret;
++ }
++ 
+++/*
+++ * Several RDIs of one CSID share the CSID, the CSIPHY and the sensor. Only
+++ * the first video node to start streams them and only the last one to stop
+++ * stops them.
+++ */
+++static struct csid_device *video_csid(struct camss *camss, struct v4l2_subdev *sd)
+++{
+++	unsigned int i;
+++
+++	for (i = 0; i < camss->res->csid_num; i++)
+++		if (&camss->csid[i].subdev == sd)
+++			return &camss->csid[i];
+++
+++	return NULL;
+++}
+++
++ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
++ {
++ 	struct camss_video *video = vb2_get_drv_priv(q);
++ 	struct video_device *vdev = &video->vdev;
++ 	struct media_entity *entity;
++ 	struct media_pad *pad;
+++	struct csid_device *csid, *counted = NULL;
++ 	struct v4l2_subdev *subdev;
++ 	int ret;
++ 
++@@ -281,6 +298,13 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
++ 		entity = pad->entity;
++ 		subdev = media_entity_to_v4l2_subdev(entity);
++ 
+++		csid = video_csid(video->camss, subdev);
+++		if (csid) {
+++			if (csid->phy.stream_count++)
+++				break;
+++			counted = csid;
+++		}
+++
++ 		ret = v4l2_subdev_call(subdev, video, s_stream, 1);
++ 		if (ret < 0 && ret != -ENOIOCTLCMD)
++ 			goto error;
++@@ -289,6 +313,8 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
++ 	return 0;
++ 
++ error:
+++	if (counted)
+++		counted->phy.stream_count--;
++ 	video_device_pipeline_stop(vdev);
++ 
++ flush_buffers:
++@@ -303,6 +329,7 @@ static void video_stop_streaming(struct vb2_queue *q)
++ 	struct video_device *vdev = &video->vdev;
++ 	struct media_entity *entity;
++ 	struct media_pad *pad;
+++	struct csid_device *csid;
++ 	struct v4l2_subdev *subdev;
++ 	int ret;
++ 
++@@ -319,6 +346,10 @@ static void video_stop_streaming(struct vb2_queue *q)
++ 		entity = pad->entity;
++ 		subdev = media_entity_to_v4l2_subdev(entity);
++ 
+++		csid = video_csid(video->camss, subdev);
+++		if (csid && csid->phy.stream_count && --csid->phy.stream_count)
+++			break;
+++
++ 		ret = v4l2_subdev_call(subdev, video, s_stream, 0);
++ 
++ 		if (ret) {
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 6dc75fec72..7093c62282 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=91
++pkgrel=92
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -195,6 +195,7 @@ source="
+ 	0165-power-supply-qcom_pm8150b-keep-USB-input-while-VBUS-.patch
+ 	0166-power-supply-qcom_pm8150b-charge-by-the-fuel-gauge-l.patch
+ 	0167-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Let-the.patch
++	0168-media-qcom-camss-Let-a-second-RDI-capture-another-CS.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -397,4 +398,5 @@ c411ed2ef555dbdfa62f73b744c7a98160de4a12d136431e197ab4acd1bf3fdb99ea1602d8747687
+ a77ef5dfd551fe704b0e0493956ea313b62a03be8ac47cb8351b470f8c5fbb908443fbb4be04c190c508e4d77e33aebd9b037e78c573caf71fa74560c8b30851  0165-power-supply-qcom_pm8150b-keep-USB-input-while-VBUS-.patch
+ f4a2f77d3ce682ed71486f798703da8a87e440c6560bddbc20e5635d6558130a0f67aff193453d8ae1fe1078245b9d4ab97b5c3217d997680d38050657e28e0a  0166-power-supply-qcom_pm8150b-charge-by-the-fuel-gauge-l.patch
+ 4ba48c6ba0585966b88b944bbafeff78d18fd037e1d4e66554e413ec837173e98e44694f4cbb961f095d7f1a3b4e3a9ca7ff00cbfc935db8658e5299aa27c598  0167-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Let-the.patch
++8769685e145e3d36c90de643f2d483ce6a81a14bbac33dbd63f97dde93bd29bf9d714ed1a2d98bbd4f944cc03d7d2fa19f1702fae7de8fd1a7f5b41fdabebf4b  0168-media-qcom-camss-Let-a-second-RDI-capture-another-CS.patch
+ "
+-- 
+2.43.0
+

@@ -1,0 +1,406 @@
+From 432e628ddd1fd1533d13afea3a95f4bfa1643d44 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 21:18:56 +0100
+Subject: [PATCH 15/15] ipa: softisp: af: Jump to focus with phase detection
+
+With a phase detection result in the statistics, move the lens by the
+measured phase shift (pdGain steps per pixel, then along the slope of the
+last two measurements) until the shift is small, then fit the sharpness
+peak from a few fine steps around that position. Fall back to the contrast
+climb when the phase is not reliable, and rescan in continuous mode when
+the phase shift grows.
+---
+ src/ipa/softisp/algorithms/af.cpp | 235 +++++++++++++++++++++++++++++-
+ src/ipa/softisp/algorithms/af.h   |  34 ++++-
+ 2 files changed, 263 insertions(+), 6 deletions(-)
+
+diff --git a/src/ipa/softisp/algorithms/af.cpp b/src/ipa/softisp/algorithms/af.cpp
+index c2506ef..64d6762 100755
+--- a/src/ipa/softisp/algorithms/af.cpp
++++ b/src/ipa/softisp/algorithms/af.cpp
+@@ -49,6 +49,18 @@ namespace ipa::softisp::algorithms {
+  * measurement belongs to the lens position it is recorded for. A single
+  * measurement next to the peak that breaks the monotonic fall-off is taken
+  * once more before the peak is fitted.
++ *
++ * With phase detection data (pdGain not 0), a scan instead moves the lens by
++ * pdGain steps per pixel of phase shift, and repeats that with the slope
++ * between the last two measurements until the shift is below pdTolerance.
++ * A short search with fineStep then measures the sharpness on both sides of
++ * the best position, and the peak is fitted as above; with pdFine set to
++ * false the scan ends where the shift is below pdTolerance instead. The phase is only used
++ * when it was measured pdFrames frames after the last lens move, its
++ * correlation reaches pdMinConfidence and the image has a sharpness of at
++ * least pdMinSharpness (without structure the correlation is meaningless);
++ * otherwise the contrast climb takes over. In continuous mode a phase shift above pdRescan starts a new scan,
++ * like a change in sharpness.
+  */
+ 
+ LOG_DEFINE_CATEGORY(IPASoftAf)
+@@ -66,6 +78,16 @@ int Af::init(IPAContext &context, const ValueNode &tuningData)
+ 	stopRatio_ = tuningData["stopRatio"].get<double>(stopRatio_);
+ 	stopCount_ = tuningData["stopCount"].get<uint32_t>(stopCount_);
+ 	minPeak_ = tuningData["minPeak"].get<double>(minPeak_);
++	pdGain_ = tuningData["pdGain"].get<double>(pdGain_);
++	pdMinConfidence_ = tuningData["pdMinConfidence"].get<double>(pdMinConfidence_);
++	pdMinSharpness_ = tuningData["pdMinSharpness"].get<double>(pdMinSharpness_);
++	pdTolerance_ = tuningData["pdTolerance"].get<double>(pdTolerance_);
++	pdMaxSteps_ = tuningData["pdMaxSteps"].get<uint32_t>(pdMaxSteps_);
++	pdFrames_ = tuningData["pdFrames"].get<uint32_t>(pdFrames_);
++	pdRescan_ = tuningData["pdRescan"].get<double>(pdRescan_);
++	pdFine_ = tuningData["pdFine"].get<bool>(pdFine_);
++	fineStep_ = std::max<int32_t>(tuningData["fineStep"].get<int32_t>(fineStep_), 1);
++	fineMax_ = tuningData["fineMax"].get<uint32_t>(fineMax_);
+ 
+ 	coarseStep_ = std::max<int32_t>(coarseStep_, 1);
+ 	flatStep_ = std::max<int32_t>(flatStep_, coarseStep_);
+@@ -87,6 +109,7 @@ void Af::reset()
+ 	refPending_ = false;
+ 	validFrames_ = 0;
+ 	changed_ = 0;
++	pdChanged_ = 0;
+ }
+ 
+ int Af::configure(IPAContext &context, const IPAConfigInfo &configInfo)
+@@ -158,6 +181,7 @@ void Af::moveTo(IPAContext &context, int32_t position)
+ 		settle_++;
+ 
+ 	position_ = position;
++	pdMoved_ = pdSeen_;
+ 	context.activeState.af.position = position_;
+ 	context.activeState.af.update = true;
+ }
+@@ -183,7 +207,137 @@ bool Af::hasPeak() const
+ 	return bestSharpness_ >= minSharpness_ * minPeak_;
+ }
+ 
+-void Af::startScan(IPAContext &context, double sharpness)
++bool Af::phaseUsable(const SwIspStats *stats) const
++{
++	if (pdGain_ == 0.0 || !stats->pdValid ||
++	    stats->pdConfidence < pdMinConfidence_ || !stats->sharpnessBase)
++		return false;
++
++	return static_cast<double>(stats->sharpness) /
++	       static_cast<double>(stats->sharpnessBase) >= pdMinSharpness_;
++}
++
++/* Whether the phase was measured well after the last lens move. */
++bool Af::phaseFresh(const SwIspStats *stats) const
++{
++	return static_cast<int32_t>(stats->pdSequence - pdMoved_) >=
++	       static_cast<int32_t>(pdFrames_);
++}
++
++/*
++ * Move the lens to where the phase shift is expected to be zero: by pdGain
++ * steps per pixel at first, then along the line through the last two
++ * measurements as long as it slopes the same way.
++ */
++void Af::phaseStep(IPAContext &context, double phase)
++{
++	LOG(IPASoftAf, Debug) << "Phase " << position_ << ": " << phase;
++
++	if (std::abs(phase) <= pdTolerance_ && !pdFine_) {
++		LOG(IPASoftAf, Debug)
++			<< "Focused at " << position_ << " (phase " << phase
++			<< ", " << pdSteps_ << " phase steps)";
++		state_ = State::Idle;
++		afState_ = controls::AfStateFocused;
++		refPending_ = true;
++		validFrames_ = 0;
++		return;
++	}
++
++	if (std::abs(phase) <= pdTolerance_ || pdSteps_ >= pdMaxSteps_) {
++		startFine(context, phase);
++		return;
++	}
++
++	double gain = pdGain_;
++	if (havePrevPhase_ && std::abs(prevPhase_ - phase) > 0.3) {
++		double slope = (position_ - prevPhasePosition_) / (prevPhase_ - phase);
++		if (slope * pdGain_ > 0.0)
++			gain = std::copysign(std::clamp(std::abs(slope),
++							std::abs(pdGain_) / 4,
++							std::abs(pdGain_) * 4),
++					     pdGain_);
++	}
++
++	int32_t target = std::clamp<int32_t>(position_ + std::lround(phase * gain),
++					     min_, max_);
++	if (target == position_) {
++		startFine(context, phase);
++		return;
++	}
++
++	havePrevPhase_ = true;
++	prevPhasePosition_ = position_;
++	prevPhase_ = phase;
++	pdSteps_++;
++	moveTo(context, target);
++}
++
++void Af::startFine(IPAContext &context, double phase)
++{
++	state_ = State::Fine;
++	fineCount_ = 0;
++	fineRun_ = 0;
++	fineLast_ = position_;
++	fineDirection_ = phase * pdGain_ >= 0.0 ? 1 : -1;
++	fineStep(context);
++}
++
++/*
++ * Measure the neighbours of the best position at fineStep distance, the more
++ * likely side first, until the best position has a less sharp neighbour on
++ * both sides. While every new position is the best so far, the steps double.
++ */
++void Af::fineStep(IPAContext &context)
++{
++	if (bestPosition_ == position_ && position_ != fineLast_) {
++		fineDirection_ = position_ > fineLast_ ? 1 : -1;
++		fineRun_++;
++	} else {
++		fineRun_ = 0;
++	}
++	fineLast_ = position_;
++
++	const int32_t step = fineStep_ << std::min(fineRun_ > 0 ? fineRun_ - 1 : 0u, 2u);
++
++	for (int side : { fineDirection_, -fineDirection_ }) {
++		int32_t target = bestPosition_ + side * (side == fineDirection_ ? step : fineStep_);
++		if (target < min_ || target > max_ || samples_.count(target))
++			continue;
++		if (fineCount_ >= fineMax_)
++			break;
++
++		fineCount_++;
++		moveTo(context, target);
++		return;
++	}
++
++	finishFine(context);
++}
++
++void Af::finishFine(IPAContext &context)
++{
++	auto it = samples_.find(bestPosition_);
++	bool peak = it != samples_.end() && it != samples_.begin() &&
++		    std::next(it) != samples_.end() &&
++		    std::prev(it)->second < it->second &&
++		    std::next(it)->second < it->second;
++	int32_t target = interpolate();
++
++	LOG(IPASoftAf, Debug)
++		<< (peak ? "Focused at " : "No peak, resting at ") << target
++		<< " (best " << bestPosition_ << ": " << bestSharpness_
++		<< ", " << samples_.size() << " samples, "
++		<< pdSteps_ << " phase steps)";
++
++	moveTo(context, target);
++	state_ = State::Idle;
++	afState_ = peak ? controls::AfStateFocused : controls::AfStateFailed;
++	refPending_ = true;
++	validFrames_ = 0;
++}
++
++void Af::startScan(IPAContext &context, double sharpness, const SwIspStats *stats)
+ {
+ 	samples_.clear();
+ 	bestSharpness_ = 0.0;
+@@ -200,6 +354,22 @@ void Af::startScan(IPAContext &context, double sharpness)
+ 	/* Search the larger part of the range first. */
+ 	direction_ = max_ - position_ >= position_ - min_ ? 1 : -1;
+ 
++	pdSteps_ = 0;
++	havePrevPhase_ = false;
++	pdChanged_ = 0;
++
++	if (pdGain_ != 0.0 && stats->pdValid && !phaseUsable(stats))
++		LOG(IPASoftAf, Debug)
++			<< "Phase " << stats->pdPhase << " not used (correlation "
++			<< stats->pdConfidence << ", sharpness " << sharpness << ")";
++
++	if (phaseUsable(stats) && phaseFresh(stats)) {
++		state_ = State::Phase;
++		record(position_, sharpness);
++		phaseStep(context, stats->pdPhase);
++		return;
++	}
++
+ 	/* The current frame was taken at the start position. */
+ 	LOG(IPASoftAf, Debug) << "Climb " << position_ << ": " << sharpness;
+ 	record(position_, sharpness);
+@@ -397,6 +567,9 @@ void Af::process(IPAContext &context,
+ 	if (!stats->valid || !stats->sharpnessBase)
+ 		return;
+ 
++	if (stats->pdValid)
++		pdSeen_ = stats->pdSequence;
++
+ 	if (!lensKnown_) {
+ 		lensKnown_ = true;
+ 		int32_t start = position_;
+@@ -416,15 +589,24 @@ void Af::process(IPAContext &context,
+ 	switch (state_) {
+ 	case State::Idle:
+ 		if (refPending_) {
++			/*
++			 * A scan with phase detection can end before the AGC
++			 * has settled. Take the reference only after warmup
++			 * frames, so that the exposure change does not look
++			 * like a new scene.
++			 */
++			if (++validFrames_ < warmup_)
++				return;
+ 			refSharpness_ = sharpness;
+ 			refPending_ = false;
++			validFrames_ = 0;
+ 			return;
+ 		}
+ 
+ 		if (mode_ == controls::AfModeAuto) {
+ 			if (triggered_) {
+ 				triggered_ = false;
+-				startScan(context, sharpness);
++				startScan(context, sharpness, stats);
+ 			}
+ 			return;
+ 		}
+@@ -433,17 +615,34 @@ void Af::process(IPAContext &context,
+ 			return;
+ 
+ 		if (refSharpness_ == 0.0) {
+-			if (++validFrames_ >= warmup_)
+-				startScan(context, sharpness);
++			/*
++			 * The phase does not depend on the exposure, so there
++			 * is no need to wait for the AGC to settle.
++			 */
++			if (++validFrames_ >= warmup_ ||
++			    (phaseUsable(stats) && phaseFresh(stats)))
++				startScan(context, sharpness, stats);
+ 			return;
+ 		}
+ 
++		if (phaseUsable(stats) && phaseFresh(stats) &&
++		    std::abs(stats->pdPhase) > pdRescan_) {
++			if (++pdChanged_ >= changeCount_) {
++				LOG(IPASoftAf, Debug)
++					<< "Phase " << stats->pdPhase << ", rescanning";
++				startScan(context, sharpness, stats);
++				return;
++			}
++		} else {
++			pdChanged_ = 0;
++		}
++
+ 		if (std::abs(sharpness / refSharpness_ - 1.0) > changeThreshold_) {
+ 			if (++changed_ >= changeCount_) {
+ 				LOG(IPASoftAf, Debug)
+ 					<< "Sharpness changed " << refSharpness_
+ 					<< " -> " << sharpness << ", rescanning";
+-				startScan(context, sharpness);
++				startScan(context, sharpness, stats);
+ 			}
+ 		} else {
+ 			changed_ = 0;
+@@ -462,6 +661,32 @@ void Af::process(IPAContext &context,
+ 		record(position_, sharpness);
+ 		finish(context);
+ 		return;
++
++	case State::Phase:
++		if (!phaseUsable(stats)) {
++			/* No reliable phase here: climb from this position. */
++			LOG(IPASoftAf, Debug) << "Climb " << position_ << ": " << sharpness;
++			record(position_, sharpness);
++			state_ = State::Climb;
++			origin_ = position_;
++			direction_ = max_ - position_ >= position_ - min_ ? 1 : -1;
++			climb(context);
++			return;
++		}
++
++		/* Wait for a phase measured after the lens moved. */
++		if (!phaseFresh(stats))
++			return;
++
++		record(position_, sharpness);
++		phaseStep(context, stats->pdPhase);
++		return;
++
++	case State::Fine:
++		LOG(IPASoftAf, Debug) << "Fine " << position_ << ": " << sharpness;
++		record(position_, sharpness);
++		fineStep(context);
++		return;
+ 	}
+ }
+ 
+diff --git a/src/ipa/softisp/algorithms/af.h b/src/ipa/softisp/algorithms/af.h
+index 2da6e7c..64ba706 100755
+--- a/src/ipa/softisp/algorithms/af.h
++++ b/src/ipa/softisp/algorithms/af.h
+@@ -36,10 +36,18 @@ private:
+ 		Idle,
+ 		Climb,
+ 		Refine,
++		Phase,
++		Fine,
+ 	};
+ 
+ 	void reset();
+-	void startScan(IPAContext &context, double sharpness);
++	void startScan(IPAContext &context, double sharpness, const SwIspStats *stats);
++	bool phaseUsable(const SwIspStats *stats) const;
++	bool phaseFresh(const SwIspStats *stats) const;
++	void phaseStep(IPAContext &context, double phase);
++	void startFine(IPAContext &context, double phase);
++	void fineStep(IPAContext &context);
++	void finishFine(IPAContext &context);
+ 	void moveTo(IPAContext &context, int32_t position);
+ 	void record(int32_t position, double sharpness);
+ 	bool hasPeak() const;
+@@ -61,6 +69,18 @@ private:
+ 	unsigned int stopCount_ = 2;
+ 	double minPeak_ = 1.5;
+ 
++	/* Phase detection, off while pdGain is 0 */
++	double pdGain_ = 0.0;
++	double pdMinConfidence_ = 0.6;
++	double pdMinSharpness_ = 0.0;
++	double pdTolerance_ = 0.25;
++	unsigned int pdMaxSteps_ = 3;
++	unsigned int pdFrames_ = 3;
++	double pdRescan_ = 1.0;
++	bool pdFine_ = true;
++	int32_t fineStep_ = 96;
++	unsigned int fineMax_ = 8;
++
+ 	controls::AfModeEnum mode_ = controls::AfModeContinuous;
+ 	controls::AfStateEnum afState_ = controls::AfStateIdle;
+ 	State state_ = State::Idle;
+@@ -86,6 +106,18 @@ private:
+ 	unsigned int validFrames_ = 0;
+ 	unsigned int changed_ = 0;
+ 	unsigned int settle_ = 0;
++
++	uint32_t pdSeen_ = 0;
++	uint32_t pdMoved_ = 0;
++	unsigned int pdSteps_ = 0;
++	bool havePrevPhase_ = false;
++	int32_t prevPhasePosition_ = 0;
++	double prevPhase_ = 0.0;
++	unsigned int pdChanged_ = 0;
++	unsigned int fineCount_ = 0;
++	unsigned int fineRun_ = 0;
++	int32_t fineLast_ = 0;
++	int fineDirection_ = 1;
+ };
+ 
+ } /* namespace ipa::softisp::algorithms */
+-- 
+2.43.0
+

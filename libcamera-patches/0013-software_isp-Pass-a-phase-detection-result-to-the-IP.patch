@@ -1,0 +1,250 @@
+From 053e3b8ad3c06441230cb1e9a20e20e5bd0509d7 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 21:18:56 +0100
+Subject: [PATCH 13/15] software_isp: Pass a phase detection result to the IPA
+ with the statistics
+
+Sensors with phase detection pixels tell how far and in which direction
+the lens is out of focus. Add the shift between the left and right pixels,
+its confidence and the sequence number of the frame it was measured on to
+SwIspStats, set from the pipeline handler through SoftwareIsp::setPhase().
+---
+ .../internal/software_isp/software_isp.h      |  2 ++
+ .../internal/software_isp/swisp_stats.h       | 21 ++++++++++++
+ .../internal/software_isp/swstats_cpu.h       |  9 +++++
+ src/libcamera/software_isp/debayer.cpp        |  8 +++++
+ src/libcamera/software_isp/debayer.h          |  4 +++
+ src/libcamera/software_isp/debayer_cpu.h      |  4 +++
+ src/libcamera/software_isp/debayer_egl.h      |  4 +++
+ src/libcamera/software_isp/software_isp.cpp   | 13 ++++++++
+ src/libcamera/software_isp/swstats_cpu.cpp    | 33 +++++++++++++++++++
+ 9 files changed, 98 insertions(+)
+
+diff --git a/include/libcamera/internal/software_isp/software_isp.h b/include/libcamera/internal/software_isp/software_isp.h
+index 10e5aa5..7018f16 100644
+--- a/include/libcamera/internal/software_isp/software_isp.h
++++ b/include/libcamera/internal/software_isp/software_isp.h
+@@ -85,6 +85,8 @@ public:
+ 
+ 	Signal<FrameBuffer *> inputBufferReady;
+ 	Signal<FrameBuffer *> outputBufferReady;
++	void setPhase(float phase, float confidence, uint32_t sequence);
++
+ 	Signal<uint32_t, uint32_t> ispStatsReady;
+ 	Signal<uint32_t, const ControlList &> metadataReady;
+ 	Signal<const ControlList &, const ControlList &> setSensorControls;
+diff --git a/include/libcamera/internal/software_isp/swisp_stats.h b/include/libcamera/internal/software_isp/swisp_stats.h
+index fe8f062..00d8d97 100644
+--- a/include/libcamera/internal/software_isp/swisp_stats.h
++++ b/include/libcamera/internal/software_isp/swisp_stats.h
+@@ -84,6 +84,27 @@ struct SwIspStats {
+ 	 * the image brightness.
+ 	 */
+ 	uint64_t sharpnessBase;
++	/**
++	 * \brief True if \a pdPhase holds a phase detection result
++	 */
++	bool pdValid;
++	/**
++	 * \brief Shift between the left and right phase detection pixels in
++	 * the centre of the image, in pixels of the phase detection data
++	 *
++	 * Zero when the centre of the image is in focus. The sign tells the
++	 * direction the lens has to move in, the size roughly how far.
++	 */
++	float pdPhase;
++	/**
++	 * \brief Normalised correlation of the left and right pixels at
++	 * \a pdPhase, from 0 (no match) to 1
++	 */
++	float pdConfidence;
++	/**
++	 * \brief Sequence number of the frame \a pdPhase was measured on
++	 */
++	uint32_t pdSequence;
+ };
+ 
+ } /* namespace libcamera */
+diff --git a/include/libcamera/internal/software_isp/swstats_cpu.h b/include/libcamera/internal/software_isp/swstats_cpu.h
+index 82d876a..03a1d3f 100644
+--- a/include/libcamera/internal/software_isp/swstats_cpu.h
++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
+@@ -11,6 +11,7 @@
+ 
+ #pragma once
+ 
++#include <mutex>
+ #include <stdint.h>
+ #include <vector>
+ 
+@@ -55,6 +56,7 @@ public:
+ 	int configure(const StreamConfiguration &inputCfg, unsigned int statsBufferCount = 1);
+ 	void setWindow(const Rectangle &window);
+ 	void setGreyReference(const RGB<double> &gains, double blackLevel);
++	void setPhase(float phase, float confidence, uint32_t sequence);
+ 	void startFrame(uint32_t frame);
+ 	void finishFrame(uint32_t frame, uint32_t bufferId);
+ 	void processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuffer &input);
+@@ -156,6 +158,13 @@ private:
+ 
+ 	std::vector<SwIspStats> stats_;
+ 	SharedMemObject<SwIspStats> sharedStats_;
++
++	/* Latest phase detection result, set from another thread */
++	std::mutex pdMutex_;
++	bool pdValid_ = false;
++	float pdPhase_ = 0.0f;
++	float pdConfidence_ = 0.0f;
++	uint32_t pdSequence_ = 0;
+ 	Benchmark bench_;
+ };
+ 
+diff --git a/src/libcamera/software_isp/debayer.cpp b/src/libcamera/software_isp/debayer.cpp
+index a038a99..b90f2a2 100644
+--- a/src/libcamera/software_isp/debayer.cpp
++++ b/src/libcamera/software_isp/debayer.cpp
+@@ -174,6 +174,14 @@ Debayer::~Debayer()
+  * \return The valid size ranges or an empty range if there are none
+  */
+ 
++/**
++ * \fn void Debayer::setPhase(float phase, float confidence, uint32_t sequence)
++ * \brief Pass a phase detection result on to the statistics
++ * \param[in] phase The shift between the left and right pixels
++ * \param[in] confidence The normalised correlation at that shift
++ * \param[in] sequence The sequence number of the frame it was measured on
++ */
++
+ /**
+  * \fn const SharedFD &Debayer::getStatsFD()
+  * \brief Get the file descriptor for the statistics
+diff --git a/src/libcamera/software_isp/debayer.h b/src/libcamera/software_isp/debayer.h
+index f0ebdf5..ef04511 100644
+--- a/src/libcamera/software_isp/debayer.h
++++ b/src/libcamera/software_isp/debayer.h
+@@ -57,6 +57,10 @@ public:
+ 
+ 	virtual const SharedFD &getStatsFD() = 0;
+ 
++	virtual void setPhase([[maybe_unused]] float phase,
++			      [[maybe_unused]] float confidence,
++			      [[maybe_unused]] uint32_t sequence) {}
++
+ 	unsigned int frameSize() { return outputConfig_.frameSize; }
+ 
+ 	Signal<FrameBuffer *> inputBufferReady;
+diff --git a/src/libcamera/software_isp/debayer_cpu.h b/src/libcamera/software_isp/debayer_cpu.h
+index ae57089..abe719b 100644
+--- a/src/libcamera/software_isp/debayer_cpu.h
++++ b/src/libcamera/software_isp/debayer_cpu.h
+@@ -48,6 +48,10 @@ public:
+ 	void stop() override;
+ 	SizeRange sizes(PixelFormat inputFormat, const Size &inputSize) override;
+ 	const SharedFD &getStatsFD() override { return stats_->getStatsFD(); }
++	void setPhase(float phase, float confidence, uint32_t sequence) override
++	{
++		stats_->setPhase(phase, confidence, sequence);
++	}
+ 
+ private:
+ 	friend class DebayerCpuThread;
+diff --git a/src/libcamera/software_isp/debayer_egl.h b/src/libcamera/software_isp/debayer_egl.h
+index 067524e..5637436 100644
+--- a/src/libcamera/software_isp/debayer_egl.h
++++ b/src/libcamera/software_isp/debayer_egl.h
+@@ -61,6 +61,10 @@ public:
+ 	void stop() override;
+ 
+ 	const SharedFD &getStatsFD() override { return stats_->getStatsFD(); }
++	void setPhase(float phase, float confidence, uint32_t sequence) override
++	{
++		stats_->setPhase(phase, confidence, sequence);
++	}
+ 
+ 	SizeRange sizes(PixelFormat inputFormat, const Size &inputSize) override;
+ 
+diff --git a/src/libcamera/software_isp/software_isp.cpp b/src/libcamera/software_isp/software_isp.cpp
+index 8ba8cad..119dc3e 100644
+--- a/src/libcamera/software_isp/software_isp.cpp
++++ b/src/libcamera/software_isp/software_isp.cpp
+@@ -451,6 +451,19 @@ void SoftwareIsp::process(uint32_t frame, FrameBuffer *input, FrameBuffer *outpu
+ 			       ConnectionTypeQueued, frame, input, output, debayerParams_);
+ }
+ 
++/**
++ * \brief Pass a phase detection result to the IPA with the statistics
++ * \param[in] phase The shift between the left and right phase detection
++ * pixels in the centre of the image
++ * \param[in] confidence The normalised correlation at that shift
++ * \param[in] sequence The sequence number of the frame it was measured on
++ */
++void SoftwareIsp::setPhase(float phase, float confidence, uint32_t sequence)
++{
++	if (debayer_)
++		debayer_->setPhase(phase, confidence, sequence);
++}
++
+ void SoftwareIsp::saveIspParams([[maybe_unused]] uint32_t frame)
+ {
+ 	debayerParams_ = *sharedParams_;
+diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+index 9aaadc1..b3aeec7 100644
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -528,6 +528,25 @@ void SwStatsCpu::setGreyReference(const RGB<double> &gains, double blackLevel)
+ 	greyBlack_ = static_cast<unsigned int>(std::clamp(blackLevel, 0.0, 1.0) * 255);
+ }
+ 
++/**
++ * \brief Set the latest phase detection result
++ * \param[in] phase The shift between the left and right pixels
++ * \param[in] confidence The normalised correlation at that shift
++ * \param[in] sequence The sequence number of the frame it was measured on
++ *
++ * The result is passed on with the statistics of the following frames, see
++ * SwIspStats::pdPhase. It may be called from any thread.
++ */
++void SwStatsCpu::setPhase(float phase, float confidence, uint32_t sequence)
++{
++	std::lock_guard<std::mutex> lock(pdMutex_);
++
++	pdValid_ = true;
++	pdPhase_ = phase;
++	pdConfidence_ = confidence;
++	pdSequence_ = sequence;
++}
++
+ /**
+  * \brief Reset state to start statistics gathering for a new frame
+  * \param[in] frame The frame number
+@@ -587,6 +606,15 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
+ 		sharedStats_->greySum_ >>= sumShift_;
+ 	}
+ 
++	{
++		std::lock_guard<std::mutex> lock(pdMutex_);
++
++		sharedStats_->pdValid = pdValid_;
++		sharedStats_->pdPhase = pdPhase_;
++		sharedStats_->pdConfidence = pdConfidence_;
++		sharedStats_->pdSequence = pdSequence_;
++	}
++
+ 	sharedStats_->valid = valid;
+ 	statsReady.emit(frame, bufferId);
+ }
+@@ -636,6 +664,11 @@ int SwStatsCpu::setupStandardBayerOrder(BayerFormat::Order order)
+  */
+ int SwStatsCpu::configure(const StreamConfiguration &inputCfg, unsigned int statsBufferCount)
+ {
++	{
++		std::lock_guard<std::mutex> lock(pdMutex_);
++		pdValid_ = false;
++	}
++
+ 	stride_ = inputCfg.stride;
+ 	stats_.resize(statsBufferCount);
+ 
+-- 
+2.43.0
+

@@ -30,7 +30,7 @@ Not working or limited:
 |---|---|
 | Fingerprint reader | not done |
 | Fast charging (Warp) and wireless charging | not done; charging is 5 V, up to 2 A into the battery |
-| Camera autofocus | contrast only, no phase detection |
+| Camera autofocus | phase detection on the main camera only at full resolution (30 fps), otherwise contrast only |
 | Calls | no echo cancellation, see [`modem/`](modem/) |
 | NFC | reading tags only; writing and card emulation are untested |
 | Charging | the last ten percent are slow, and the phone does not sleep while charging, see [`docs/charging.md`](docs/charging.md) |
@@ -240,7 +240,8 @@ For the compass and sensor setup on old images see [`docs/sensors.md`](docs/sens
 - Cameras: colours, shading and exposure come from the stock tuning; white balance is
   automatic only (no colour temperature curve from the stock tuning yet). Main and
   ultrawide preview at 2000×1500 and 60 fps and take full pictures at 4000×3000 and 30 fps;
-  autofocus is contrast only (no phase detection) and takes about 1 second.
+  autofocus takes about 1 second; the main camera at 4000×3000 uses its phase detection
+  pixels as well.
 - The last ten percent of a charge take about 50 minutes, longer than on Android, and the
   phone does not sleep while the battery is charging: see [`docs/charging.md`](docs/charging.md).
 - Under Plasma Mobile the keyboard did not always open in the SIM PIN popup. Enter the PIN in

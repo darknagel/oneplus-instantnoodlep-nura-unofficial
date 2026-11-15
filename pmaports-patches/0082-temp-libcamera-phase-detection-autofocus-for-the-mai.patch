@@ -1,0 +1,1159 @@
+From 7eda0ecf9c8efc696529b901865ef0ca7503baef Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 17:15:40 +0100
+Subject: [PATCH 82/82] temp/libcamera: phase detection autofocus for the main
+ camera
+
+Add libcamera 0015-0017: the simple pipeline captures the phase detection
+stream of the IMX689 and the autofocus jumps to focus with it before a short
+contrast search. Tuning for the IMX689.
+---
+ ...s-a-phase-detection-result-to-the-IP.patch | 250 +++++++++++
+ ...Capture-the-phase-detection-stream-o.patch | 403 +++++++++++++++++
+ ...f-Jump-to-focus-with-phase-detection.patch | 406 ++++++++++++++++++
+ temp/libcamera/APKBUILD                       |  10 +-
+ temp/libcamera/imx689.yaml                    |   9 +
+ 5 files changed, 1076 insertions(+), 2 deletions(-)
+ create mode 100644 temp/libcamera/0015-software_isp-Pass-a-phase-detection-result-to-the-IP.patch
+ create mode 100644 temp/libcamera/0016-pipeline-simple-Capture-the-phase-detection-stream-o.patch
+ create mode 100644 temp/libcamera/0017-ipa-softisp-af-Jump-to-focus-with-phase-detection.patch
+
+diff --git a/temp/libcamera/0015-software_isp-Pass-a-phase-detection-result-to-the-IP.patch b/temp/libcamera/0015-software_isp-Pass-a-phase-detection-result-to-the-IP.patch
+new file mode 100644
+index 0000000000..472260ad07
+--- /dev/null
++++ b/temp/libcamera/0015-software_isp-Pass-a-phase-detection-result-to-the-IP.patch
+@@ -0,0 +1,250 @@
++From 053e3b8ad3c06441230cb1e9a20e20e5bd0509d7 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sat, 14 Nov 2026 21:18:56 +0100
++Subject: [PATCH 15/17] software_isp: Pass a phase detection result to the IPA
++ with the statistics
++
++Sensors with phase detection pixels tell how far and in which direction
++the lens is out of focus. Add the shift between the left and right pixels,
++its confidence and the sequence number of the frame it was measured on to
++SwIspStats, set from the pipeline handler through SoftwareIsp::setPhase().
++---
++ .../internal/software_isp/software_isp.h      |  2 ++
++ .../internal/software_isp/swisp_stats.h       | 21 ++++++++++++
++ .../internal/software_isp/swstats_cpu.h       |  9 +++++
++ src/libcamera/software_isp/debayer.cpp        |  8 +++++
++ src/libcamera/software_isp/debayer.h          |  4 +++
++ src/libcamera/software_isp/debayer_cpu.h      |  4 +++
++ src/libcamera/software_isp/debayer_egl.h      |  4 +++
++ src/libcamera/software_isp/software_isp.cpp   | 13 ++++++++
++ src/libcamera/software_isp/swstats_cpu.cpp    | 33 +++++++++++++++++++
++ 9 files changed, 98 insertions(+)
++
++diff --git a/include/libcamera/internal/software_isp/software_isp.h b/include/libcamera/internal/software_isp/software_isp.h
++index 10e5aa5..7018f16 100644
++--- a/include/libcamera/internal/software_isp/software_isp.h
+++++ b/include/libcamera/internal/software_isp/software_isp.h
++@@ -85,6 +85,8 @@ public:
++ 
++ 	Signal<FrameBuffer *> inputBufferReady;
++ 	Signal<FrameBuffer *> outputBufferReady;
+++	void setPhase(float phase, float confidence, uint32_t sequence);
+++
++ 	Signal<uint32_t, uint32_t> ispStatsReady;
++ 	Signal<uint32_t, const ControlList &> metadataReady;
++ 	Signal<const ControlList &, const ControlList &> setSensorControls;
++diff --git a/include/libcamera/internal/software_isp/swisp_stats.h b/include/libcamera/internal/software_isp/swisp_stats.h
++index fe8f062..00d8d97 100644
++--- a/include/libcamera/internal/software_isp/swisp_stats.h
+++++ b/include/libcamera/internal/software_isp/swisp_stats.h
++@@ -84,6 +84,27 @@ struct SwIspStats {
++ 	 * the image brightness.
++ 	 */
++ 	uint64_t sharpnessBase;
+++	/**
+++	 * \brief True if \a pdPhase holds a phase detection result
+++	 */
+++	bool pdValid;
+++	/**
+++	 * \brief Shift between the left and right phase detection pixels in
+++	 * the centre of the image, in pixels of the phase detection data
+++	 *
+++	 * Zero when the centre of the image is in focus. The sign tells the
+++	 * direction the lens has to move in, the size roughly how far.
+++	 */
+++	float pdPhase;
+++	/**
+++	 * \brief Normalised correlation of the left and right pixels at
+++	 * \a pdPhase, from 0 (no match) to 1
+++	 */
+++	float pdConfidence;
+++	/**
+++	 * \brief Sequence number of the frame \a pdPhase was measured on
+++	 */
+++	uint32_t pdSequence;
++ };
++ 
++ } /* namespace libcamera */
++diff --git a/include/libcamera/internal/software_isp/swstats_cpu.h b/include/libcamera/internal/software_isp/swstats_cpu.h
++index 82d876a..03a1d3f 100644
++--- a/include/libcamera/internal/software_isp/swstats_cpu.h
+++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
++@@ -11,6 +11,7 @@
++ 
++ #pragma once
++ 
+++#include <mutex>
++ #include <stdint.h>
++ #include <vector>
++ 
++@@ -55,6 +56,7 @@ public:
++ 	int configure(const StreamConfiguration &inputCfg, unsigned int statsBufferCount = 1);
++ 	void setWindow(const Rectangle &window);
++ 	void setGreyReference(const RGB<double> &gains, double blackLevel);
+++	void setPhase(float phase, float confidence, uint32_t sequence);
++ 	void startFrame(uint32_t frame);
++ 	void finishFrame(uint32_t frame, uint32_t bufferId);
++ 	void processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuffer &input);
++@@ -156,6 +158,13 @@ private:
++ 
++ 	std::vector<SwIspStats> stats_;
++ 	SharedMemObject<SwIspStats> sharedStats_;
+++
+++	/* Latest phase detection result, set from another thread */
+++	std::mutex pdMutex_;
+++	bool pdValid_ = false;
+++	float pdPhase_ = 0.0f;
+++	float pdConfidence_ = 0.0f;
+++	uint32_t pdSequence_ = 0;
++ 	Benchmark bench_;
++ };
++ 
++diff --git a/src/libcamera/software_isp/debayer.cpp b/src/libcamera/software_isp/debayer.cpp
++index a038a99..b90f2a2 100644
++--- a/src/libcamera/software_isp/debayer.cpp
+++++ b/src/libcamera/software_isp/debayer.cpp
++@@ -174,6 +174,14 @@ Debayer::~Debayer()
++  * \return The valid size ranges or an empty range if there are none
++  */
++ 
+++/**
+++ * \fn void Debayer::setPhase(float phase, float confidence, uint32_t sequence)
+++ * \brief Pass a phase detection result on to the statistics
+++ * \param[in] phase The shift between the left and right pixels
+++ * \param[in] confidence The normalised correlation at that shift
+++ * \param[in] sequence The sequence number of the frame it was measured on
+++ */
+++
++ /**
++  * \fn const SharedFD &Debayer::getStatsFD()
++  * \brief Get the file descriptor for the statistics
++diff --git a/src/libcamera/software_isp/debayer.h b/src/libcamera/software_isp/debayer.h
++index f0ebdf5..ef04511 100644
++--- a/src/libcamera/software_isp/debayer.h
+++++ b/src/libcamera/software_isp/debayer.h
++@@ -57,6 +57,10 @@ public:
++ 
++ 	virtual const SharedFD &getStatsFD() = 0;
++ 
+++	virtual void setPhase([[maybe_unused]] float phase,
+++			      [[maybe_unused]] float confidence,
+++			      [[maybe_unused]] uint32_t sequence) {}
+++
++ 	unsigned int frameSize() { return outputConfig_.frameSize; }
++ 
++ 	Signal<FrameBuffer *> inputBufferReady;
++diff --git a/src/libcamera/software_isp/debayer_cpu.h b/src/libcamera/software_isp/debayer_cpu.h
++index ae57089..abe719b 100644
++--- a/src/libcamera/software_isp/debayer_cpu.h
+++++ b/src/libcamera/software_isp/debayer_cpu.h
++@@ -48,6 +48,10 @@ public:
++ 	void stop() override;
++ 	SizeRange sizes(PixelFormat inputFormat, const Size &inputSize) override;
++ 	const SharedFD &getStatsFD() override { return stats_->getStatsFD(); }
+++	void setPhase(float phase, float confidence, uint32_t sequence) override
+++	{
+++		stats_->setPhase(phase, confidence, sequence);
+++	}
++ 
++ private:
++ 	friend class DebayerCpuThread;
++diff --git a/src/libcamera/software_isp/debayer_egl.h b/src/libcamera/software_isp/debayer_egl.h
++index 067524e..5637436 100644
++--- a/src/libcamera/software_isp/debayer_egl.h
+++++ b/src/libcamera/software_isp/debayer_egl.h
++@@ -61,6 +61,10 @@ public:
++ 	void stop() override;
++ 
++ 	const SharedFD &getStatsFD() override { return stats_->getStatsFD(); }
+++	void setPhase(float phase, float confidence, uint32_t sequence) override
+++	{
+++		stats_->setPhase(phase, confidence, sequence);
+++	}
++ 
++ 	SizeRange sizes(PixelFormat inputFormat, const Size &inputSize) override;
++ 
++diff --git a/src/libcamera/software_isp/software_isp.cpp b/src/libcamera/software_isp/software_isp.cpp
++index 8ba8cad..119dc3e 100644
++--- a/src/libcamera/software_isp/software_isp.cpp
+++++ b/src/libcamera/software_isp/software_isp.cpp
++@@ -451,6 +451,19 @@ void SoftwareIsp::process(uint32_t frame, FrameBuffer *input, FrameBuffer *outpu
++ 			       ConnectionTypeQueued, frame, input, output, debayerParams_);
++ }
++ 
+++/**
+++ * \brief Pass a phase detection result to the IPA with the statistics
+++ * \param[in] phase The shift between the left and right phase detection
+++ * pixels in the centre of the image
+++ * \param[in] confidence The normalised correlation at that shift
+++ * \param[in] sequence The sequence number of the frame it was measured on
+++ */
+++void SoftwareIsp::setPhase(float phase, float confidence, uint32_t sequence)
+++{
+++	if (debayer_)
+++		debayer_->setPhase(phase, confidence, sequence);
+++}
+++
++ void SoftwareIsp::saveIspParams([[maybe_unused]] uint32_t frame)
++ {
++ 	debayerParams_ = *sharedParams_;
++diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
++index 9aaadc1..b3aeec7 100644
++--- a/src/libcamera/software_isp/swstats_cpu.cpp
+++++ b/src/libcamera/software_isp/swstats_cpu.cpp
++@@ -528,6 +528,25 @@ void SwStatsCpu::setGreyReference(const RGB<double> &gains, double blackLevel)
++ 	greyBlack_ = static_cast<unsigned int>(std::clamp(blackLevel, 0.0, 1.0) * 255);
++ }
++ 
+++/**
+++ * \brief Set the latest phase detection result
+++ * \param[in] phase The shift between the left and right pixels
+++ * \param[in] confidence The normalised correlation at that shift
+++ * \param[in] sequence The sequence number of the frame it was measured on
+++ *
+++ * The result is passed on with the statistics of the following frames, see
+++ * SwIspStats::pdPhase. It may be called from any thread.
+++ */
+++void SwStatsCpu::setPhase(float phase, float confidence, uint32_t sequence)
+++{
+++	std::lock_guard<std::mutex> lock(pdMutex_);
+++
+++	pdValid_ = true;
+++	pdPhase_ = phase;
+++	pdConfidence_ = confidence;
+++	pdSequence_ = sequence;
+++}
+++
++ /**
++  * \brief Reset state to start statistics gathering for a new frame
++  * \param[in] frame The frame number
++@@ -587,6 +606,15 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
++ 		sharedStats_->greySum_ >>= sumShift_;
++ 	}
++ 
+++	{
+++		std::lock_guard<std::mutex> lock(pdMutex_);
+++
+++		sharedStats_->pdValid = pdValid_;
+++		sharedStats_->pdPhase = pdPhase_;
+++		sharedStats_->pdConfidence = pdConfidence_;
+++		sharedStats_->pdSequence = pdSequence_;
+++	}
+++
++ 	sharedStats_->valid = valid;
++ 	statsReady.emit(frame, bufferId);
++ }
++@@ -636,6 +664,11 @@ int SwStatsCpu::setupStandardBayerOrder(BayerFormat::Order order)
++  */
++ int SwStatsCpu::configure(const StreamConfiguration &inputCfg, unsigned int statsBufferCount)
++ {
+++	{
+++		std::lock_guard<std::mutex> lock(pdMutex_);
+++		pdValid_ = false;
+++	}
+++
++ 	stride_ = inputCfg.stride;
++ 	stats_.resize(statsBufferCount);
++ 
++-- 
++2.43.0
++
+diff --git a/temp/libcamera/0016-pipeline-simple-Capture-the-phase-detection-stream-o.patch b/temp/libcamera/0016-pipeline-simple-Capture-the-phase-detection-stream-o.patch
+new file mode 100644
+index 0000000000..0887f5f172
+--- /dev/null
++++ b/temp/libcamera/0016-pipeline-simple-Capture-the-phase-detection-stream-o.patch
+@@ -0,0 +1,403 @@
++From f614076a69686357514034443a1506f2f6a43341 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sat, 14 Nov 2026 21:18:56 +0100
++Subject: [PATCH 16/17] pipeline: simple: Capture the phase detection stream of
++ the IMX689
++
++The IMX689 sends its phase detection pixels in the 4000x3000 mode as a
++second CSI-2 stream (virtual channel 1, data type 0x30), a 2000x1500 image
++with the left and right pixels in alternating columns. On Qualcomm CAMSS the
++CSID passes it to the RDI after the one of the image when the qcom_camss
++module parameters rdi_vc and rdi_dt are set for that RDI.
++
++When the sensor runs in that mode, capture the stream on that RDI, measure
++the shift between the left and right pixels in the centre of the image by
++cross-correlation and pass it to the software ISP statistics.
++---
++ src/libcamera/pipeline/simple/simple.cpp | 312 +++++++++++++++++++++++
++ 1 file changed, 312 insertions(+)
++
++diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
++index 002b222..08442bf 100644
++--- a/src/libcamera/pipeline/simple/simple.cpp
+++++ b/src/libcamera/pipeline/simple/simple.cpp
++@@ -7,6 +7,8 @@
++  */
++ 
++ #include <algorithm>
+++#include <array>
+++#include <cmath>
++ #include <iterator>
++ #include <list>
++ #include <map>
++@@ -43,6 +45,7 @@
++ #include "libcamera/internal/device_enumerator.h"
++ #include "libcamera/internal/formats.h"
++ #include "libcamera/internal/global_configuration.h"
+++#include "libcamera/internal/mapped_framebuffer.h"
++ #include "libcamera/internal/media_device.h"
++ #include "libcamera/internal/pipeline_handler.h"
++ #include "libcamera/internal/request.h"
++@@ -269,6 +272,117 @@ static const SimplePipelineInfo supportedDevices[] = {
++ 	{ "sun6i-csi", {}, false },
++ };
++ 
+++/*
+++ * Sensors that send phase detection data as a second CSI-2 stream in the mode
+++ * of the given size. The CSID passes that stream to the RDI after the one of
+++ * the image (qcom_camss module parameters rdi_vc and rdi_dt). The data is an
+++ * image of half the resolution. Its even lines hold the right and left phase
+++ * detection pixels in alternating columns; the odd lines hold another pixel
+++ * pair, which does not give a horizontal phase and is not used.
+++ */
+++struct PdafSensorInfo {
+++	const char *model;
+++	Size sensorSize;
+++	Size pdSize;
+++};
+++
+++const PdafSensorInfo pdafSensors[] = {
+++	{ "imx689", { 4000, 3000 }, { 2000, 1500 } },
+++};
+++
+++/* Largest shift between the left and right pixels that is searched for */
+++constexpr int kPdMaxShift = 12;
+++
+++/*
+++ * Measure the shift between the two phase detection pixels of the even
+++ * lines (even and odd columns) in the centre half of the width of a frame in
+++ * packed 10-bit format, over its whole height like the sharpness measure of
+++ * the software ISP, as the maximum of their normalised cross-correlation.
+++ * Returns false if the frame is too small to measure.
+++ */
+++bool measurePhase(const uint8_t *data, unsigned int stride, const Size &size,
+++		  float *phase, float *confidence)
+++{
+++	constexpr int K = kPdMaxShift;
+++	const unsigned int x0 = size.width / 4 / 4 * 4;
+++	const unsigned int w = size.width / 2 / 4 * 4;
+++	const unsigned int n = w / 2;
+++
+++	if (n < 4 * K)
+++		return false;
+++
+++	std::vector<float> l(n), r(n);
+++	std::array<double, 2 * K + 1> ab{}, bb{};
+++	double aa = 0.0;
+++
+++	/* Every second even line. */
+++	for (unsigned int y = 0; y < size.height; y += 4) {
+++		const uint8_t *p = data + y * stride + x0 / 4 * 5;
+++		float sumL = 0.0f, sumR = 0.0f;
+++
+++		for (unsigned int i = 0; i < w / 4; i++, p += 5) {
+++			for (unsigned int j = 0; j < 4; j++) {
+++				float v = static_cast<float>((p[j] << 2) |
+++							     ((p[4] >> (2 * j)) & 3));
+++				unsigned int c = i * 4 + j;
+++				if (c & 1) {
+++					r[c / 2] = v;
+++					sumR += v;
+++				} else {
+++					l[c / 2] = v;
+++					sumL += v;
+++				}
+++			}
+++		}
+++
+++		const float meanL = sumL / n, meanR = sumR / n;
+++		for (unsigned int c = 0; c < n; c++) {
+++			l[c] -= meanL;
+++			r[c] -= meanR;
+++		}
+++
+++		float rowAa = 0.0f;
+++		for (unsigned int c = K; c < n - K; c++)
+++			rowAa += l[c] * l[c];
+++		aa += rowAa;
+++
+++		for (int s = -K; s <= K; s++) {
+++			float rowAb = 0.0f, rowBb = 0.0f;
+++			for (unsigned int c = K; c < n - K; c++) {
+++				const float b = r[c - s];
+++				rowAb += l[c] * b;
+++				rowBb += b * b;
+++			}
+++			ab[s + K] += rowAb;
+++			bb[s + K] += rowBb;
+++		}
+++	}
+++
+++	std::array<double, 2 * K + 1> corr;
+++	int best = 0;
+++	for (int i = 0; i <= 2 * K; i++) {
+++		corr[i] = ab[i] / std::sqrt(aa * bb[i] + 1e-9);
+++		if (corr[i] > corr[best])
+++			best = i;
+++	}
+++
+++	/* A shift at the edge of the range is no measurement. */
+++	if (best == 0 || best == 2 * K) {
+++		*phase = static_cast<float>(best - K);
+++		*confidence = 0.0f;
+++		return true;
+++	}
+++
+++	double sub = 0.0;
+++	const double den = corr[best - 1] - 2.0 * corr[best] + corr[best + 1];
+++	if (den < 0.0)
+++		sub = 0.5 * (corr[best - 1] - corr[best + 1]) / den;
+++
+++	*phase = static_cast<float>(best - K + sub);
+++	*confidence = static_cast<float>(corr[best]);
+++	return true;
+++}
+++
++ bool isRaw(const StreamConfiguration &cfg)
++ {
++ 	return libcamera::PixelFormatInfo::info(cfg.pixelFormat).colourEncoding ==
++@@ -365,8 +479,29 @@ public:
++ 
++ 	Rectangle scalerCrop_;
++ 
+++	/* The phase detection stream of the sensor, if it has one */
+++	struct Pdaf {
+++		const PdafSensorInfo *info = nullptr;
+++		const MediaPad *pad = nullptr;
+++		MediaLink *link = nullptr;
+++		V4L2Subdevice *csid = nullptr;
+++		std::unique_ptr<V4L2Subdevice> line;
+++		std::unique_ptr<V4L2VideoDevice> video;
+++		std::vector<std::unique_ptr<FrameBuffer>> buffers;
+++		std::map<const FrameBuffer *, std::unique_ptr<MappedFrameBuffer>> maps;
+++		unsigned int stride = 0;
+++		bool active = false;
+++	} pdaf_;
+++
+++	void initPdaf();
+++	void configurePdaf(const V4L2SubdeviceFormat &sensorFormat,
+++			   const V4L2PixelFormat &fourcc);
+++	void startPdaf();
+++	void stopPdaf();
+++
++ private:
++ 	void tryPipeline(unsigned int code, const Size &size);
+++	void pdafBufferReady(FrameBuffer *buffer);
++ 	static std::vector<const MediaPad *> routedSourcePads(MediaPad *sink);
++ 
++ 	void tryCompleteRequest(Request *request);
++@@ -637,6 +772,8 @@ int SimpleCameraData::init()
++ 	video_ = pipe->video(entities_.back().entity);
++ 	ASSERT(video_);
++ 
+++	initPdaf();
+++
++ 	/*
++ 	 * Setup links first as some subdev drivers take active links into
++ 	 * account to propagate TRY formats. Such is life :-(
++@@ -1071,6 +1208,175 @@ void SimpleCameraData::setSensorControls(const ControlList &sensorControls,
++ }
++ 
++ /* Retrieve all source pads connected to a sink pad through active routes. */
+++/*
+++ * Find the second RDI of the CSID the image goes through, and its video node,
+++ * for a sensor that sends phase detection data.
+++ */
+++void SimpleCameraData::initPdaf()
+++{
+++	SimplePipelineHandler *pipe = SimpleCameraData::pipe();
+++
+++	if (!swIsp_)
+++		return;
+++
+++	const PdafSensorInfo *info = nullptr;
+++	for (const PdafSensorInfo &s : pdafSensors) {
+++		if (sensor_->model() == s.model)
+++			info = &s;
+++	}
+++	if (!info)
+++		return;
+++
+++	for (const Entity &e : entities_) {
+++		if (!e.source || !e.sourceLink ||
+++		    e.entity->name().rfind("msm_csid", 0) != 0)
+++			continue;
+++
+++		const MediaPad *pad = e.entity->getPadByIndex(e.source->index() + 1);
+++		if (!pad)
+++			break;
+++
+++		/* The RDI after the one of the image, on the same VFE. */
+++		std::string name = e.sourceLink->sink()->entity()->name();
+++		name.back() = static_cast<char>(name.back() + 1);
+++
+++		for (MediaLink *link : pad->links()) {
+++			MediaEntity *line = link->sink()->entity();
+++			if (line->name() != name)
+++				continue;
+++
+++			for (const MediaPad *linePad : line->pads()) {
+++				if (!(linePad->flags() & MEDIA_PAD_FL_SOURCE))
+++					continue;
+++
+++				for (MediaLink *videoLink : linePad->links()) {
+++					MediaEntity *node = videoLink->sink()->entity();
+++					if (node->function() != MEDIA_ENT_F_IO_V4L)
+++						continue;
+++
+++					pdaf_.video = std::make_unique<V4L2VideoDevice>(node);
+++					pdaf_.line = std::make_unique<V4L2Subdevice>(line);
+++					pdaf_.pad = pad;
+++					pdaf_.link = link;
+++					pdaf_.csid = pipe->subdev(e.entity);
+++				}
+++			}
+++		}
+++		break;
+++	}
+++
+++	if (!pdaf_.video || !pdaf_.csid || pdaf_.video->open() || pdaf_.line->open()) {
+++		pdaf_.video.reset();
+++		pdaf_.line.reset();
+++		return;
+++	}
+++
+++	pdaf_.info = info;
+++	LOG(SimplePipeline, Info)
+++		<< "Phase detection data on " << pdaf_.video->deviceNode();
+++}
+++
+++void SimpleCameraData::configurePdaf(const V4L2SubdeviceFormat &sensorFormat,
+++				     const V4L2PixelFormat &fourcc)
+++{
+++	pdaf_.active = false;
+++
+++	if (!pdaf_.info || sensorFormat.size != pdaf_.info->sensorSize)
+++		return;
+++
+++	V4L2SubdeviceFormat format{};
+++	format.code = sensorFormat.code;
+++	format.size = pdaf_.info->pdSize;
+++
+++	V4L2DeviceFormat videoFormat;
+++	videoFormat.fourcc = fourcc;
+++	videoFormat.size = pdaf_.info->pdSize;
+++
+++	int ret = pdaf_.link->setEnabled(true);
+++	if (!ret)
+++		ret = pdaf_.csid->setFormat(pdaf_.pad->index(), &format);
+++	if (!ret)
+++		ret = pdaf_.line->setFormat(0, &format);
+++	if (!ret)
+++		ret = pdaf_.video->setFormat(&videoFormat);
+++
+++	if (ret || videoFormat.fourcc != fourcc ||
+++	    videoFormat.size != pdaf_.info->pdSize) {
+++		LOG(SimplePipeline, Warning)
+++			<< "Unable to configure the phase detection stream";
+++		pdaf_.link->setEnabled(false);
+++		return;
+++	}
+++
+++	pdaf_.stride = videoFormat.planes[0].bpl;
+++	pdaf_.active = true;
+++}
+++
+++void SimpleCameraData::startPdaf()
+++{
+++	if (!pdaf_.active)
+++		return;
+++
+++	int ret = pdaf_.video->allocateBuffers(4, &pdaf_.buffers);
+++	if (ret > 0) {
+++		for (const std::unique_ptr<FrameBuffer> &buffer : pdaf_.buffers) {
+++			auto map = std::make_unique<MappedFrameBuffer>(buffer.get(),
+++								       MappedFrameBuffer::MapFlag::Read);
+++			if (!map->isValid()) {
+++				ret = -ENOMEM;
+++				break;
+++			}
+++			pdaf_.maps[buffer.get()] = std::move(map);
+++		}
+++	}
+++
+++	if (ret > 0) {
+++		pdaf_.video->bufferReady.connect(this, &SimpleCameraData::pdafBufferReady);
+++		ret = pdaf_.video->streamOn();
+++	}
+++
+++	if (ret < 0) {
+++		LOG(SimplePipeline, Warning)
+++			<< "Unable to start the phase detection stream: " << ret;
+++		stopPdaf();
+++		return;
+++	}
+++
+++	for (const std::unique_ptr<FrameBuffer> &buffer : pdaf_.buffers)
+++		pdaf_.video->queueBuffer(buffer.get());
+++}
+++
+++void SimpleCameraData::stopPdaf()
+++{
+++	if (!pdaf_.active)
+++		return;
+++
+++	pdaf_.video->streamOff();
+++	pdaf_.video->bufferReady.disconnect(this, &SimpleCameraData::pdafBufferReady);
+++	pdaf_.maps.clear();
+++	pdaf_.buffers.clear();
+++	pdaf_.video->releaseBuffers();
+++}
+++
+++void SimpleCameraData::pdafBufferReady(FrameBuffer *buffer)
+++{
+++	const FrameMetadata &metadata = buffer->metadata();
+++
+++	if (metadata.status == FrameMetadata::FrameCancelled)
+++		return;
+++
+++	auto it = pdaf_.maps.find(buffer);
+++	if (metadata.status == FrameMetadata::FrameSuccess && swIsp_ &&
+++	    it != pdaf_.maps.end()) {
+++		float phase, confidence;
+++		if (measurePhase(it->second->planes()[0].data(), pdaf_.stride,
+++				 pdaf_.info->pdSize, &phase, &confidence))
+++			swIsp_->setPhase(phase, confidence, metadata.sequence);
+++	}
+++
+++	pdaf_.video->queueBuffer(buffer);
+++}
+++
++ std::vector<const MediaPad *> SimpleCameraData::routedSourcePads(MediaPad *sink)
++ {
++ 	MediaEntity *entity = sink->entity();
++@@ -1627,6 +1933,8 @@ int SimplePipelineHandler::configure(Camera *camera, CameraConfiguration *c)
++ 			<< ", got " << captureFormat.planes[0].bpl;
++ 	}
++ 
+++	data->configurePdaf(format, videoFormat);
+++
++ 	/* Configure the converter if needed. */
++ 	std::vector<std::reference_wrapper<const StreamConfiguration>> outputCfgs;
++ 	data->useConversion_ = config->needConversion();
++@@ -1756,6 +2064,8 @@ int SimplePipelineHandler::start(Camera *camera, [[maybe_unused]] const ControlL
++ 				video->queueBuffer(buffer.get());
++ 	}
++ 
+++	data->startPdaf();
+++
++ 	return 0;
++ }
++ 
++@@ -1778,6 +2088,8 @@ void SimplePipelineHandler::stopDevice(Camera *camera)
++ 			data->swIsp_->stop();
++ 	}
++ 
+++	data->stopPdaf();
+++
++ 	video->streamOff();
++ 	video->releaseBuffers();
++ 
++-- 
++2.43.0
++
+diff --git a/temp/libcamera/0017-ipa-softisp-af-Jump-to-focus-with-phase-detection.patch b/temp/libcamera/0017-ipa-softisp-af-Jump-to-focus-with-phase-detection.patch
+new file mode 100644
+index 0000000000..0dfaa14f1d
+--- /dev/null
++++ b/temp/libcamera/0017-ipa-softisp-af-Jump-to-focus-with-phase-detection.patch
+@@ -0,0 +1,406 @@
++From 432e628ddd1fd1533d13afea3a95f4bfa1643d44 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sat, 14 Nov 2026 21:18:56 +0100
++Subject: [PATCH 17/17] ipa: softisp: af: Jump to focus with phase detection
++
++With a phase detection result in the statistics, move the lens by the
++measured phase shift (pdGain steps per pixel, then along the slope of the
++last two measurements) until the shift is small, then fit the sharpness
++peak from a few fine steps around that position. Fall back to the contrast
++climb when the phase is not reliable, and rescan in continuous mode when
++the phase shift grows.
++---
++ src/ipa/softisp/algorithms/af.cpp | 235 +++++++++++++++++++++++++++++-
++ src/ipa/softisp/algorithms/af.h   |  34 ++++-
++ 2 files changed, 263 insertions(+), 6 deletions(-)
++
++diff --git a/src/ipa/softisp/algorithms/af.cpp b/src/ipa/softisp/algorithms/af.cpp
++index c2506ef..64d6762 100755
++--- a/src/ipa/softisp/algorithms/af.cpp
+++++ b/src/ipa/softisp/algorithms/af.cpp
++@@ -49,6 +49,18 @@ namespace ipa::softisp::algorithms {
++  * measurement belongs to the lens position it is recorded for. A single
++  * measurement next to the peak that breaks the monotonic fall-off is taken
++  * once more before the peak is fitted.
+++ *
+++ * With phase detection data (pdGain not 0), a scan instead moves the lens by
+++ * pdGain steps per pixel of phase shift, and repeats that with the slope
+++ * between the last two measurements until the shift is below pdTolerance.
+++ * A short search with fineStep then measures the sharpness on both sides of
+++ * the best position, and the peak is fitted as above; with pdFine set to
+++ * false the scan ends where the shift is below pdTolerance instead. The phase is only used
+++ * when it was measured pdFrames frames after the last lens move, its
+++ * correlation reaches pdMinConfidence and the image has a sharpness of at
+++ * least pdMinSharpness (without structure the correlation is meaningless);
+++ * otherwise the contrast climb takes over. In continuous mode a phase shift above pdRescan starts a new scan,
+++ * like a change in sharpness.
++  */
++ 
++ LOG_DEFINE_CATEGORY(IPASoftAf)
++@@ -66,6 +78,16 @@ int Af::init(IPAContext &context, const ValueNode &tuningData)
++ 	stopRatio_ = tuningData["stopRatio"].get<double>(stopRatio_);
++ 	stopCount_ = tuningData["stopCount"].get<uint32_t>(stopCount_);
++ 	minPeak_ = tuningData["minPeak"].get<double>(minPeak_);
+++	pdGain_ = tuningData["pdGain"].get<double>(pdGain_);
+++	pdMinConfidence_ = tuningData["pdMinConfidence"].get<double>(pdMinConfidence_);
+++	pdMinSharpness_ = tuningData["pdMinSharpness"].get<double>(pdMinSharpness_);
+++	pdTolerance_ = tuningData["pdTolerance"].get<double>(pdTolerance_);
+++	pdMaxSteps_ = tuningData["pdMaxSteps"].get<uint32_t>(pdMaxSteps_);
+++	pdFrames_ = tuningData["pdFrames"].get<uint32_t>(pdFrames_);
+++	pdRescan_ = tuningData["pdRescan"].get<double>(pdRescan_);
+++	pdFine_ = tuningData["pdFine"].get<bool>(pdFine_);
+++	fineStep_ = std::max<int32_t>(tuningData["fineStep"].get<int32_t>(fineStep_), 1);
+++	fineMax_ = tuningData["fineMax"].get<uint32_t>(fineMax_);
++ 
++ 	coarseStep_ = std::max<int32_t>(coarseStep_, 1);
++ 	flatStep_ = std::max<int32_t>(flatStep_, coarseStep_);
++@@ -87,6 +109,7 @@ void Af::reset()
++ 	refPending_ = false;
++ 	validFrames_ = 0;
++ 	changed_ = 0;
+++	pdChanged_ = 0;
++ }
++ 
++ int Af::configure(IPAContext &context, const IPAConfigInfo &configInfo)
++@@ -158,6 +181,7 @@ void Af::moveTo(IPAContext &context, int32_t position)
++ 		settle_++;
++ 
++ 	position_ = position;
+++	pdMoved_ = pdSeen_;
++ 	context.activeState.af.position = position_;
++ 	context.activeState.af.update = true;
++ }
++@@ -183,7 +207,137 @@ bool Af::hasPeak() const
++ 	return bestSharpness_ >= minSharpness_ * minPeak_;
++ }
++ 
++-void Af::startScan(IPAContext &context, double sharpness)
+++bool Af::phaseUsable(const SwIspStats *stats) const
+++{
+++	if (pdGain_ == 0.0 || !stats->pdValid ||
+++	    stats->pdConfidence < pdMinConfidence_ || !stats->sharpnessBase)
+++		return false;
+++
+++	return static_cast<double>(stats->sharpness) /
+++	       static_cast<double>(stats->sharpnessBase) >= pdMinSharpness_;
+++}
+++
+++/* Whether the phase was measured well after the last lens move. */
+++bool Af::phaseFresh(const SwIspStats *stats) const
+++{
+++	return static_cast<int32_t>(stats->pdSequence - pdMoved_) >=
+++	       static_cast<int32_t>(pdFrames_);
+++}
+++
+++/*
+++ * Move the lens to where the phase shift is expected to be zero: by pdGain
+++ * steps per pixel at first, then along the line through the last two
+++ * measurements as long as it slopes the same way.
+++ */
+++void Af::phaseStep(IPAContext &context, double phase)
+++{
+++	LOG(IPASoftAf, Debug) << "Phase " << position_ << ": " << phase;
+++
+++	if (std::abs(phase) <= pdTolerance_ && !pdFine_) {
+++		LOG(IPASoftAf, Debug)
+++			<< "Focused at " << position_ << " (phase " << phase
+++			<< ", " << pdSteps_ << " phase steps)";
+++		state_ = State::Idle;
+++		afState_ = controls::AfStateFocused;
+++		refPending_ = true;
+++		validFrames_ = 0;
+++		return;
+++	}
+++
+++	if (std::abs(phase) <= pdTolerance_ || pdSteps_ >= pdMaxSteps_) {
+++		startFine(context, phase);
+++		return;
+++	}
+++
+++	double gain = pdGain_;
+++	if (havePrevPhase_ && std::abs(prevPhase_ - phase) > 0.3) {
+++		double slope = (position_ - prevPhasePosition_) / (prevPhase_ - phase);
+++		if (slope * pdGain_ > 0.0)
+++			gain = std::copysign(std::clamp(std::abs(slope),
+++							std::abs(pdGain_) / 4,
+++							std::abs(pdGain_) * 4),
+++					     pdGain_);
+++	}
+++
+++	int32_t target = std::clamp<int32_t>(position_ + std::lround(phase * gain),
+++					     min_, max_);
+++	if (target == position_) {
+++		startFine(context, phase);
+++		return;
+++	}
+++
+++	havePrevPhase_ = true;
+++	prevPhasePosition_ = position_;
+++	prevPhase_ = phase;
+++	pdSteps_++;
+++	moveTo(context, target);
+++}
+++
+++void Af::startFine(IPAContext &context, double phase)
+++{
+++	state_ = State::Fine;
+++	fineCount_ = 0;
+++	fineRun_ = 0;
+++	fineLast_ = position_;
+++	fineDirection_ = phase * pdGain_ >= 0.0 ? 1 : -1;
+++	fineStep(context);
+++}
+++
+++/*
+++ * Measure the neighbours of the best position at fineStep distance, the more
+++ * likely side first, until the best position has a less sharp neighbour on
+++ * both sides. While every new position is the best so far, the steps double.
+++ */
+++void Af::fineStep(IPAContext &context)
+++{
+++	if (bestPosition_ == position_ && position_ != fineLast_) {
+++		fineDirection_ = position_ > fineLast_ ? 1 : -1;
+++		fineRun_++;
+++	} else {
+++		fineRun_ = 0;
+++	}
+++	fineLast_ = position_;
+++
+++	const int32_t step = fineStep_ << std::min(fineRun_ > 0 ? fineRun_ - 1 : 0u, 2u);
+++
+++	for (int side : { fineDirection_, -fineDirection_ }) {
+++		int32_t target = bestPosition_ + side * (side == fineDirection_ ? step : fineStep_);
+++		if (target < min_ || target > max_ || samples_.count(target))
+++			continue;
+++		if (fineCount_ >= fineMax_)
+++			break;
+++
+++		fineCount_++;
+++		moveTo(context, target);
+++		return;
+++	}
+++
+++	finishFine(context);
+++}
+++
+++void Af::finishFine(IPAContext &context)
+++{
+++	auto it = samples_.find(bestPosition_);
+++	bool peak = it != samples_.end() && it != samples_.begin() &&
+++		    std::next(it) != samples_.end() &&
+++		    std::prev(it)->second < it->second &&
+++		    std::next(it)->second < it->second;
+++	int32_t target = interpolate();
+++
+++	LOG(IPASoftAf, Debug)
+++		<< (peak ? "Focused at " : "No peak, resting at ") << target
+++		<< " (best " << bestPosition_ << ": " << bestSharpness_
+++		<< ", " << samples_.size() << " samples, "
+++		<< pdSteps_ << " phase steps)";
+++
+++	moveTo(context, target);
+++	state_ = State::Idle;
+++	afState_ = peak ? controls::AfStateFocused : controls::AfStateFailed;
+++	refPending_ = true;
+++	validFrames_ = 0;
+++}
+++
+++void Af::startScan(IPAContext &context, double sharpness, const SwIspStats *stats)
++ {
++ 	samples_.clear();
++ 	bestSharpness_ = 0.0;
++@@ -200,6 +354,22 @@ void Af::startScan(IPAContext &context, double sharpness)
++ 	/* Search the larger part of the range first. */
++ 	direction_ = max_ - position_ >= position_ - min_ ? 1 : -1;
++ 
+++	pdSteps_ = 0;
+++	havePrevPhase_ = false;
+++	pdChanged_ = 0;
+++
+++	if (pdGain_ != 0.0 && stats->pdValid && !phaseUsable(stats))
+++		LOG(IPASoftAf, Debug)
+++			<< "Phase " << stats->pdPhase << " not used (correlation "
+++			<< stats->pdConfidence << ", sharpness " << sharpness << ")";
+++
+++	if (phaseUsable(stats) && phaseFresh(stats)) {
+++		state_ = State::Phase;
+++		record(position_, sharpness);
+++		phaseStep(context, stats->pdPhase);
+++		return;
+++	}
+++
++ 	/* The current frame was taken at the start position. */
++ 	LOG(IPASoftAf, Debug) << "Climb " << position_ << ": " << sharpness;
++ 	record(position_, sharpness);
++@@ -397,6 +567,9 @@ void Af::process(IPAContext &context,
++ 	if (!stats->valid || !stats->sharpnessBase)
++ 		return;
++ 
+++	if (stats->pdValid)
+++		pdSeen_ = stats->pdSequence;
+++
++ 	if (!lensKnown_) {
++ 		lensKnown_ = true;
++ 		int32_t start = position_;
++@@ -416,15 +589,24 @@ void Af::process(IPAContext &context,
++ 	switch (state_) {
++ 	case State::Idle:
++ 		if (refPending_) {
+++			/*
+++			 * A scan with phase detection can end before the AGC
+++			 * has settled. Take the reference only after warmup
+++			 * frames, so that the exposure change does not look
+++			 * like a new scene.
+++			 */
+++			if (++validFrames_ < warmup_)
+++				return;
++ 			refSharpness_ = sharpness;
++ 			refPending_ = false;
+++			validFrames_ = 0;
++ 			return;
++ 		}
++ 
++ 		if (mode_ == controls::AfModeAuto) {
++ 			if (triggered_) {
++ 				triggered_ = false;
++-				startScan(context, sharpness);
+++				startScan(context, sharpness, stats);
++ 			}
++ 			return;
++ 		}
++@@ -433,17 +615,34 @@ void Af::process(IPAContext &context,
++ 			return;
++ 
++ 		if (refSharpness_ == 0.0) {
++-			if (++validFrames_ >= warmup_)
++-				startScan(context, sharpness);
+++			/*
+++			 * The phase does not depend on the exposure, so there
+++			 * is no need to wait for the AGC to settle.
+++			 */
+++			if (++validFrames_ >= warmup_ ||
+++			    (phaseUsable(stats) && phaseFresh(stats)))
+++				startScan(context, sharpness, stats);
++ 			return;
++ 		}
++ 
+++		if (phaseUsable(stats) && phaseFresh(stats) &&
+++		    std::abs(stats->pdPhase) > pdRescan_) {
+++			if (++pdChanged_ >= changeCount_) {
+++				LOG(IPASoftAf, Debug)
+++					<< "Phase " << stats->pdPhase << ", rescanning";
+++				startScan(context, sharpness, stats);
+++				return;
+++			}
+++		} else {
+++			pdChanged_ = 0;
+++		}
+++
++ 		if (std::abs(sharpness / refSharpness_ - 1.0) > changeThreshold_) {
++ 			if (++changed_ >= changeCount_) {
++ 				LOG(IPASoftAf, Debug)
++ 					<< "Sharpness changed " << refSharpness_
++ 					<< " -> " << sharpness << ", rescanning";
++-				startScan(context, sharpness);
+++				startScan(context, sharpness, stats);
++ 			}
++ 		} else {
++ 			changed_ = 0;
++@@ -462,6 +661,32 @@ void Af::process(IPAContext &context,
++ 		record(position_, sharpness);
++ 		finish(context);
++ 		return;
+++
+++	case State::Phase:
+++		if (!phaseUsable(stats)) {
+++			/* No reliable phase here: climb from this position. */
+++			LOG(IPASoftAf, Debug) << "Climb " << position_ << ": " << sharpness;
+++			record(position_, sharpness);
+++			state_ = State::Climb;
+++			origin_ = position_;
+++			direction_ = max_ - position_ >= position_ - min_ ? 1 : -1;
+++			climb(context);
+++			return;
+++		}
+++
+++		/* Wait for a phase measured after the lens moved. */
+++		if (!phaseFresh(stats))
+++			return;
+++
+++		record(position_, sharpness);
+++		phaseStep(context, stats->pdPhase);
+++		return;
+++
+++	case State::Fine:
+++		LOG(IPASoftAf, Debug) << "Fine " << position_ << ": " << sharpness;
+++		record(position_, sharpness);
+++		fineStep(context);
+++		return;
++ 	}
++ }
++ 
++diff --git a/src/ipa/softisp/algorithms/af.h b/src/ipa/softisp/algorithms/af.h
++index 2da6e7c..64ba706 100755
++--- a/src/ipa/softisp/algorithms/af.h
+++++ b/src/ipa/softisp/algorithms/af.h
++@@ -36,10 +36,18 @@ private:
++ 		Idle,
++ 		Climb,
++ 		Refine,
+++		Phase,
+++		Fine,
++ 	};
++ 
++ 	void reset();
++-	void startScan(IPAContext &context, double sharpness);
+++	void startScan(IPAContext &context, double sharpness, const SwIspStats *stats);
+++	bool phaseUsable(const SwIspStats *stats) const;
+++	bool phaseFresh(const SwIspStats *stats) const;
+++	void phaseStep(IPAContext &context, double phase);
+++	void startFine(IPAContext &context, double phase);
+++	void fineStep(IPAContext &context);
+++	void finishFine(IPAContext &context);
++ 	void moveTo(IPAContext &context, int32_t position);
++ 	void record(int32_t position, double sharpness);
++ 	bool hasPeak() const;
++@@ -61,6 +69,18 @@ private:
++ 	unsigned int stopCount_ = 2;
++ 	double minPeak_ = 1.5;
++ 
+++	/* Phase detection, off while pdGain is 0 */
+++	double pdGain_ = 0.0;
+++	double pdMinConfidence_ = 0.6;
+++	double pdMinSharpness_ = 0.0;
+++	double pdTolerance_ = 0.25;
+++	unsigned int pdMaxSteps_ = 3;
+++	unsigned int pdFrames_ = 3;
+++	double pdRescan_ = 1.0;
+++	bool pdFine_ = true;
+++	int32_t fineStep_ = 96;
+++	unsigned int fineMax_ = 8;
+++
++ 	controls::AfModeEnum mode_ = controls::AfModeContinuous;
++ 	controls::AfStateEnum afState_ = controls::AfStateIdle;
++ 	State state_ = State::Idle;
++@@ -86,6 +106,18 @@ private:
++ 	unsigned int validFrames_ = 0;
++ 	unsigned int changed_ = 0;
++ 	unsigned int settle_ = 0;
+++
+++	uint32_t pdSeen_ = 0;
+++	uint32_t pdMoved_ = 0;
+++	unsigned int pdSteps_ = 0;
+++	bool havePrevPhase_ = false;
+++	int32_t prevPhasePosition_ = 0;
+++	double prevPhase_ = 0.0;
+++	unsigned int pdChanged_ = 0;
+++	unsigned int fineCount_ = 0;
+++	unsigned int fineRun_ = 0;
+++	int32_t fineLast_ = 0;
+++	int fineDirection_ = 1;
++ };
++ 
++ } /* namespace ipa::softisp::algorithms */
++-- 
++2.43.0
++
+diff --git a/temp/libcamera/APKBUILD b/temp/libcamera/APKBUILD
+index fc8ee39b70..466ad5ebc2 100644
+--- a/temp/libcamera/APKBUILD
++++ b/temp/libcamera/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Robert Mader <robert.mader@collabora.com>"
+ pkgname=libcamera
+ _pkgver=0.8.0
+ pkgver=9999$_pkgver
+-pkgrel=18
++pkgrel=19
+ pkgdesc="Linux camera framework"
+ url="https://libcamera.org/"
+ arch="all"
+@@ -80,6 +80,9 @@ source="https://gitlab.freedesktop.org/camera/libcamera/-/archive/v$_pkgver/libc
+ 	0012-ipa-softisp-af-Climb-from-the-current-lens-position.patch
+ 	0013-software_isp-Base-the-white-balance-on-nearly-grey-p.patch
+ 	0014-ipa-libipa-awb-Add-an-optional-minGain-tuning-value.patch
++	0015-software_isp-Pass-a-phase-detection-result-to-the-IP.patch
++	0016-pipeline-simple-Capture-the-phase-detection-stream-o.patch
++	0017-ipa-softisp-af-Jump-to-focus-with-phase-detection.patch
+ 	qcam.desktop
+ 	$_tuning_files
+ 	"
+@@ -200,6 +203,9 @@ e90c4a8ec40fc0b887849810910cc60972aab6445fb4cc36a3d5e5ca500221f6698852e999fa7db4
+ 96cfe42477d9672a2b179920eb6a84c9272da97d511a9f1e5f2aedc1b3d083c246ce07c2da89ae7399cfeb933fada01c1a8744194bd507e2d37fb305954f18f3  0012-ipa-softisp-af-Climb-from-the-current-lens-position.patch
+ 6c4a05275cd6ffbc3e37594de08fa355e8668d8af5f9de8460c0d1f00b289f1e1a13569c703450e5ace24ef05743f45c4ea51529e344e26f15c4ee8d51d3a763  0013-software_isp-Base-the-white-balance-on-nearly-grey-p.patch
+ 1c2c5959e4144a5c1e2d887109fac52686a9373e37c67971c0c8a16ac56a2aed9cf733bbeb182365f029970272c0b131c39961f237eb43eb7c24027f70271a6d  0014-ipa-libipa-awb-Add-an-optional-minGain-tuning-value.patch
++2a24548d3147a8ea88a4808fe675526f5f00248ba9bcba93ac0b4fe2883eb24907b448887a9892fccfc83062c73a5f1555e6a2039a0a7631926fb5e1966fcf32  0015-software_isp-Pass-a-phase-detection-result-to-the-IP.patch
++842bb5c2f9a7436eb14054ec5d3ab461640177bb6e1f6edd1468aea64bcc158efed07f8ab13fffd43662f43a4f48a059fd7a0b6bc9f3f85f73dc7d4e8d40859f  0016-pipeline-simple-Capture-the-phase-detection-stream-o.patch
++def7dfe28444f32a1ed26c34f874526ecf1fb361f20b15c188598354b6c9436f302863d62680106eb94fdb5d5994d31b3d620745af454df5e5ba18fb2a86eb4e  0017-ipa-softisp-af-Jump-to-focus-with-phase-detection.patch
+ 22167a4eceb6d1b40b0b7c45fdf116c71684f5340de7f767535cb8e160ad9d2ae0f00cb3d461f73a344520a48a4641cf46226841d78bee06bfbfd2a91337f754  qcam.desktop
+ 926933ed5aa6bc005471d8ddbbf49afaeb5034ac776c78bcba6655adc05b68be858923aac7887f8a8451a424113ed4d11c78856229a728abf031ebe747684e14  hi846.yaml
+ 4942edd551dcf51630246f71e600c17760d3574d5d45e5530d6cfeefe2c9ab1a812fbe220f8e89d92e19a499c592b2507c801ca4eb74cd15fcecb60bff5c650b  imx355.yaml
+@@ -214,6 +220,6 @@ d59020e62520ee622282c85ce7bcdfe453c99becf48cc1005c5f8a4bb8b2511b19c89f38fb3c994e
+ f786990d186998808c1374a84f18dff72d30161b92a9df0185e656506ce92858238f82526445a9eb68e0bb6884723935960b0a63f35b2f69f725494999197008  gc5035.yaml
+ 95ecfad936e19f3f24d773e7cd50bf525344433f7c60d91200016b23630b72a2070a082b5ce0b246518973787ef865ab96cf424ddf3228ebdefb89bba2b59b58  imx471.yaml
+ b7db28082483c8a53407244d663f1400df40a738f6af309814b05ff1c5898d930681280d5c5c196ba25a8190dbf63b4d1f54aa16be2482ff6a86c517fb3274db  imx586.yaml
+-40ef509d3338b5be2130c90360d8ea4093358fecf085e15285330ca8e79e923aef04439e636f4d1f87f7b86f7f3a13d10086a80c356e4a3dd9ca84957f5324e2  imx689.yaml
++ce47e926d7b428e708ec211775235e6a155a7d22eaf68d106b6fa129674d73f756fa204b2c500a5419f0613a3ba01511b47fd0ffc2fd525aead54a39c98df409  imx689.yaml
+ 2997e3b4811b98d9f130605e41bcc22af07168e821777b57e9f28d7d5c5d3ae7e208862addb800ef3dc4d40da4a473419b739d09b68ecfd9feb63dc09a854b9f  s5k3m5.yaml
+ "
+diff --git a/temp/libcamera/imx689.yaml b/temp/libcamera/imx689.yaml
+index 0540591058..2002ec4ebd 100755
+--- a/temp/libcamera/imx689.yaml
++++ b/temp/libcamera/imx689.yaml
+@@ -222,4 +222,13 @@ algorithms:
+       minPeak: 1.5
+       changeThreshold: 0.25
+       changeCount: 6
++      pdGain: 950
++      pdMinConfidence: 0.4
++      pdMinSharpness: 0.001
++      pdTolerance: 0.25
++      pdMaxSteps: 3
++      pdFrames: 2
++      pdRescan: 1.0
++      fineStep: 128
++      fineMax: 8
+ ...
+-- 
+2.43.0
+
