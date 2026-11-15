@@ -1,0 +1,201 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Sun, 15 Nov 2026 00:06:49 +0000
+Subject: [PATCH 71/73] linux-postmarketos-qcom-sm8250: DisplayPort HDR
+ follow-ups
+
+Add kernel patches 0159, which requests the peripheral flush for the RGB VSC and HDR SDPs, and 0160, which refuses HDR metadata with an EOTF the sink does not list. Credit Xilin Wu in 0143. Advance to release 89.
+---
+ ...-link-capabilities-on-sink-discovery.patch |  5 ++
+ ...st-a-peripheral-flush-for-RGB-VSC-an.patch | 58 +++++++++++++++++++
+ ...e-HDR-metadata-with-an-EOTF-the-sink.patch | 57 ++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  8 ++-
+ 4 files changed, 126 insertions(+), 2 deletions(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0159-drm-msm-dp-request-a-peripheral-flush-for-RGB-VSC-an.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0160-drm-msm-dp-refuse-HDR-metadata-with-an-EOTF-the-sink.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0143-drm-msm-dp-refresh-link-capabilities-on-sink-discovery.patch b/device/testing/linux-postmarketos-qcom-sm8250/0143-drm-msm-dp-refresh-link-capabilities-on-sink-discovery.patch
+index 2f20bdec8..963e2a291 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0143-drm-msm-dp-refresh-link-capabilities-on-sink-discovery.patch
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0143-drm-msm-dp-refresh-link-capabilities-on-sink-discovery.patch
+@@ -13,7 +13,12 @@ otherwise kept four HBR2 lanes and reduced 3840x2160 at 97 Hz to
+ 6 bpc. The ASUS now trains at HBR3 and carries 10 bpc at the same
+ timing. Switching back to the GR14BU restores HBR2.
+ 
++The memset is taken from Xilin Wu's eDP capability caching patch, which
++clears the parsed link information before every fresh discovery.
++
++Suggested-by: Xilin Wu <sophon@radxa.com>
+ Link: https://lore.kernel.org/r/20261009-msm-dp-hdr10-v2-11-1835d4966da3@radxa.com
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+ ---
+  drivers/gpu/drm/msm/dp/dp_panel.c | 1 +
+  1 file changed, 1 insertion(+)
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0159-drm-msm-dp-request-a-peripheral-flush-for-RGB-VSC-an.patch b/device/testing/linux-postmarketos-qcom-sm8250/0159-drm-msm-dp-request-a-peripheral-flush-for-RGB-VSC-an.patch
+new file mode 100644
+index 000000000..9d3260b55
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0159-drm-msm-dp-request-a-peripheral-flush-for-RGB-VSC-an.patch
+@@ -0,0 +1,58 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Sat, 14 Nov 2026 13:28:01 +0000
++Subject: [PATCH] drm/msm/dp: request a peripheral flush for RGB VSC and HDR
++ SDPs
++
++msm_dp_needs_periph_flush() asks the DPU for a peripheral flush only for
++YUV 4:2:0 modes, which used to be the only streams with a VSC SDP. The
++VSC SDP now also carries the colorimetry of RGB streams, and the HDR
++static metadata goes out as an infoframe SDP in generic slot 2. On
++controllers that put SDPs on the link with the peripheral flush, neither
++packet would be latched.
++
++Also request the flush when the connector state asks for a colorimetry
++other than the default or carries HDR metadata. The DPU asks from the
++encoder enable of the commit, after the state swap, so the connector
++state is the one the bridge programs the packets from.
++
++On SM8250, whose controller is revision 1.2.0.3, the packets are latched
++through SDP_CFG3 instead ("drm/msm/dp: latch SDPs through SDP_CFG3 on
++revision 1.2 controllers"). That was measured while the flush was still
++requested only for YUV 4:2:0 modes; whether this controller also latches
++them with the flush alone has not been measured.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/gpu/drm/msm/dp/dp_display.c | 15 ++++++++++++++-
++ 1 file changed, 14 insertions(+), 1 deletion(-)
++
++diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
++index f3a1372..a86adb9 100644
++--- a/drivers/gpu/drm/msm/dp/dp_display.c
+++++ b/drivers/gpu/drm/msm/dp/dp_display.c
++@@ -1306,7 +1306,20 @@ bool msm_dp_is_yuv_420_enabled(const struct msm_dp *msm_dp_display,
++ bool msm_dp_needs_periph_flush(const struct msm_dp *msm_dp_display,
++ 			       const struct drm_display_mode *mode)
++ {
++-	return msm_dp_is_yuv_420_enabled(msm_dp_display, mode);
+++	const struct drm_connector_state *conn_state =
+++		msm_dp_display->connector->state;
+++
+++	if (msm_dp_is_yuv_420_enabled(msm_dp_display, mode))
+++		return true;
+++
+++	/*
+++	 * The only caller is the DPU's video encoder enable, after the state
+++	 * swap of the commit, so connector->state is the new state that the
+++	 * bridge programs the SDPs from.
+++	 */
+++	return conn_state &&
+++	       (conn_state->colorspace != DRM_MODE_COLORIMETRY_DEFAULT ||
+++		conn_state->hdr_output_metadata);
++ }
++ 
++ bool msm_dp_wide_bus_available(const struct msm_dp *msm_dp_display)
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0160-drm-msm-dp-refuse-HDR-metadata-with-an-EOTF-the-sink.patch b/device/testing/linux-postmarketos-qcom-sm8250/0160-drm-msm-dp-refuse-HDR-metadata-with-an-EOTF-the-sink.patch
+new file mode 100644
+index 000000000..32a470b6d
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0160-drm-msm-dp-refuse-HDR-metadata-with-an-EOTF-the-sink.patch
+@@ -0,0 +1,57 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Sat, 14 Nov 2026 21:56:19 +0000
++Subject: [PATCH] drm/msm/dp: refuse HDR metadata with an EOTF the sink does
++ not list
++
++msm_dp_bridge_atomic_check() takes any HDR_OUTPUT_METADATA blob, so a
++client can send PQ or HLG metadata to a display that does not support it.
++
++Refuse metadata that is not static metadata type 1, and an EOTF that the
++sink does not list in the HDR static metadata block of its EDID.
++Traditional SDR gamma needs no such block and is always accepted.
++
++drm_hdmi_infoframe_set_hdr_metadata() only logs such an EOTF, so a client
++that keeps PQ metadata after the display is swapped for one without HDR
++now gets a failed commit instead of an SDR picture with metadata the
++display ignores. Xilin Wu's static HDR series for this driver refuses the
++same metadata, and is stricter: it also requires the block for SDR
++(https://lore.kernel.org/r/20261009-msm-dp-hdr10-v2-20-1835d4966da3@radxa.com).
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ drivers/gpu/drm/msm/dp/dp_display.c | 18 ++++++++++++++++++
++ 1 file changed, 18 insertions(+)
++
++diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
++index a86adb9..3215a46 100644
++--- a/drivers/gpu/drm/msm/dp/dp_display.c
+++++ b/drivers/gpu/drm/msm/dp/dp_display.c
++@@ -1399,6 +1399,24 @@ int msm_dp_bridge_atomic_check(struct drm_bridge *bridge,
++ 		return -EINVAL;
++ 	}
++ 
+++	if (conn_state->hdr_output_metadata) {
+++		const struct hdr_output_metadata *metadata =
+++			conn_state->hdr_output_metadata->data;
+++		u8 eotf = metadata->hdmi_metadata_type1.eotf;
+++		u8 sink_eotfs = conn_state->connector->display_info.hdr_sink_metadata.hdmi_type1.eotf;
+++
+++		if (metadata->metadata_type != HDMI_STATIC_METADATA_TYPE1 ||
+++		    metadata->hdmi_metadata_type1.metadata_type != HDMI_STATIC_METADATA_TYPE1)
+++			return -EINVAL;
+++
+++		/* Traditional SDR gamma needs no HDR static metadata block. */
+++		if (eotf != HDMI_EOTF_TRADITIONAL_GAMMA_SDR &&
+++		    (eotf > 7 || !(sink_eotfs & BIT(eotf)))) {
+++			drm_dbg_dp(dp->drm_dev, "sink does not list EOTF %u\n", eotf);
+++			return -EINVAL;
+++		}
+++	}
+++
++ 	old_conn_state = drm_atomic_get_old_connector_state(conn_state->state,
++ 							   conn_state->connector);
++ 	if (!old_conn_state || !old_conn_state->crtc)
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 6ef5f8ddb..e61c66228 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=88
++pkgrel=89
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -187,6 +187,8 @@ source="
+ 	0156-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Give-th.patch
+ 	0157-drm-msm-dp-don-t-take-extra-references-on-multiple-p.patch
+ 	0158-drm-msm-dp-hold-one-runtime-PM-reference-per-plugged.patch
++	0159-drm-msm-dp-request-a-peripheral-flush-for-RGB-VSC-an.patch
++	0160-drm-msm-dp-refuse-HDR-metadata-with-an-EOTF-the-sink.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -366,7 +368,7 @@ b546c241e74367fb9f0b59d48d87d5e03d48536a99f17361cdb854e20877e0550eb3289732c795b1
+ 90afa716ec04a892d8dd9a86ad085d093256ca3165b72213cf7769464a606308edb7b7de55d62c8c4e52fdfa24360f65f6087a9f814ba890ac4262fc9fb8ec23  0140-drm-msm-dp-send-HDR-static-metadata-as-an-infoframe-.patch
+ f4de0c04450a74fcd907836614dfd2444fd47ca65485d671466be914fa1e958e845929d27ba996fb6c523e29c2f2e14d48bd61f60a8da1a5dd31823bd9a4398e  0141-drm-msm-dp-latch-SDPs-through-SDP_CFG3-on-revision-1.patch
+ 20fd1e9b4e7ccb7dd0b6f868e5b1218ff7bf8d26576115f3e8d1075489688c84fb3165f7bb37560c86afa5b56b3cd4b502c481463e515ef2986a4258ed57690e  0142-drm-msm-dp-expose-Colorspace-and-HDR_OUTPUT_METADATA.patch
+-191498da909f627a069265cbc7a84a0b5b5429800cfd1f82a6c3ca7aa23bcff42b9392b3c088ba16dcb857175d6c6ea30e956b9e2d3937006a26c207e0da86cd  0143-drm-msm-dp-refresh-link-capabilities-on-sink-discovery.patch
++db9ca9f204005d4db4be0c729e07c9054c0eb0dabd71b6b312937b263df2bc8ed1818ee2d1c8f0471e03f371543e0703945bcfc22fa9d7e7d6adb15c8da5f899  0143-drm-msm-dp-refresh-link-capabilities-on-sink-discovery.patch
+ 72c91435b08133eedb1fb70f948e80e8d705c16d00d19390eba1e24a1864c6c8bc3f888c72e7e3ec0471a2b6546ba6235ef6d0d1b794267826b1421924d9c077  0144-drm-msm-dp-shut-the-PHY-down-when-the-controller-is-.patch
+ 8a001dc2f3e50abef1afa0fd291c479934299800834c24e935771e180f2552eb0009605ada7e95e6de9fd792919f67b6bfd719481c652f742318ab61578e3dbb  0145-drm-msm-dp-skip-PUSH_IDLE-when-the-link-was-never-en.patch
+ 6c8d1d5e061b60ed57a56fefccdb649fbc93806c141d44f92170ddfe5000384e2d61c8fb46bce927c0383614b4feae2327126050cd149fe15bc1fbbfb24926ae  0146-drm-msm-dpu-cache-layer-mixers-for-encoder-cleanup.patch
+@@ -381,4 +383,6 @@ f511b80c4e3fce3ea9a3e4ed097948d8ff4e60b7d2207e5741329c8a8304d170fba1abd477b8dab0
+ 2222f6e0f661204650349a7fc774e00f64b393d3711e0f768c7e94a8b963c4180776b03f312479bd7993b3597e4b645546cc24ddea48797731e8fec1f8ed9240  0156-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Give-th.patch
+ d1189b1060c13218b89bb15b24981219b3834d8bd2b86d840f3889b0a8154cfe2f19449b764c8df61fb1836a11f775307a0807dc4315237ff42506a5fbf67a3e  0157-drm-msm-dp-don-t-take-extra-references-on-multiple-p.patch
+ e1987069678d09858f8d70778de36981859d220183b2ed985802523a2a64f4aa2d16b4aec9545dfe0db1617b3a6be33f6394351868e6be76d5ab0f0fde507993  0158-drm-msm-dp-hold-one-runtime-PM-reference-per-plugged.patch
++c411ed2ef555dbdfa62f73b744c7a98160de4a12d136431e197ab4acd1bf3fdb99ea1602d87476873df36ac248298a25d3a2d3ece9566c4f8ebcdf4887bcf054  0159-drm-msm-dp-request-a-peripheral-flush-for-RGB-VSC-an.patch
++9ed2383be43bdda11a978194aa17ce1f3e290525f6c98404443777cc4d95c6e1777ace1d244c5b77d4991c7458794458e66fa289fd0381f59a2820ed10e81d4d  0160-drm-msm-dp-refuse-HDR-metadata-with-an-EOTF-the-sink.patch
+ "
+-- 
+2.51.2
+

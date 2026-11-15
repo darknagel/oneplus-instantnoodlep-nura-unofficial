@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Sat, 14 Nov 2026 13:28:01 +0000
+Subject: [PATCH] drm/msm/dp: request a peripheral flush for RGB VSC and HDR
+ SDPs
+
+msm_dp_needs_periph_flush() asks the DPU for a peripheral flush only for
+YUV 4:2:0 modes, which used to be the only streams with a VSC SDP. The
+VSC SDP now also carries the colorimetry of RGB streams, and the HDR
+static metadata goes out as an infoframe SDP in generic slot 2. On
+controllers that put SDPs on the link with the peripheral flush, neither
+packet would be latched.
+
+Also request the flush when the connector state asks for a colorimetry
+other than the default or carries HDR metadata. The DPU asks from the
+encoder enable of the commit, after the state swap, so the connector
+state is the one the bridge programs the packets from.
+
+On SM8250, whose controller is revision 1.2.0.3, the packets are latched
+through SDP_CFG3 instead ("drm/msm/dp: latch SDPs through SDP_CFG3 on
+revision 1.2 controllers"). That was measured while the flush was still
+requested only for YUV 4:2:0 modes; whether this controller also latches
+them with the flush alone has not been measured.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/gpu/drm/msm/dp/dp_display.c | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index f3a1372..a86adb9 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -1306,7 +1306,20 @@ bool msm_dp_is_yuv_420_enabled(const struct msm_dp *msm_dp_display,
+ bool msm_dp_needs_periph_flush(const struct msm_dp *msm_dp_display,
+ 			       const struct drm_display_mode *mode)
+ {
+-	return msm_dp_is_yuv_420_enabled(msm_dp_display, mode);
++	const struct drm_connector_state *conn_state =
++		msm_dp_display->connector->state;
++
++	if (msm_dp_is_yuv_420_enabled(msm_dp_display, mode))
++		return true;
++
++	/*
++	 * The only caller is the DPU's video encoder enable, after the state
++	 * swap of the commit, so connector->state is the new state that the
++	 * bridge programs the SDPs from.
++	 */
++	return conn_state &&
++	       (conn_state->colorspace != DRM_MODE_COLORIMETRY_DEFAULT ||
++		conn_state->hdr_output_metadata);
+ }
+ 
+ bool msm_dp_wide_bus_available(const struct msm_dp *msm_dp_display)
+-- 
+2.51.2
+

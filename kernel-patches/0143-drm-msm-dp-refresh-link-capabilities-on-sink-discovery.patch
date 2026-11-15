@@ -13,7 +13,12 @@ otherwise kept four HBR2 lanes and reduced 3840x2160 at 97 Hz to
 6 bpc. The ASUS now trains at HBR3 and carries 10 bpc at the same
 timing. Switching back to the GR14BU restores HBR2.
 
+The memset is taken from Xilin Wu's eDP capability caching patch, which
+clears the parsed link information before every fresh discovery.
+
+Suggested-by: Xilin Wu <sophon@radxa.com>
 Link: https://lore.kernel.org/r/20261009-msm-dp-hdr10-v2-11-1835d4966da3@radxa.com
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
 ---
  drivers/gpu/drm/msm/dp/dp_panel.c | 1 +
  1 file changed, 1 insertion(+)

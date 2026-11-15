@@ -7,7 +7,7 @@
 | Display (Samsung AMS678UW01, new panel driver, 1440×3168 @ 120 Hz) | works | kernel 0001–0003, pmaports 0001 |
 | GPU (Adreno 650, Mesa freedreno), Phosh accelerated | works | kernel 0004, pmaports 0001 |
 | USB-C DisplayPort: video with USB2 alongside, VBUS supply and power-role swap, audio | works | kernel 0088–0103, pmaports 0045–0047, 0049; [notes](displayport.md) |
-| DisplayPort HBR3 and HDR signalling (`Colorspace`, `HDR_OUTPUT_METADATA`) | draft | kernel 0138–0143, pmaports 0059; [notes](displayport.md#hdr) |
+| DisplayPort HBR3 and HDR signalling (`Colorspace`, `HDR_OUTPUT_METADATA`) | draft; HDR shown by the ASUS PG32UCDMR, picture looked right | kernel 0138–0143, 0159–0160, pmaports 0059, 0071; [notes](displayport.md#hdr) |
 | DisplayPort over system sleep: the DP PHY loses its setup while the controller is suspended but was still taken as initialised, so the display was dropped after resume; a link that failed to train was pushed to idle without a link clock, which reset the phone; detect() and the HPD plug handler leaked runtime PM references when HPD comes from the USB-C connector | draft | kernel 0144–0145, 0157–0158, pmaports 0060, 0070; [notes](displayport.md#system-sleep) |
 | Switching between the phone panel and an external DisplayPort monitor | Tested at 2880×1800, 120 Hz on the GR14BU | kernel 0146–0147, pmaports 0061 |
 | DisplayPort audio with nothing plugged in: preparing the PCM started the DSP's DisplayPort port, and the DSP took q6afe's whole command timeout to answer; every probe at boot waited for it | draft; tested on the phone with PulseAudio | kernel 0148–0150, pmaports 0069; [notes](displayport.md#audio-with-no-display) |
