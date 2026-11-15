@@ -194,8 +194,10 @@ reboot
 ```
 
 This replaces the kernel and its modules together. Do not flash only `boot.img` onto an older
-image, its modules would not match. Check the charging fix with
-`dmesg | grep "float voltage"`, it must say `4350000 uV`.
+image, its modules would not match. The release notes list the other packages that belong
+to a release (camera, VoLTE). Check the charging with `dmesg | grep pm8150b-charger`: from
+v2026.11.15 on it must say `charging policy uses bq27411-0`, on older kernels
+`float voltage 4350000 uV`.
 
 **Images before v2026.11.10** also miss the boot service that copies the video, compute and
 sensor DSP firmware from your phone. As root:
