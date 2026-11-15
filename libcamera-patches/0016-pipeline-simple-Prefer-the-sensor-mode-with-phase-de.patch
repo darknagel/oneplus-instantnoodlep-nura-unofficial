@@ -1,0 +1,58 @@
+From 2247fc18750d5ec2ab90d9a79b41383094ce1df8 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 18:11:13 +0100
+Subject: [PATCH] pipeline: simple: Prefer the sensor mode with phase detection
+ data
+
+The IMX689 sends its phase detection pixels only in its 4000x3000 mode.
+For small preview streams the smaller 2000x1500 binned mode was picked,
+which runs at 60 fps but leaves the autofocus with the slower contrast
+search. Prefer the mode with the phase detection data for processed
+streams; LIBCAMERA_SIMPLE_PDAF=0 keeps the old choice.
+---
+ src/libcamera/pipeline/simple/simple.cpp | 22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index 08442bf..922200c 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -26,6 +26,7 @@
+ #include <linux/media-bus-format.h>
+ 
+ #include <libcamera/base/log.h>
++#include <libcamera/base/utils.h>
+ 
+ #include <libcamera/camera.h>
+ #include <libcamera/color_space.h>
+@@ -1587,6 +1588,27 @@ CameraConfiguration::Status SimpleCameraConfiguration::validate()
+ 	if (!pipeConfig_)
+ 		pipeConfig_ = maxPipeConfig;
+ 
++	/*
++	 * The phase detection data of the sensor makes the autofocus much
++	 * faster, but the sensor sends it only in one mode. Prefer that mode
++	 * for processed streams, unless LIBCAMERA_SIMPLE_PDAF is set to 0.
++	 */
++	const char *pdafEnv = utils::secure_getenv("LIBCAMERA_SIMPLE_PDAF");
++	const PdafSensorInfo *pdafInfo = data_->pdaf_.info;
++	if (pdafInfo && rawCount == 0 && (!pdafEnv || strcmp(pdafEnv, "0")) &&
++	    pipeConfig_->sensorSize != pdafInfo->sensorSize) {
++		for (const SimpleCameraData::Configuration *pipeConfig : *configs) {
++			if (pipeConfig->sensorSize != pdafInfo->sensorSize ||
++			    pipeConfig->captureFormat != pipeConfig_->captureFormat ||
++			    pipeConfig->outputSizes.max.width < maxProcessedStreamSize.width ||
++			    pipeConfig->outputSizes.max.height < maxProcessedStreamSize.height)
++				continue;
++
++			pipeConfig_ = pipeConfig;
++			break;
++		}
++	}
++
+ 	LOG(SimplePipeline, Debug)
+ 		<< "Picked "
+ 		<< V4L2SubdeviceFormat{ pipeConfig_->code, pipeConfig_->sensorSize, {} }
+-- 
+2.43.0
+

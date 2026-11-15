@@ -1,0 +1,96 @@
+From f820d20ee907ac27280cf422166298ac421e0dd2 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 18:24:24 +0100
+Subject: [PATCH 83/84] linux-postmarketos-qcom-sm8250: retry the front camera
+ probe
+
+Add kernel 0169: the IMX471 driver retries the chip id read when the
+first CCI transfer times out at boot, which otherwise left all cameras
+unregistered.
+---
+ ...-Retry-the-chip-id-read-when-it-time.patch | 45 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  4 +-
+ 2 files changed, 48 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0169-media-i2c-imx471-Retry-the-chip-id-read-when-it-time.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0169-media-i2c-imx471-Retry-the-chip-id-read-when-it-time.patch b/device/testing/linux-postmarketos-qcom-sm8250/0169-media-i2c-imx471-Retry-the-chip-id-read-when-it-time.patch
+new file mode 100644
+index 0000000000..1e3d433617
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0169-media-i2c-imx471-Retry-the-chip-id-read-when-it-time.patch
+@@ -0,0 +1,45 @@
++From 05848a63fd989adc23eaf2fc1f0b4df99682d484 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 15 Nov 2026 18:06:38 +0100
++Subject: [PATCH] media: i2c: imx471: Retry the chip id read when it times out
++
++Now and then the first transfer on the CCI master of the front camera
++times out at boot. The probe then fails, and CAMSS, which waits for all
++five sensors of the OnePlus 8 Pro, registers no camera at all. Power the
++sensor off and on again and retry the read up to two more times.
++---
++ drivers/media/i2c/imx471.c | 18 +++++++++++++++++-
++ 1 file changed, 17 insertions(+), 1 deletion(-)
++
++diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
++index 62f4453ae..2282f5c66 100755
++--- a/drivers/media/i2c/imx471.c
+++++ b/drivers/media/i2c/imx471.c
++@@ -939,7 +939,23 @@ static int imx471_probe(struct i2c_client *client)
++ 	if (ret)
++ 		return ret;
++ 
++-	ret = imx471_identify_sensor(imx471);
+++	/*
+++	 * Now and then the first transfer on this CCI master times out at
+++	 * boot. The probe failure then keeps CAMSS from registering any
+++	 * camera, so power the sensor up again and retry a few times.
+++	 */
+++	for (i = 0; ; i++) {
+++		ret = imx471_identify_sensor(imx471);
+++		if (ret != -ETIMEDOUT || i == 2)
+++			break;
+++
+++		dev_warn(imx471->dev, "no answer from the sensor, retrying\n");
+++		imx471_power_off(imx471->dev);
+++		msleep(20);
+++		ret = imx471_power_on(imx471->dev);
+++		if (ret)
+++			return ret;
+++	}
++ 	if (ret) {
++ 		dev_err_probe(imx471->dev, ret, "failed to find sensor\n");
++ 		goto power_off;
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 7093c62282..afbf91becb 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=92
++pkgrel=93
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -196,6 +196,7 @@ source="
+ 	0166-power-supply-qcom_pm8150b-charge-by-the-fuel-gauge-l.patch
+ 	0167-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Let-the.patch
+ 	0168-media-qcom-camss-Let-a-second-RDI-capture-another-CS.patch
++	0169-media-i2c-imx471-Retry-the-chip-id-read-when-it-time.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -399,4 +400,5 @@ a77ef5dfd551fe704b0e0493956ea313b62a03be8ac47cb8351b470f8c5fbb908443fbb4be04c190
+ f4a2f77d3ce682ed71486f798703da8a87e440c6560bddbc20e5635d6558130a0f67aff193453d8ae1fe1078245b9d4ab97b5c3217d997680d38050657e28e0a  0166-power-supply-qcom_pm8150b-charge-by-the-fuel-gauge-l.patch
+ 4ba48c6ba0585966b88b944bbafeff78d18fd037e1d4e66554e413ec837173e98e44694f4cbb961f095d7f1a3b4e3a9ca7ff00cbfc935db8658e5299aa27c598  0167-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Let-the.patch
+ 8769685e145e3d36c90de643f2d483ce6a81a14bbac33dbd63f97dde93bd29bf9d714ed1a2d98bbd4f944cc03d7d2fa19f1702fae7de8fd1a7f5b41fdabebf4b  0168-media-qcom-camss-Let-a-second-RDI-capture-another-CS.patch
++46e37a01fa09b03f0446067474ced5b52aa1bd5c719febe9b21b61517a23d50313908ee11e1787227fbff36213c2074e2f6c44255728e30446c6ea568eb2f23d  0169-media-i2c-imx471-Retry-the-chip-id-read-when-it-time.patch
+ "
+-- 
+2.43.0
+

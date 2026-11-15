@@ -1,0 +1,45 @@
+From 05848a63fd989adc23eaf2fc1f0b4df99682d484 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 18:06:38 +0100
+Subject: [PATCH] media: i2c: imx471: Retry the chip id read when it times out
+
+Now and then the first transfer on the CCI master of the front camera
+times out at boot. The probe then fails, and CAMSS, which waits for all
+five sensors of the OnePlus 8 Pro, registers no camera at all. Power the
+sensor off and on again and retry the read up to two more times.
+---
+ drivers/media/i2c/imx471.c | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
+index 62f4453ae..2282f5c66 100755
+--- a/drivers/media/i2c/imx471.c
++++ b/drivers/media/i2c/imx471.c
+@@ -939,7 +939,23 @@ static int imx471_probe(struct i2c_client *client)
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = imx471_identify_sensor(imx471);
++	/*
++	 * Now and then the first transfer on this CCI master times out at
++	 * boot. The probe failure then keeps CAMSS from registering any
++	 * camera, so power the sensor up again and retry a few times.
++	 */
++	for (i = 0; ; i++) {
++		ret = imx471_identify_sensor(imx471);
++		if (ret != -ETIMEDOUT || i == 2)
++			break;
++
++		dev_warn(imx471->dev, "no answer from the sensor, retrying\n");
++		imx471_power_off(imx471->dev);
++		msleep(20);
++		ret = imx471_power_on(imx471->dev);
++		if (ret)
++			return ret;
++	}
+ 	if (ret) {
+ 		dev_err_probe(imx471->dev, ret, "failed to find sensor\n");
+ 		goto power_off;
+-- 
+2.43.0
+

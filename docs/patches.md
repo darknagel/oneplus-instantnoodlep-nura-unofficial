@@ -76,6 +76,8 @@
 | Telephoto sensor supply `afvdd` was missing (dummy regulator) | works | kernel 0156, pmaports 0067 |
 | White balance: the AWB uses the pixels that look nearly grey with the current gains, so large coloured areas no longer tint the picture; gains below 1.0 allowed (`minGain`), which removes the red cast of the colour filter camera; colour matrices of the stock tuning for the front camera, where the nearly grey pixels count only half (`greyWeight` 0.5): it mostly sees display light | works | libcamera 0011–0012, pmaports 0068 |
 | Phase detection autofocus on the main camera: in the 4000×3000 mode the IMX689 sends its phase detection pixels as a second CSI-2 stream (virtual channel 1, data type 0x30, 2000×1500); the CSID passes it to its second RDI (module parameters `rdi_vc` and `rdi_dt`), and stopping one RDI no longer resets the whole VFE. libcamera captures that stream, measures the shift between the left and right pixels of its even lines in the area of the sharpness measure and jumps the lens there, then fits the sharpness peak from two fine steps | works, time to focus 1.7 → 1.0 s; only in the 4000×3000 mode at 30 fps, the 60 fps preview mode has no phase data | kernel 0168, libcamera 0013–0015, pmaports 0081–0082, `system/qcom-camss-pdaf.conf` |
+| Main camera preview in the mode with phase detection: libcamera picks the 4000×3000 mode for processed streams of the main camera, so previews get the faster autofocus at 30 fps instead of 60; `LIBCAMERA_SIMPLE_PDAF=0` keeps the 2000×1500 mode. In the binned mode the sensor stops sending images when its phase detection output (register 0x3005) is on | works | libcamera 0016, pmaports 0084 |
+| All cameras missing now and then after boot: the first CCI transfer to the front camera timed out, its probe failed and CAMSS, which waits for all five sensors, registered none; the IMX471 driver now powers the sensor up again and retries | works | kernel 0169, pmaports 0083 |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
 `camnoc_axi_src` clock was never scaled, so full resolution RDI capture never completed a
@@ -122,7 +124,7 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
 
 ## Patch numbers in use
 
-The next free numbers are kernel 0169 and package 0083. Kernel 0164 is kept for the
+The next free numbers are kernel 0170 and package 0085. Kernel 0164 is kept for the
 DisplayPort DSC draft. Most package patches change the release and the checksums of the
 kernel package, so a new one has to be made on top of the last one; package numbers
 0070–0074 cannot be filled in later.
@@ -164,7 +166,8 @@ kernel package, so a new one has to be made on top of the last one; package numb
   adds libcamera 0011–0012 (white balance) with the tuning. 0075 adds kernel
   0165–0167 (charging). From 0076 on the DisplayPort patches continue; see the table above.
   0081 adds kernel 0168 and 0082 libcamera 0013–0015 with the tuning (phase detection
-  autofocus).
+  autofocus), 0083 adds kernel 0169 (front camera probe) and 0084 libcamera 0016 (preview
+  in the mode with phase detection).
   Package numbers 0050, 0051, 0053, 0062–0065 and 0070–0074 and kernel numbers 0105–0113,
   0151 and 0164 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
@@ -184,7 +187,7 @@ kernel package, so a new one has to be made on top of the last one; package numb
   statistics for every second frame (0009), an autofocus that climbs from the current
   lens position (0010), a white balance on nearly grey pixels (0011), a `minGain`
   tuning value for the AWB (0012) and the phase detection autofocus of the main camera
-  (0013–0015). The IMX471
+  (0013–0015), also for its preview (0016). The IMX471
   helper is upstream since v0.8.0. The autofocus and image tuning is in the sensor files of
   pmaports patches 0034, 0055, 0066, 0068 and 0082.
 - `system/` – small files the image adds: the `ois-gyro` service, which keeps the

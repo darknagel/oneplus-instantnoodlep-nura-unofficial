@@ -30,7 +30,7 @@ Not working or limited:
 |---|---|
 | Fingerprint reader | not done |
 | Fast charging (Warp) and wireless charging | not done; charging is 5 V, up to 2 A into the battery |
-| Camera autofocus | phase detection on the main camera only at full resolution (30 fps), otherwise contrast only |
+| Camera autofocus | phase detection on the main camera only, the other cameras use contrast |
 | Calls | no echo cancellation, see [`modem/`](modem/) |
 | NFC | reading tags only; writing and card emulation are untested |
 | Charging | the last ten percent are slow, and the phone does not sleep while charging, see [`docs/charging.md`](docs/charging.md) |
@@ -238,10 +238,11 @@ For the compass and sensor setup on old images see [`docs/sensors.md`](docs/sens
   iio-sensor-proxy can be replaced when Nura publishes a higher version. If modem or data
   break afterwards, check first: `apk policy modemmanager`
 - Cameras: colours, shading and exposure come from the stock tuning; white balance is
-  automatic only (no colour temperature curve from the stock tuning yet). Main and
-  ultrawide preview at 2000×1500 and 60 fps and take full pictures at 4000×3000 and 30 fps;
-  autofocus takes about 1 second; the main camera at 4000×3000 uses its phase detection
-  pixels as well.
+  automatic only (no colour temperature curve from the stock tuning yet). The main camera
+  runs at 4000×3000 and 30 fps, also for the preview, because only that mode has its phase
+  detection pixels; it focuses in about 0.5–1 second (`LIBCAMERA_SIMPLE_PDAF=0` gives a
+  60 fps preview with the slower contrast autofocus). The ultrawide previews at 2000×1500
+  and 60 fps; its autofocus takes about 1 second.
 - The last ten percent of a charge take about 50 minutes, longer than on Android, and the
   phone does not sleep while the battery is charging: see [`docs/charging.md`](docs/charging.md).
 - Under Plasma Mobile the keyboard did not always open in the SIM PIN popup. Enter the PIN in
