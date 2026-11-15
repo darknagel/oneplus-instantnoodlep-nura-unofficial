@@ -1,0 +1,36 @@
+From 00f34e7e580d6e6d1809f95b3f492b5ac885e1fb Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 22:58:03 +0100
+Subject: [PATCH 172/173] bus: mhi: host: pci_generic: Make the flashless SDX55
+ a wakeup device
+
+The modem of the OnePlus 8 Pro has to wake the phone for an incoming call
+or message. Enable it as a wakeup source, so that its PME is armed for
+system suspend and the host bridge knows that an endpoint below it wants
+to wake the system.
+---
+ drivers/bus/mhi/host/pci_generic.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/bus/mhi/host/pci_generic.c b/drivers/bus/mhi/host/pci_generic.c
+index 098a52afa..0f6683386 100644
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -1630,6 +1630,14 @@ static int mhi_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	if (!pdev->is_virtfn)
+ 		mhi_pdev->reset_on_remove = info->reset_on_remove;
+ 
++	/*
++	 * The modem of a phone has to wake the system for an incoming call.
++	 * As a wakeup device it gets its PME enabled for system suspend, and
++	 * the host bridge listens to WAKE# while the link is off.
++	 */
++	if (info == &mhi_qcom_sdx55_flashless_info)
++		device_set_wakeup_enable(&pdev->dev, true);
++
+ 	if (info->edl_trigger)
+ 		mhi_cntrl->edl_trigger = mhi_pci_generic_edl_trigger;
+ 
+-- 
+2.43.0
+

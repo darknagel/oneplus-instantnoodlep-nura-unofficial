@@ -1,0 +1,300 @@
+From 3b3ce5f59df060d6470aee153496a92443b29ce5 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 23:51:16 +0100
+Subject: [PATCH 88/90] linux-postmarketos-qcom-sm8250: modem over system sleep
+
+Add kernel 0171-0173: the PCIe host takes the link to the SDX55 down for
+system suspend and brings it back on resume, and WAKE# of the modem wakes
+the phone. With the link left in L1.2 the modem was gone after a suspend
+in which it had to reach the host, for example for an incoming call.
+---
+ ...Let-only-the-endpoints-decide-about-.patch |  42 +++++
+ ..._generic-Make-the-flashless-SDX55-a-.patch |  36 +++++
+ ...173-PCI-qcom-Wake-the-system-on-WAKE.patch | 151 ++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |   8 +-
+ 4 files changed, 236 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0171-PCI-host-common-Let-only-the-endpoints-decide-about-.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0172-bus-mhi-host-pci_generic-Make-the-flashless-SDX55-a-.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0173-PCI-qcom-Wake-the-system-on-WAKE.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0171-PCI-host-common-Let-only-the-endpoints-decide-about-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0171-PCI-host-common-Let-only-the-endpoints-decide-about-.patch
+new file mode 100644
+index 0000000000..7ee2001d6a
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0171-PCI-host-common-Let-only-the-endpoints-decide-about-.patch
+@@ -0,0 +1,42 @@
++From 6be2fed201fa5abdd4c0cd2f258845f34c09e71a Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 15 Nov 2026 22:58:03 +0100
++Subject: [PATCH 171/173] PCI: host-common: Let only the endpoints decide about
++ D3cold
++
++pci_host_common_d3cold_possible() lets the host bridge take the link down
++for system suspend when all devices below it are in D3hot. The walk also
++visits the root port. On the OnePlus 8 Pro the root ports stay in D0 over
++suspend, so the answer was always no and the links stayed in L1.2 while
++the system slept.
++
++For the SDX55 modem that is fatal. When it has to exit L1.2 for an
++incoming call, the sleeping host does not bring the reference clock back
++in time, the link goes down and the modem is inaccessible until a reboot.
++
++The kernel-doc already says that the endpoints decide. Skip bridges.
++---
++ drivers/pci/controller/pci-host-common.c | 7 +++++++
++ 1 file changed, 7 insertions(+)
++
++diff --git a/drivers/pci/controller/pci-host-common.c b/drivers/pci/controller/pci-host-common.c
++index 2ce6f4b66..5ac2b4dfe 100644
++--- a/drivers/pci/controller/pci-host-common.c
+++++ b/drivers/pci/controller/pci-host-common.c
++@@ -291,6 +291,13 @@ static int __pci_host_common_d3cold_possible(struct pci_dev *pdev,
++ 	if (!pdev->dev.driver && !pci_is_enabled(pdev))
++ 		return 0;
++ 
+++	/*
+++	 * Only the endpoints count. A port that cannot go to D3hot itself
+++	 * stays in D0 and would rule D3cold out for good.
+++	 */
+++	if (pci_is_bridge(pdev))
+++		return 0;
+++
++ 	if (pdev->current_state != PCI_D3hot)
++ 		goto exit;
++ 
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0172-bus-mhi-host-pci_generic-Make-the-flashless-SDX55-a-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0172-bus-mhi-host-pci_generic-Make-the-flashless-SDX55-a-.patch
+new file mode 100644
+index 0000000000..45eaa0cafe
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0172-bus-mhi-host-pci_generic-Make-the-flashless-SDX55-a-.patch
+@@ -0,0 +1,36 @@
++From 00f34e7e580d6e6d1809f95b3f492b5ac885e1fb Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 15 Nov 2026 22:58:03 +0100
++Subject: [PATCH 172/173] bus: mhi: host: pci_generic: Make the flashless SDX55
++ a wakeup device
++
++The modem of the OnePlus 8 Pro has to wake the phone for an incoming call
++or message. Enable it as a wakeup source, so that its PME is armed for
++system suspend and the host bridge knows that an endpoint below it wants
++to wake the system.
++---
++ drivers/bus/mhi/host/pci_generic.c | 8 ++++++++
++ 1 file changed, 8 insertions(+)
++
++diff --git a/drivers/bus/mhi/host/pci_generic.c b/drivers/bus/mhi/host/pci_generic.c
++index 098a52afa..0f6683386 100644
++--- a/drivers/bus/mhi/host/pci_generic.c
+++++ b/drivers/bus/mhi/host/pci_generic.c
++@@ -1630,6 +1630,14 @@ static int mhi_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
++ 	if (!pdev->is_virtfn)
++ 		mhi_pdev->reset_on_remove = info->reset_on_remove;
++ 
+++	/*
+++	 * The modem of a phone has to wake the system for an incoming call.
+++	 * As a wakeup device it gets its PME enabled for system suspend, and
+++	 * the host bridge listens to WAKE# while the link is off.
+++	 */
+++	if (info == &mhi_qcom_sdx55_flashless_info)
+++		device_set_wakeup_enable(&pdev->dev, true);
+++
++ 	if (info->edl_trigger)
++ 		mhi_cntrl->edl_trigger = mhi_pci_generic_edl_trigger;
++ 
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0173-PCI-qcom-Wake-the-system-on-WAKE.patch b/device/testing/linux-postmarketos-qcom-sm8250/0173-PCI-qcom-Wake-the-system-on-WAKE.patch
+new file mode 100644
+index 0000000000..6efee409c6
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0173-PCI-qcom-Wake-the-system-on-WAKE.patch
+@@ -0,0 +1,151 @@
++From 963f6c0f34ff021e44b6a1e18b6bf850ec93cf69 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 15 Nov 2026 22:58:03 +0100
++Subject: [PATCH 173/173] PCI: qcom: Wake the system on WAKE#
++
++With the link off for system suspend an endpoint cannot send a PME
++message; it pulls WAKE# low. The SDX55 modem of the OnePlus 8 Pro does
++that for an incoming call. No one listened and the phone slept on.
++
++Request the wake GPIO of the controller node as an interrupt. For system
++suspend make it a wakeup interrupt if an endpoint below the controller is
++enabled for wakeup. Without that condition the WLAN chip on the other
++controller, which moves WAKE# whenever its link goes down or comes up,
++ends every suspend after a few seconds.
++---
++ drivers/pci/controller/dwc/pcie-qcom.c | 87 ++++++++++++++++++++++++++
++ 1 file changed, 87 insertions(+)
++
++diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
++index d8eb52857..f8d8ddc37 100644
++--- a/drivers/pci/controller/dwc/pcie-qcom.c
+++++ b/drivers/pci/controller/dwc/pcie-qcom.c
++@@ -27,6 +27,7 @@
++ #include <linux/pci-pwrctrl.h>
++ #include <linux/pm_opp.h>
++ #include <linux/pm_runtime.h>
+++#include <linux/pm_wakeup.h>
++ #include <linux/platform_device.h>
++ #include <linux/phy/pcie.h>
++ #include <linux/phy/phy.h>
++@@ -292,10 +293,62 @@ struct qcom_pcie {
++ 	struct list_head ports;
++ 	struct gpio_desc *reset;
++ 	bool use_pm_opp;
+++	int wake_irq;
+++	bool wake_armed;
++ };
++ 
++ #define to_qcom_pcie(x)		dev_get_drvdata((x)->dev)
++ 
+++/*
+++ * WAKE# of the endpoint. With the link off for system suspend an endpoint
+++ * cannot send a PME message; it pulls WAKE# low instead. Take that as a
+++ * wakeup event, the resume brings the link and the endpoint back.
+++ */
+++static irqreturn_t qcom_pcie_wake_irq(int irq, void *data)
+++{
+++	struct qcom_pcie *pcie = data;
+++
+++	pm_wakeup_event(pcie->pci->dev, 2000);
+++
+++	return IRQ_HANDLED;
+++}
+++
+++static void qcom_pcie_setup_wake(struct qcom_pcie *pcie)
+++{
+++	struct device *dev = pcie->pci->dev;
+++	struct gpio_desc *wake;
+++	int irq, ret;
+++
+++	wake = devm_gpiod_get_optional(dev, "wake", GPIOD_IN);
+++	if (IS_ERR_OR_NULL(wake))
+++		return;
+++
+++	irq = gpiod_to_irq(wake);
+++	if (irq < 0)
+++		return;
+++
+++	ret = devm_request_threaded_irq(dev, irq, NULL, qcom_pcie_wake_irq,
+++					IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+++					"pcie-wake", pcie);
+++	if (ret) {
+++		dev_warn(dev, "Failed to request the WAKE# interrupt: %d\n", ret);
+++		return;
+++	}
+++
+++	device_init_wakeup(dev, true);
+++	pcie->wake_irq = irq;
+++}
+++
+++static int qcom_pcie_wakeup_endpoint(struct pci_dev *pdev, void *data)
+++{
+++	bool *wakeup = data;
+++
+++	if (!pci_is_bridge(pdev) && device_may_wakeup(&pdev->dev))
+++		*wakeup = true;
+++
+++	return 0;
+++}
+++
++ static void __qcom_pcie_perst_assert(struct qcom_pcie *pcie, bool assert)
++ {
++ 	struct qcom_pcie_perst *perst;
++@@ -2129,6 +2182,8 @@ static int qcom_pcie_probe(struct platform_device *pdev)
++ 
++ 	platform_set_drvdata(pdev, pcie);
++ 
+++	qcom_pcie_setup_wake(pcie);
+++
++ 	ret = dw_pcie_host_init(pp);
++ 	if (ret) {
++ 		dev_err_probe(dev, ret, "cannot initialize host\n");
++@@ -2156,6 +2211,37 @@ static int qcom_pcie_probe(struct platform_device *pdev)
++ 	return ret;
++ }
++ 
+++/*
+++ * Some endpoints move WAKE# when their link goes down or comes up. Listen to
+++ * it only for an endpoint that is meant to wake the system.
+++ */
+++static int qcom_pcie_suspend(struct device *dev)
+++{
+++	struct qcom_pcie *pcie = dev_get_drvdata(dev);
+++	bool wakeup = false;
+++
+++	if (!pcie || pcie->wake_irq <= 0)
+++		return 0;
+++
+++	pci_walk_bus(pcie->pci->pp.bridge->bus, qcom_pcie_wakeup_endpoint, &wakeup);
+++	if (wakeup && !enable_irq_wake(pcie->wake_irq))
+++		pcie->wake_armed = true;
+++
+++	return 0;
+++}
+++
+++static int qcom_pcie_resume(struct device *dev)
+++{
+++	struct qcom_pcie *pcie = dev_get_drvdata(dev);
+++
+++	if (pcie && pcie->wake_armed) {
+++		disable_irq_wake(pcie->wake_irq);
+++		pcie->wake_armed = false;
+++	}
+++
+++	return 0;
+++}
+++
++ static int qcom_pcie_suspend_noirq(struct device *dev)
++ {
++ 	struct qcom_pcie *pcie;
++@@ -2325,6 +2411,7 @@ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_QCOM, 0x1000, qcom_fixup_class);
++ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_QCOM, 0x1001, qcom_fixup_class);
++ 
++ static const struct dev_pm_ops qcom_pcie_pm_ops = {
+++	SYSTEM_SLEEP_PM_OPS(qcom_pcie_suspend, qcom_pcie_resume)
++ 	NOIRQ_SYSTEM_SLEEP_PM_OPS(qcom_pcie_suspend_noirq, qcom_pcie_resume_noirq)
++ };
++ 
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index fbb21dde9e..f872c8997e 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=94
++pkgrel=103
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -198,6 +198,9 @@ source="
+ 	0168-media-qcom-camss-Let-a-second-RDI-capture-another-CS.patch
+ 	0169-media-i2c-imx471-Retry-the-chip-id-read-when-it-time.patch
+ 	0170-i2c-qcom-cci-Retry-a-transfer-that-timed-out.patch
++	0171-PCI-host-common-Let-only-the-endpoints-decide-about-.patch
++	0172-bus-mhi-host-pci_generic-Make-the-flashless-SDX55-a-.patch
++	0173-PCI-qcom-Wake-the-system-on-WAKE.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -403,4 +406,7 @@ f4a2f77d3ce682ed71486f798703da8a87e440c6560bddbc20e5635d6558130a0f67aff193453d8a
+ 8769685e145e3d36c90de643f2d483ce6a81a14bbac33dbd63f97dde93bd29bf9d714ed1a2d98bbd4f944cc03d7d2fa19f1702fae7de8fd1a7f5b41fdabebf4b  0168-media-qcom-camss-Let-a-second-RDI-capture-another-CS.patch
+ 46e37a01fa09b03f0446067474ced5b52aa1bd5c719febe9b21b61517a23d50313908ee11e1787227fbff36213c2074e2f6c44255728e30446c6ea568eb2f23d  0169-media-i2c-imx471-Retry-the-chip-id-read-when-it-time.patch
+ a17ae9d6999ebd44bd602a7999a67216afa34d8258b0b3edfd16df3cfed808b77743b994ba2dbdde8c3dbbe2aac028ca4219f61b900c3f0598a5bb10e7c104b3  0170-i2c-qcom-cci-Retry-a-transfer-that-timed-out.patch
++29484dce40e54b8d184e79342bc0fa29e1a81756fa2690d25476ad78108ea3067d0a26d61b414d426a69d9a9cce3b1bb22ac2e4f4ecac70f6958b4bdb14804e9  0171-PCI-host-common-Let-only-the-endpoints-decide-about-.patch
++19be441bdc367cc19edb435d63b02816b3e83e2c3fe1eabe621250658bfdaf9139c101cc8c10ae1965ade7bd7ed1639696e31835e3f64c92de282bb537ab0179  0172-bus-mhi-host-pci_generic-Make-the-flashless-SDX55-a-.patch
++d0ae61f124942d2cfff2d7c4599479149105c2ad9d282b8dd280e09baca4ffc5a36fb8b0974a15685ad9901dd196b7dea8937c099ce14d6b2566f4702f74568d  0173-PCI-qcom-Wake-the-system-on-WAKE.patch
+ "
+-- 
+2.43.0
+

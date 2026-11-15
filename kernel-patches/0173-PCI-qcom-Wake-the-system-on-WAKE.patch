@@ -1,0 +1,151 @@
+From 963f6c0f34ff021e44b6a1e18b6bf850ec93cf69 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 22:58:03 +0100
+Subject: [PATCH 173/173] PCI: qcom: Wake the system on WAKE#
+
+With the link off for system suspend an endpoint cannot send a PME
+message; it pulls WAKE# low. The SDX55 modem of the OnePlus 8 Pro does
+that for an incoming call. No one listened and the phone slept on.
+
+Request the wake GPIO of the controller node as an interrupt. For system
+suspend make it a wakeup interrupt if an endpoint below the controller is
+enabled for wakeup. Without that condition the WLAN chip on the other
+controller, which moves WAKE# whenever its link goes down or comes up,
+ends every suspend after a few seconds.
+---
+ drivers/pci/controller/dwc/pcie-qcom.c | 87 ++++++++++++++++++++++++++
+ 1 file changed, 87 insertions(+)
+
+diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
+index d8eb52857..f8d8ddc37 100644
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -27,6 +27,7 @@
+ #include <linux/pci-pwrctrl.h>
+ #include <linux/pm_opp.h>
+ #include <linux/pm_runtime.h>
++#include <linux/pm_wakeup.h>
+ #include <linux/platform_device.h>
+ #include <linux/phy/pcie.h>
+ #include <linux/phy/phy.h>
+@@ -292,10 +293,62 @@ struct qcom_pcie {
+ 	struct list_head ports;
+ 	struct gpio_desc *reset;
+ 	bool use_pm_opp;
++	int wake_irq;
++	bool wake_armed;
+ };
+ 
+ #define to_qcom_pcie(x)		dev_get_drvdata((x)->dev)
+ 
++/*
++ * WAKE# of the endpoint. With the link off for system suspend an endpoint
++ * cannot send a PME message; it pulls WAKE# low instead. Take that as a
++ * wakeup event, the resume brings the link and the endpoint back.
++ */
++static irqreturn_t qcom_pcie_wake_irq(int irq, void *data)
++{
++	struct qcom_pcie *pcie = data;
++
++	pm_wakeup_event(pcie->pci->dev, 2000);
++
++	return IRQ_HANDLED;
++}
++
++static void qcom_pcie_setup_wake(struct qcom_pcie *pcie)
++{
++	struct device *dev = pcie->pci->dev;
++	struct gpio_desc *wake;
++	int irq, ret;
++
++	wake = devm_gpiod_get_optional(dev, "wake", GPIOD_IN);
++	if (IS_ERR_OR_NULL(wake))
++		return;
++
++	irq = gpiod_to_irq(wake);
++	if (irq < 0)
++		return;
++
++	ret = devm_request_threaded_irq(dev, irq, NULL, qcom_pcie_wake_irq,
++					IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
++					"pcie-wake", pcie);
++	if (ret) {
++		dev_warn(dev, "Failed to request the WAKE# interrupt: %d\n", ret);
++		return;
++	}
++
++	device_init_wakeup(dev, true);
++	pcie->wake_irq = irq;
++}
++
++static int qcom_pcie_wakeup_endpoint(struct pci_dev *pdev, void *data)
++{
++	bool *wakeup = data;
++
++	if (!pci_is_bridge(pdev) && device_may_wakeup(&pdev->dev))
++		*wakeup = true;
++
++	return 0;
++}
++
+ static void __qcom_pcie_perst_assert(struct qcom_pcie *pcie, bool assert)
+ {
+ 	struct qcom_pcie_perst *perst;
+@@ -2129,6 +2182,8 @@ static int qcom_pcie_probe(struct platform_device *pdev)
+ 
+ 	platform_set_drvdata(pdev, pcie);
+ 
++	qcom_pcie_setup_wake(pcie);
++
+ 	ret = dw_pcie_host_init(pp);
+ 	if (ret) {
+ 		dev_err_probe(dev, ret, "cannot initialize host\n");
+@@ -2156,6 +2211,37 @@ static int qcom_pcie_probe(struct platform_device *pdev)
+ 	return ret;
+ }
+ 
++/*
++ * Some endpoints move WAKE# when their link goes down or comes up. Listen to
++ * it only for an endpoint that is meant to wake the system.
++ */
++static int qcom_pcie_suspend(struct device *dev)
++{
++	struct qcom_pcie *pcie = dev_get_drvdata(dev);
++	bool wakeup = false;
++
++	if (!pcie || pcie->wake_irq <= 0)
++		return 0;
++
++	pci_walk_bus(pcie->pci->pp.bridge->bus, qcom_pcie_wakeup_endpoint, &wakeup);
++	if (wakeup && !enable_irq_wake(pcie->wake_irq))
++		pcie->wake_armed = true;
++
++	return 0;
++}
++
++static int qcom_pcie_resume(struct device *dev)
++{
++	struct qcom_pcie *pcie = dev_get_drvdata(dev);
++
++	if (pcie && pcie->wake_armed) {
++		disable_irq_wake(pcie->wake_irq);
++		pcie->wake_armed = false;
++	}
++
++	return 0;
++}
++
+ static int qcom_pcie_suspend_noirq(struct device *dev)
+ {
+ 	struct qcom_pcie *pcie;
+@@ -2325,6 +2411,7 @@ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_QCOM, 0x1000, qcom_fixup_class);
+ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_QCOM, 0x1001, qcom_fixup_class);
+ 
+ static const struct dev_pm_ops qcom_pcie_pm_ops = {
++	SYSTEM_SLEEP_PM_OPS(qcom_pcie_suspend, qcom_pcie_resume)
+ 	NOIRQ_SYSTEM_SLEEP_PM_OPS(qcom_pcie_suspend_noirq, qcom_pcie_resume_noirq)
+ };
+ 
+-- 
+2.43.0
+

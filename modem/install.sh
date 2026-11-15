@@ -123,5 +123,6 @@ install -m 644 78-mm-sdx55-qrtr.rules /etc/udev/rules.d/
 systemctl disable --now tqftpserv 2>/dev/null || true
 systemctl daemon-reload
 udevadm control --reload
-systemctl enable sdx55-rfsd sdx55-gnss sdx55-sim sdx55-callaudio
+install -m 644 sdx55-gnss-sleep.service /etc/systemd/system/
+systemctl enable sdx55-rfsd sdx55-gnss sdx55-sim sdx55-callaudio sdx55-gnss-sleep
 echo "Done. Reboot to start the modem."

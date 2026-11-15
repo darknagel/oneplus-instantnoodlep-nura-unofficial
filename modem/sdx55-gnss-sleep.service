@@ -1,0 +1,13 @@
+[Unit]
+Description=Stop the SDX55 GNSS session for system sleep
+Before=sleep.target
+StopWhenUnneeded=yes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/systemctl stop sdx55-gnss.service
+ExecStop=/usr/bin/systemctl --no-block start sdx55-gnss.service
+
+[Install]
+WantedBy=sleep.target

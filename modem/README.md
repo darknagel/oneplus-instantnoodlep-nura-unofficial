@@ -33,7 +33,7 @@ GPS for apps: `apk add gpsd && gpsd -n /dev/gnss-sdx55`.
 Mobile data on congstar, as root (the password is the public one of the APN):
 
 ```sh
-nmcli con add type gsm ifname '*' con-name congstar apn internet.v6.telekom gsm.username congstar gsm.password cs
+nmcli con add type gsm ifname '*' con-name congstar apn internet.v6.telekom gsm.username congstar gsm.password cs gsm.pin-flags 4
 ```
 
 SMS app for Plasma Mobile: `apk add spacebar`, then log in again. Enter numbers
@@ -86,9 +86,25 @@ Build and install: `pmbootstrap build --arch aarch64 81voltd`, install `81voltd`
 `81voltd-systemd` on the phone; the service is enabled on install.
 
 The modem asks for the IMS connection right after the SIM unlock, while ModemManager still
-initialises the modem; pmaports 0087 makes 81voltd try again for up to a minute. If it
-still fails, the modem does not ask again until 81voltd restarts
-(`systemctl restart 81voltd`).
+initialises the modem; pmaports 0087 makes 81voltd try again for up to a minute, and
+pmaports 0089 makes it wait until the modem is registered and repeat a connection attempt
+that ModemManager cancelled. Without VoLTE a call falls back to 2G, and mobile data stops
+for the length of the call. If it still fails, the modem does not ask again until 81voltd
+restarts (`systemctl restart 81voltd`).
+
+## System sleep
+
+- For suspend the PCIe host takes the link to the modem down (kernel 0171); the modem
+  keeps running and stays registered. On resume the link comes back and MHI goes from M3
+  to M0. With the link left in L1.2 the modem was gone after a suspend in which it had
+  something to say.
+- The modem wakes the phone with WAKE# (GPIO 87, kernel 0172–0173), for an incoming call
+  or message.
+- Anything that makes the modem talk ends the sleep at once. Three things did:
+  NetworkManager took the IMS bearer down together with mobile data (pmaports 0090 leaves
+  it up), ModemManager asked for WDS event reports (0090 drops them), and the GNSS session
+  runs at 1 Hz (`sdx55-gnss-sleep.service` stops it for the sleep).
+- NetworkManager still disconnects mobile data for suspend and reconnects after resume.
 
 ## Facts
 

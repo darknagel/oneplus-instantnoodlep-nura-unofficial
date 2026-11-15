@@ -31,6 +31,10 @@
 | Voice calls: Q6Voice with a PCIe mailbox for the external modem, QRTR forwarding between modem and ADSP (flow control release to the right modem node), MHI satellite, vocproc without Tx topology, amplifier switch and gain for the earpiece | work, outgoing tested over VoLTE and 2G; patches still WIP, see [`modem/`](../modem/) | kernel 0117–0137, pmaports 0058 |
 | VoLTE: 81voltd (IMS Data service for the modem) accepts the SDX55 on QRTR node 3 (`qrtr3`) | works, tested on congstar | pmaports 0069 |
 | Mobile data together with VoLTE: the modem has one data channel, and with the IMS connection of 81voltd on it the internet connection never came up (Start Network: NoEffect). ModemManager now multiplexes that channel by default (QMAP, one `rmnet` link per connection, `CONFIG_RMNET`); 81voltd tries again when ModemManager is still initialising the modem after the SIM unlock, instead of leaving VoLTE off until a restart | works | pmaports 0085–0087 |
+| Modem over system sleep, wakeup by an incoming call: the PCIe links stayed in L1.2 over suspend because the root ports stay in D0, and when the modem had to leave L1.2 for a call the link went down and the modem was gone until a reboot. Only the endpoints now decide whether the host takes the link down for suspend; the modem is a wakeup device, and the controller takes WAKE# (GPIO 87) as wakeup interrupt while a wakeup device sits below it. The link goes off for suspend and comes back on resume with the modem still registered | works | kernel 0171–0173, pmaports 0088 |
+| VoLTE after the SIM unlock and after resume: a bearer that 81voltd connected right after the SIM unlock derailed ModemManager (modem enabled but never registered, no mobile data), and ModemManager cancels a connection attempt that runs while it enables or resynchronises the modem, which left VoLTE off (calls on 2G, no data during a call). 81voltd waits until the modem is registered and repeats a cancelled attempt | works | pmaports 0089 |
+| IMS connection over system sleep: NetworkManager disconnects all bearers when it brings mobile data down, also before suspend; the modem lost its IMS connection, asked for it again and woke the phone within seconds. A disconnect of all bearers now only covers the ones the Simple interface connected. ModemManager also no longer asks for WDS event reports, which it only logged: the dormancy report woke the phone ten seconds after it went to sleep | works | pmaports 0090 |
+| GNSS over system sleep: the 1 Hz tracking session kept the modem talking, which woke the phone at once; `sdx55-gnss-sleep.service` stops `sdx55-gnss` before suspend and starts it after resume | works | `modem/sdx55-gnss-sleep.service` |
 | NFC (NXP chip, reading tags with `neard`; PCIe 1 is disabled because it took the enable pin) | works | kernel 0032, pmaports 0021 |
 | C-PHY on SM8250 CAMSS (posted series, see below) | works | kernel 0033–0041, pmaports 0022 |
 | Main camera Sony IMX689 (new driver, 3 C-PHY trios, 4000×3000 @ 30) | works | kernel 0042, 0045, pmaports 0022, libcamera 0006 |
@@ -125,7 +129,7 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
 
 ## Patch numbers in use
 
-The next free numbers are kernel 0171 and package 0088. Kernel 0164 is kept for the
+The next free numbers are kernel 0174 and package 0091. Kernel 0164 is kept for the
 DisplayPort DSC draft. Most package patches change the release and the checksums of the
 kernel package, so a new one has to be made on top of the last one; package numbers
 0070–0074 cannot be filled in later.
@@ -170,7 +174,8 @@ kernel package, so a new one has to be made on top of the last one; package numb
   autofocus), 0083 adds kernel 0169 (front camera probe) and 0084 libcamera 0016 (preview
   in the mode with phase detection). 0085 adds kernel 0170 (CCI transfer retry) and
   enables `CONFIG_RMNET`, 0086 and 0087 change ModemManager and 81voltd (mobile data
-  together with VoLTE).
+  together with VoLTE). 0088 adds kernel 0171–0173 (modem over system sleep), 0089 and
+  0090 change 81voltd and ModemManager for it.
   Package numbers 0050, 0051, 0053, 0062–0065 and 0070–0074 and kernel numbers 0105–0113,
   0151 and 0164 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.

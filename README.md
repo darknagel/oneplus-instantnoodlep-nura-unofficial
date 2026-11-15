@@ -124,7 +124,7 @@ As root, about a minute after boot:
 
 ```sh
 mmcli -i any --pin=YOURPIN                       # only if your SIM has a PIN
-nmcli con add type gsm ifname '*' con-name mobile apn YOUR_APN
+nmcli con add type gsm ifname '*' con-name mobile apn YOUR_APN gsm.pin-flags 4
 ```
 
 The connection comes back on its own after the PIN at every boot. On congstar, use

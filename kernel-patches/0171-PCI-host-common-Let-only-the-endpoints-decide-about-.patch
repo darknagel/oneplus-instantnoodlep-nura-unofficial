@@ -1,0 +1,42 @@
+From 6be2fed201fa5abdd4c0cd2f258845f34c09e71a Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 22:58:03 +0100
+Subject: [PATCH 171/173] PCI: host-common: Let only the endpoints decide about
+ D3cold
+
+pci_host_common_d3cold_possible() lets the host bridge take the link down
+for system suspend when all devices below it are in D3hot. The walk also
+visits the root port. On the OnePlus 8 Pro the root ports stay in D0 over
+suspend, so the answer was always no and the links stayed in L1.2 while
+the system slept.
+
+For the SDX55 modem that is fatal. When it has to exit L1.2 for an
+incoming call, the sleeping host does not bring the reference clock back
+in time, the link goes down and the modem is inaccessible until a reboot.
+
+The kernel-doc already says that the endpoints decide. Skip bridges.
+---
+ drivers/pci/controller/pci-host-common.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/pci/controller/pci-host-common.c b/drivers/pci/controller/pci-host-common.c
+index 2ce6f4b66..5ac2b4dfe 100644
+--- a/drivers/pci/controller/pci-host-common.c
++++ b/drivers/pci/controller/pci-host-common.c
+@@ -291,6 +291,13 @@ static int __pci_host_common_d3cold_possible(struct pci_dev *pdev,
+ 	if (!pdev->dev.driver && !pci_is_enabled(pdev))
+ 		return 0;
+ 
++	/*
++	 * Only the endpoints count. A port that cannot go to D3hot itself
++	 * stays in D0 and would rule D3cold out for good.
++	 */
++	if (pci_is_bridge(pdev))
++		return 0;
++
+ 	if (pdev->current_state != PCI_D3hot)
+ 		goto exit;
+ 
+-- 
+2.43.0
+

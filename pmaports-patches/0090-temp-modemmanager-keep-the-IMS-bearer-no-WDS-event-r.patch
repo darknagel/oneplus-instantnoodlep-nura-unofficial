@@ -1,0 +1,192 @@
+From 6e7a4ebce9236909f97d75ecb56c220310d0e296 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 23:51:17 +0100
+Subject: [PATCH 90/90] temp/modemmanager: keep the IMS bearer, no WDS event
+ reports
+
+A disconnect of all bearers through the Simple interface only covers the
+bearers that interface connected, so the IMS bearer of 81voltd survives
+NetworkManager bringing mobile data down before system sleep. Do not ask
+for WDS event reports: they were only logged, and the dormancy report woke
+the phone ten seconds after it went to sleep.
+---
+ ...mple-disconnect-only-its-own-bearers.patch | 82 +++++++++++++++++++
+ ...qmi-do-not-ask-for-WDS-event-reports.patch | 47 +++++++++++
+ temp/modemmanager/APKBUILD                    |  6 +-
+ 3 files changed, 134 insertions(+), 1 deletion(-)
+ create mode 100644 temp/modemmanager/0005-iface-modem-simple-disconnect-only-its-own-bearers.patch
+ create mode 100644 temp/modemmanager/0006-bearer-qmi-do-not-ask-for-WDS-event-reports.patch
+
+diff --git a/temp/modemmanager/0005-iface-modem-simple-disconnect-only-its-own-bearers.patch b/temp/modemmanager/0005-iface-modem-simple-disconnect-only-its-own-bearers.patch
+new file mode 100644
+index 0000000000..90b426eadb
+--- /dev/null
++++ b/temp/modemmanager/0005-iface-modem-simple-disconnect-only-its-own-bearers.patch
+@@ -0,0 +1,82 @@
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Subject: [PATCH] iface-modem-simple: disconnect only its own bearers
++
++Simple.Disconnect("/") disconnects all bearers of the modem.
++NetworkManager calls it whenever it brings its mobile data connection
++down: for a new activation and before system sleep. That also took the
++IMS bearer of 81voltd down. The modem lost its IMS registration, asked
++for the connection again at once and, on a phone that was going to
++sleep, woke it up again within seconds.
++
++Mark the bearers that the Simple interface connects, and let a
++disconnect request for all bearers only cover those.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++--- a/src/mm-bearer-list.c
+++++ b/src/mm-bearer-list.c
++@@ -257,6 +257,13 @@
++ build_connected_bearer_list (MMBaseBearer             *bearer,
++                              DisconnectBearersContext *ctx)
++ {
+++    /* Only the bearers that were connected through the Simple interface */
+++    if (ctx->bearer_path && g_str_equal (ctx->bearer_path, MM_BEARER_LIST_PATH_SIMPLE)) {
+++        if (g_object_get_data (G_OBJECT (bearer), MM_BEARER_LIST_SIMPLE_TAG))
+++            ctx->pending_to_disconnect = g_list_prepend (ctx->pending_to_disconnect, g_object_ref (bearer));
+++        return;
+++    }
+++
++     if (!ctx->bearer_path ||
++         g_str_equal (ctx->bearer_path, mm_base_bearer_get_path (bearer)))
++         ctx->pending_to_disconnect = g_list_prepend (ctx->pending_to_disconnect, g_object_ref (bearer));
++@@ -280,7 +287,8 @@
++      * disconnect all. */
++     mm_bearer_list_foreach (self, (MMBearerListForeachFunc)build_connected_bearer_list, ctx);
++ 
++-    if (ctx->bearer_path && !ctx->pending_to_disconnect) {
+++    if (ctx->bearer_path && !ctx->pending_to_disconnect &&
+++        !g_str_equal (ctx->bearer_path, MM_BEARER_LIST_PATH_SIMPLE)) {
++         g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_INVALID_ARGS,
++                                  "Couldn't disconnect bearer '%s': not found",
++                                  ctx->bearer_path);
++--- a/src/mm-bearer-list.h
+++++ b/src/mm-bearer-list.h
++@@ -79,6 +79,12 @@
++ MMBaseBearer *mm_bearer_list_find_by_apn_type   (MMBearerList       *self,
++                                                  MMBearerApnType     apn_type);
++ 
+++/* Pseudo bearer path for mm_bearer_list_disconnect_bearers(): the bearers that
+++ * carry MM_BEARER_LIST_SIMPLE_TAG as object data, set when the Simple
+++ * interface connects them. */
+++#define MM_BEARER_LIST_PATH_SIMPLE "simple"
+++#define MM_BEARER_LIST_SIMPLE_TAG  "mm-simple-connected"
+++
++ void     mm_bearer_list_disconnect_bearers        (MMBearerList        *self,
++                                                    const gchar         *bearer_path,
++                                                    GAsyncReadyCallback  callback,
++--- a/src/mm-iface-modem-simple.c
+++++ b/src/mm-iface-modem-simple.c
++@@ -850,6 +850,7 @@
++ 
++         /* Wait... if we're already using an existing bearer, we need to check if it is
++          * already connected; and if so, just don't do anything else */
+++        g_object_set_data (G_OBJECT (ctx->bearer), MM_BEARER_LIST_SIMPLE_TAG, GUINT_TO_POINTER (1));
++         if (mm_base_bearer_get_status (ctx->bearer) != MM_BEARER_STATUS_CONNECTED) {
++             mm_base_bearer_connect (ctx->bearer,
++                                     (GAsyncReadyCallback)connect_bearer_ready,
++@@ -1058,10 +1059,13 @@
++     if (ctx->bearer_path)
++         mm_obj_info (self, "processing user request to disconnect modem: bearer '%s'", ctx->bearer_path);
++     else
++-        mm_obj_info (self, "processing user request to disconnect modem: all bearers");
+++        mm_obj_info (self, "processing user request to disconnect modem: all bearers of the simple interface");
++ 
+++    /* A request for all bearers comes from a connection manager that brings
+++     * its own connection down. Bearers that someone else created and
+++     * connected, like the IMS bearer of 81voltd, are not its business. */
++     mm_bearer_list_disconnect_bearers (list,
++-                                       ctx->bearer_path,
+++                                       ctx->bearer_path ? ctx->bearer_path : MM_BEARER_LIST_PATH_SIMPLE,
++                                        (GAsyncReadyCallback)bearer_list_disconnect_bearers_ready,
++                                        ctx);
++ }
+diff --git a/temp/modemmanager/0006-bearer-qmi-do-not-ask-for-WDS-event-reports.patch b/temp/modemmanager/0006-bearer-qmi-do-not-ask-for-WDS-event-reports.patch
+new file mode 100644
+index 0000000000..f2190f8ca4
+--- /dev/null
++++ b/temp/modemmanager/0006-bearer-qmi-do-not-ask-for-WDS-event-reports.patch
+@@ -0,0 +1,47 @@
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Subject: [PATCH] bearer-qmi: do not ask for WDS event reports
++
++A connected bearer asks the modem for a dozen WDS event reports and then
++only logs that one arrived. On a phone every report wakes the sleeping
++host. With the IMS bearer left connected over system sleep, the dormancy
++status report arrived about ten seconds after the phone went to sleep and
++woke it up again, every time.
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++--- a/src/mm-bearer-qmi.c
+++++ b/src/mm-bearer-qmi.c
++@@ -1510,18 +1510,21 @@
++     QmiMessageWdsSetEventReportInput *input;
++ 
++     input = qmi_message_wds_set_event_report_input_new ();
++-    qmi_message_wds_set_event_report_input_set_extended_data_bearer_technology (input, enable, NULL);
++-    qmi_message_wds_set_event_report_input_set_limited_data_system_status (input, enable, NULL);
++-    qmi_message_wds_set_event_report_input_set_uplink_flow_control (input, enable, NULL);
++-    qmi_message_wds_set_event_report_input_set_data_systems (input, enable, NULL);
++-    qmi_message_wds_set_event_report_input_set_evdo_pm_change (input, enable, NULL);
++-    qmi_message_wds_set_event_report_input_set_preferred_data_system (input, enable, NULL);
++-    qmi_message_wds_set_event_report_input_set_data_call_status (input, enable, NULL);
++-    qmi_message_wds_set_event_report_input_set_current_data_bearer_technology (input, enable, NULL);
++-    qmi_message_wds_set_event_report_input_set_mip_status (input, enable, NULL);
++-    qmi_message_wds_set_event_report_input_set_dormancy_status (input, enable, NULL);
++-    qmi_message_wds_set_event_report_input_set_data_bearer_technology (input, enable, NULL);
++-    qmi_message_wds_set_event_report_input_set_channel_rate (input, enable, NULL);
+++    /* Nothing is done with these reports, see event_report_indication_cb().
+++     * On a phone each of them wakes the sleeping host, the dormancy status
+++     * for one about ten seconds after it went to sleep. Ask for none. */
+++    qmi_message_wds_set_event_report_input_set_extended_data_bearer_technology (input, FALSE, NULL);
+++    qmi_message_wds_set_event_report_input_set_limited_data_system_status (input, FALSE, NULL);
+++    qmi_message_wds_set_event_report_input_set_uplink_flow_control (input, FALSE, NULL);
+++    qmi_message_wds_set_event_report_input_set_data_systems (input, FALSE, NULL);
+++    qmi_message_wds_set_event_report_input_set_evdo_pm_change (input, FALSE, NULL);
+++    qmi_message_wds_set_event_report_input_set_preferred_data_system (input, FALSE, NULL);
+++    qmi_message_wds_set_event_report_input_set_data_call_status (input, FALSE, NULL);
+++    qmi_message_wds_set_event_report_input_set_current_data_bearer_technology (input, FALSE, NULL);
+++    qmi_message_wds_set_event_report_input_set_mip_status (input, FALSE, NULL);
+++    qmi_message_wds_set_event_report_input_set_dormancy_status (input, FALSE, NULL);
+++    qmi_message_wds_set_event_report_input_set_data_bearer_technology (input, FALSE, NULL);
+++    qmi_message_wds_set_event_report_input_set_channel_rate (input, FALSE, NULL);
++ 
++     return input;
++ }
+diff --git a/temp/modemmanager/APKBUILD b/temp/modemmanager/APKBUILD
+index 079902d4f2..5265b351a5 100644
+--- a/temp/modemmanager/APKBUILD
++++ b/temp/modemmanager/APKBUILD
+@@ -3,7 +3,7 @@
+ maintainer="Achill Gilgenast <achill@achill.org>"
+ pkgname=modemmanager
+ pkgver=1.25.95_git20261005
+-pkgrel=5
++pkgrel=7
+ _commit=7f0bf17ab518cd78925cf7e53cc0d5c42f88b41a
+ pkgdesc="ModemManager library"
+ url="https://www.freedesktop.org/wiki/Software/ModemManager"
+@@ -51,6 +51,8 @@ source="https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/archive/$
+ 	0002-shared-qmi-do-not-abort-on-location-setup-after-unlock.patch
+ 	0003-qcom-soc-support-mhi_net-data-ports.patch
+ 	0004-bearer-qmi-multiplex-by-default-on-mhi_net-over-QRTR.patch
++	0005-iface-modem-simple-disconnect-only-its-own-bearers.patch
++	0006-bearer-qmi-do-not-ask-for-WDS-event-reports.patch
+ 	"
+ #builddir="$srcdir"/ModemManager-$pkgver
+ builddir="$srcdir"/ModemManager-$_commit
+@@ -110,4 +112,6 @@ f06e9b89acab5b61c5965658d62551b0f168066384674f7c4dd56feb6f811c82c640470e634e32d8
+ 15e206739314e2d5730bda213f559cd171e99de25ae5c1f33334450772b261877e88f968715d5ca51d2609d31844ab04d6c7d7cbd9ed5bf990048bf7c7edeee3  0002-shared-qmi-do-not-abort-on-location-setup-after-unlock.patch
+ 4419ac70e81a0b1b12e6146ce06a4ad548b0cdd928fd52c64789d6676f9b6d8f47408ba571f5992c2bfc3bc7a280c91ae5485122e47182613c22d9759e8f9a2e  0003-qcom-soc-support-mhi_net-data-ports.patch
+ d8e4cef78daaa2a6dbd3b13e66adc61674f3ec45f0c1a6145e789d953ab3ad21d51ea7566f637fc9565588b19c974b1114d905d7ea31ec8b4292e73e567dd6f4  0004-bearer-qmi-multiplex-by-default-on-mhi_net-over-QRTR.patch
++a6c3f2bc24d1e178246e037be272ea310f4c0613d3a7d5f908d81e77c10af83c67935e2a1758cbdb56c00b1dd2ffe360e4b45f528be7e441963f842999b66a1f  0005-iface-modem-simple-disconnect-only-its-own-bearers.patch
++b34c7278582c4ecd557f98a40a27e0a77bcb69f476711d1e4a9d54dcc7e5782cba63a3251daa236dda27619846809336727ab940697ccbc2ccd40e53b10d28fa  0006-bearer-qmi-do-not-ask-for-WDS-event-reports.patch
+ "
+-- 
+2.43.0
+
