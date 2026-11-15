@@ -1,0 +1,79 @@
+From 25c062d4c7af42069613830c4ff7ffb49cd7d5d4 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 19:32:07 +0100
+Subject: [PATCH 86/87] temp/modemmanager: multiplex the SDX55 data channel by
+ default
+
+The SDX55 has one data channel. With the IMS connection of 81voltd on it,
+the internet connection failed (Start Network: NoEffect). Request
+multiplexing by default for mhi_net with QMI over QRTR, so each connection
+gets its own rmnet link.
+---
+ ...plex-by-default-on-mhi_net-over-QRTR.patch | 27 +++++++++++++++++++
+ temp/modemmanager/APKBUILD                    |  4 ++-
+ 2 files changed, 30 insertions(+), 1 deletion(-)
+ create mode 100644 temp/modemmanager/0004-bearer-qmi-multiplex-by-default-on-mhi_net-over-QRTR.patch
+
+diff --git a/temp/modemmanager/0004-bearer-qmi-multiplex-by-default-on-mhi_net-over-QRTR.patch b/temp/modemmanager/0004-bearer-qmi-multiplex-by-default-on-mhi_net-over-QRTR.patch
+new file mode 100644
+index 0000000000..10e4a78162
+--- /dev/null
++++ b/temp/modemmanager/0004-bearer-qmi-multiplex-by-default-on-mhi_net-over-QRTR.patch
+@@ -0,0 +1,27 @@
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Subject: [PATCH] bearer-qmi: multiplex by default on mhi_net with QMI over QRTR
++
++The SDX55 on MHI has a single data channel (IP_HW0). Without multiplexing
++only one connection fits on it: once 81voltd had brought up the IMS
++connection for VoLTE, Start Network for the internet connection returned
++NoEffect and mobile data never came up. Request multiplexing by default
++for such a modem, so every bearer gets its own rmnet link (needs
++CONFIG_RMNET).
++
++Signed-off-by: Timo <1788603+darknagel@users.noreply.github.com>
++---
++--- a/src/mm-bearer-qmi.c
+++++ b/src/mm-bearer-qmi.c
++@@ -2449,6 +2449,12 @@
++             ctx->multiplex = MM_BEARER_MULTIPLEX_SUPPORT_REQUESTED;
++         else if (!g_strcmp0 (data_port_driver, "ipa"))
++             ctx->multiplex = MM_BEARER_MULTIPLEX_SUPPORT_REQUIRED;
+++        /* A modem on MHI with QMI over QRTR has a single data channel. The
+++         * IMS connection of 81voltd and the internet connection only fit on
+++         * it together when both are multiplexed. */
+++        else if (!g_strcmp0 (data_port_driver, "mhi_net") &&
+++                 mm_port_get_subsys (MM_PORT (ctx->qmi)) == MM_PORT_SUBSYS_QRTR)
+++            ctx->multiplex = MM_BEARER_MULTIPLEX_SUPPORT_REQUESTED;
++         else
++             ctx->multiplex = MM_BEARER_MULTIPLEX_SUPPORT_NONE;
++     }
+diff --git a/temp/modemmanager/APKBUILD b/temp/modemmanager/APKBUILD
+index 7c52c17517..079902d4f2 100644
+--- a/temp/modemmanager/APKBUILD
++++ b/temp/modemmanager/APKBUILD
+@@ -3,7 +3,7 @@
+ maintainer="Achill Gilgenast <achill@achill.org>"
+ pkgname=modemmanager
+ pkgver=1.25.95_git20261005
+-pkgrel=4
++pkgrel=5
+ _commit=7f0bf17ab518cd78925cf7e53cc0d5c42f88b41a
+ pkgdesc="ModemManager library"
+ url="https://www.freedesktop.org/wiki/Software/ModemManager"
+@@ -50,6 +50,7 @@ source="https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/archive/$
+ 	0001-intel-XMM7360-fix-big-endian-handling-of-ASN-integer.patch
+ 	0002-shared-qmi-do-not-abort-on-location-setup-after-unlock.patch
+ 	0003-qcom-soc-support-mhi_net-data-ports.patch
++	0004-bearer-qmi-multiplex-by-default-on-mhi_net-over-QRTR.patch
+ 	"
+ #builddir="$srcdir"/ModemManager-$pkgver
+ builddir="$srcdir"/ModemManager-$_commit
+@@ -108,4 +109,5 @@ e049eecc104c989f516402ca7c21e3374c152e3840cf05c34ac91bc8e3305c83b53693bc0964f657
+ f06e9b89acab5b61c5965658d62551b0f168066384674f7c4dd56feb6f811c82c640470e634e32d8c4ef62290588cf974aa5f213e5c67e797a06d33e61fa24ec  0001-intel-XMM7360-fix-big-endian-handling-of-ASN-integer.patch
+ 15e206739314e2d5730bda213f559cd171e99de25ae5c1f33334450772b261877e88f968715d5ca51d2609d31844ab04d6c7d7cbd9ed5bf990048bf7c7edeee3  0002-shared-qmi-do-not-abort-on-location-setup-after-unlock.patch
+ 4419ac70e81a0b1b12e6146ce06a4ad548b0cdd928fd52c64789d6676f9b6d8f47408ba571f5992c2bfc3bc7a280c91ae5485122e47182613c22d9759e8f9a2e  0003-qcom-soc-support-mhi_net-data-ports.patch
++d8e4cef78daaa2a6dbd3b13e66adc61674f3ec45f0c1a6145e789d953ab3ad21d51ea7566f637fc9565588b19c974b1114d905d7ea31ec8b4292e73e567dd6f4  0004-bearer-qmi-multiplex-by-default-on-mhi_net-over-QRTR.patch
+ "
+-- 
+2.43.0
+

@@ -85,8 +85,10 @@ by the modem. Tested on congstar (Telekom network).
 Build and install: `pmbootstrap build --arch aarch64 81voltd`, install `81voltd` and
 `81voltd-systemd` on the phone; the service is enabled on install.
 
-Known limit of 81voltd: if ModemManager fails to create the bearer, the modem is not told
-and does not ask again until 81voltd restarts (`systemctl restart 81voltd`).
+The modem asks for the IMS connection right after the SIM unlock, while ModemManager still
+initialises the modem; pmaports 0087 makes 81voltd try again for up to a minute. If it
+still fails, the modem does not ask again until 81voltd restarts
+(`systemctl restart 81voltd`).
 
 ## Facts
 
@@ -102,6 +104,10 @@ and does not ask again until 81voltd restarts (`systemctl restart 81voltd`).
   slots were tested for detection, network registration only in slot 1.
 - Data only runs on the `IP_HW0` channel (`mhi_hwip0`). `sdx55-sim` loads
   `mhi_net` and then starts ModemManager, about 30 s after the modem is up.
+- That one channel carries both the internet connection and the IMS connection for
+  VoLTE. ModemManager multiplexes it (QMAP): each connection gets its own `rmnet` link,
+  `qmapmux0.0`, `qmapmux0.1`, ... (pmaports 0085–0086). Without that, mobile data did not
+  come up while 81voltd was running.
 - Unmodified ModemManager needs pmaports patch 0019: it aborts after a SIM PIN
   unlock and cannot use `mhi_net` over QRTR. A later `apk upgrade` can replace
   the patched package.

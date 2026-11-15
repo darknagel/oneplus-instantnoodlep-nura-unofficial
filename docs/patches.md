@@ -30,6 +30,7 @@
 | SMS, send and receive (`mmcli`, Spacebar under Plasma Mobile) | works, see [`modem/`](../modem/) | – |
 | Voice calls: Q6Voice with a PCIe mailbox for the external modem, QRTR forwarding between modem and ADSP (flow control release to the right modem node), MHI satellite, vocproc without Tx topology, amplifier switch and gain for the earpiece | work, outgoing tested over VoLTE and 2G; patches still WIP, see [`modem/`](../modem/) | kernel 0117–0137, pmaports 0058 |
 | VoLTE: 81voltd (IMS Data service for the modem) accepts the SDX55 on QRTR node 3 (`qrtr3`) | works, tested on congstar | pmaports 0069 |
+| Mobile data together with VoLTE: the modem has one data channel, and with the IMS connection of 81voltd on it the internet connection never came up (Start Network: NoEffect). ModemManager now multiplexes that channel by default (QMAP, one `rmnet` link per connection, `CONFIG_RMNET`); 81voltd tries again when ModemManager is still initialising the modem after the SIM unlock, instead of leaving VoLTE off until a restart | works | pmaports 0085–0087 |
 | NFC (NXP chip, reading tags with `neard`; PCIe 1 is disabled because it took the enable pin) | works | kernel 0032, pmaports 0021 |
 | C-PHY on SM8250 CAMSS (posted series, see below) | works | kernel 0033–0041, pmaports 0022 |
 | Main camera Sony IMX689 (new driver, 3 C-PHY trios, 4000×3000 @ 30) | works | kernel 0042, 0045, pmaports 0022, libcamera 0006 |
@@ -77,7 +78,7 @@
 | White balance: the AWB uses the pixels that look nearly grey with the current gains, so large coloured areas no longer tint the picture; gains below 1.0 allowed (`minGain`), which removes the red cast of the colour filter camera; colour matrices of the stock tuning for the front camera, where the nearly grey pixels count only half (`greyWeight` 0.5): it mostly sees display light | works | libcamera 0011–0012, pmaports 0068 |
 | Phase detection autofocus on the main camera: in the 4000×3000 mode the IMX689 sends its phase detection pixels as a second CSI-2 stream (virtual channel 1, data type 0x30, 2000×1500); the CSID passes it to its second RDI (module parameters `rdi_vc` and `rdi_dt`), and stopping one RDI no longer resets the whole VFE. libcamera captures that stream, measures the shift between the left and right pixels of its even lines in the area of the sharpness measure and jumps the lens there, then fits the sharpness peak from two fine steps | works, time to focus 1.7 → 1.0 s; only in the 4000×3000 mode at 30 fps, the 60 fps preview mode has no phase data | kernel 0168, libcamera 0013–0015, pmaports 0081–0082, `system/qcom-camss-pdaf.conf` |
 | Main camera preview in the mode with phase detection: libcamera picks the 4000×3000 mode for processed streams of the main camera, so previews get the faster autofocus at 30 fps instead of 60; `LIBCAMERA_SIMPLE_PDAF=0` keeps the 2000×1500 mode. In the binned mode the sensor stops sending images when its phase detection output (register 0x3005) is on | works | libcamera 0016, pmaports 0084 |
-| All cameras missing now and then after boot: the first CCI transfer to the front camera timed out, its probe failed and CAMSS, which waits for all five sensors, registered none; the IMX471 driver now powers the sensor up again and retries | works | kernel 0169, pmaports 0083 |
+| All cameras missing now and then after boot: the first CCI transfer to a sensor timed out (seen with the front camera and with the ultrawide), its probe failed and CAMSS, which waits for all five sensors, registered none; the CCI driver now runs a transfer that timed out again, and the IMX471 driver powers the sensor up again and retries | works | kernel 0169–0170, pmaports 0083, 0085 |
 
 Kernel patch 0013 is a generic CAMSS fix, not specific to this phone: on SM8250 the
 `camnoc_axi_src` clock was never scaled, so full resolution RDI capture never completed a
@@ -124,7 +125,7 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
 
 ## Patch numbers in use
 
-The next free numbers are kernel 0170 and package 0085. Kernel 0164 is kept for the
+The next free numbers are kernel 0171 and package 0088. Kernel 0164 is kept for the
 DisplayPort DSC draft. Most package patches change the release and the checksums of the
 kernel package, so a new one has to be made on top of the last one; package numbers
 0070–0074 cannot be filled in later.
@@ -167,7 +168,9 @@ kernel package, so a new one has to be made on top of the last one; package numb
   0165–0167 (charging). From 0076 on the DisplayPort patches continue; see the table above.
   0081 adds kernel 0168 and 0082 libcamera 0013–0015 with the tuning (phase detection
   autofocus), 0083 adds kernel 0169 (front camera probe) and 0084 libcamera 0016 (preview
-  in the mode with phase detection).
+  in the mode with phase detection). 0085 adds kernel 0170 (CCI transfer retry) and
+  enables `CONFIG_RMNET`, 0086 and 0087 change ModemManager and 81voltd (mobile data
+  together with VoLTE).
   Package numbers 0050, 0051, 0053, 0062–0065 and 0070–0074 and kernel numbers 0105–0113,
   0151 and 0164 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.

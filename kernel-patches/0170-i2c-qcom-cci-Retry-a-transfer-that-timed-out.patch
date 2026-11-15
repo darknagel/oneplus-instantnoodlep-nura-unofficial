@@ -1,0 +1,75 @@
+From 5e3f229beecb716c614638d34b51d4997b0a6a0d Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 19:12:27 +0100
+Subject: [PATCH] i2c: qcom-cci: Retry a transfer that timed out
+
+Now and then a transfer times out although the device is there, seen on
+the OnePlus 8 Pro with the first transfer on a master at boot, to the
+IMX471 on one controller or the IMX586 on the other. The sensor's probe
+then fails, and CAMSS, which waits for all sensors, registers no camera.
+
+The timeout path already resets and reinitialises the controller. Run the
+whole transfer again, up to three times in total.
+---
+ drivers/i2c/busses/i2c-qcom-cci.c | 35 +++++++++++++++++++++----------
+ 1 file changed, 24 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/i2c/busses/i2c-qcom-cci.c b/drivers/i2c/busses/i2c-qcom-cci.c
+index bdeda3979..0cd311e5e 100644
+--- a/drivers/i2c/busses/i2c-qcom-cci.c
++++ b/drivers/i2c/busses/i2c-qcom-cci.c
+@@ -418,27 +418,40 @@ static int cci_i2c_write(struct cci *cci, u16 master,
+ 	return cci_run_queue(cci, master, queue);
+ }
+ 
++/* How often a transfer is run when it times out */
++#define CCI_XFER_TRIES	3
++
+ static int cci_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
+ {
+ 	struct cci_master *cci_master = i2c_get_adapdata(adap);
+ 	struct cci *cci = cci_master->cci;
+-	int i, ret;
++	int i, ret, try;
+ 
+ 	ret = pm_runtime_get_sync(cci->dev);
+ 	if (ret < 0)
+ 		goto err;
+ 
+-	for (i = 0; i < num; i++) {
+-		if (msgs[i].flags & I2C_M_RD)
+-			ret = cci_i2c_read(cci, cci_master->master,
+-					   msgs[i].addr, msgs[i].buf,
+-					   msgs[i].len);
+-		else
+-			ret = cci_i2c_write(cci, cci_master->master,
+-					    msgs[i].addr, msgs[i].buf,
+-					    msgs[i].len);
++	/*
++	 * Now and then a transfer times out although the device is there,
++	 * seen with the first transfer on a master at boot. A timeout resets
++	 * the controller, so run the whole transfer again a few times.
++	 */
++	for (try = 0; try < CCI_XFER_TRIES; try++) {
++		for (i = 0; i < num; i++) {
++			if (msgs[i].flags & I2C_M_RD)
++				ret = cci_i2c_read(cci, cci_master->master,
++						   msgs[i].addr, msgs[i].buf,
++						   msgs[i].len);
++			else
++				ret = cci_i2c_write(cci, cci_master->master,
++						    msgs[i].addr, msgs[i].buf,
++						    msgs[i].len);
++
++			if (ret < 0)
++				break;
++		}
+ 
+-		if (ret < 0)
++		if (ret != -ETIMEDOUT)
+ 			break;
+ 	}
+ 
+-- 
+2.43.0
+
