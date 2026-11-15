@@ -8,7 +8,7 @@
 | GPU (Adreno 650, Mesa freedreno), Phosh accelerated | works | kernel 0004, pmaports 0001 |
 | USB-C DisplayPort: video with USB2 alongside, VBUS supply and power-role swap, audio | works | kernel 0088–0103, pmaports 0045–0047, 0049; [notes](displayport.md) |
 | DisplayPort HBR3 and HDR signalling (`Colorspace`, `HDR_OUTPUT_METADATA`) | draft | kernel 0138–0143, pmaports 0059; [notes](displayport.md#hdr) |
-| DisplayPort over system sleep: the DP PHY loses its setup while the controller is suspended but was still taken as initialised, so the display was dropped after resume; a link that failed to train was pushed to idle without a link clock, which reset the phone | draft | kernel 0144–0145, pmaports 0060; [notes](displayport.md#system-sleep) |
+| DisplayPort over system sleep: the DP PHY loses its setup while the controller is suspended but was still taken as initialised, so the display was dropped after resume; a link that failed to train was pushed to idle without a link clock, which reset the phone; detect() and the HPD plug handler leaked runtime PM references when HPD comes from the USB-C connector | draft | kernel 0144–0145, 0157–0158, pmaports 0060, 0070; [notes](displayport.md#system-sleep) |
 | Switching between the phone panel and an external DisplayPort monitor | Tested at 2880×1800, 120 Hz on the GR14BU | kernel 0146–0147, pmaports 0061 |
 | DisplayPort audio with nothing plugged in: preparing the PCM started the DSP's DisplayPort port, and the DSP took q6afe's whole command timeout to answer; every probe at boot waited for it | draft; tested on the phone with PulseAudio | kernel 0148–0150, pmaports 0069; [notes](displayport.md#audio-with-no-display) |
 | Charger input limit from USB-C/PD or USB-A detection, 2 A battery current | works | kernel 0082–0087, pmaports 0044; [notes](charging.md) |
@@ -183,6 +183,17 @@ function to drm_connector_hdmi_audio_ops" by Jianfeng Liu, carried unchanged
 
 Kernel patch 0148 is not my work: it is upstream commit d858770e86e7 ("drm/msm/dp: return
 0 from audio_prepare when cable is disconnected") by Kumar Anurag.
+
+Kernel patch 0145 is not my work: it is "drm/msm/dp: skip PUSH_IDLE when the link was
+never enabled" by Jesse Casco, reviewed by Dmitry Baryshkov
+(https://lore.kernel.org/r/20260808171325.133041-1-jesse.casco@gmail.com), with a note
+on where its hunk lands in 7.2. Kernel patch 0157 is patch 6 of v8 of "drm: handle
+IRQ_HPD events correctly" by Dmitry Baryshkov
+(https://lore.kernel.org/r/20261024-hpd-irq-events-v8-6-6ee949e7a384@oss.qualcomm.com).
+Kernel patch 0158 is v3 of "drm/msm/dp: hold one runtime PM reference per plugged state"
+by Joonhoe Kim, also reviewed by Dmitry Baryshkov
+(https://lore.kernel.org/r/20261024051952.2006-1-26rote@gmail.com), which depends on 0157.
+The code of all three is unchanged.
 
 Kernel patch 0014 (LC898217XC driver) is not my work: it is v4 of the driver Vasiliy
 Doylov posted to the linux-media mailing list in March 2026
