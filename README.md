@@ -240,8 +240,8 @@ For the compass and sensor setup on old images see [`docs/sensors.md`](docs/sens
   automatic only (no colour temperature curve from the stock tuning yet). Main and
   ultrawide preview at 2000×1500 and 60 fps and take full pictures at 4000×3000 and 30 fps;
   autofocus is contrast only (no phase detection) and takes about 1 second.
-- Charging has no temperature steps yet: Android reduces the current above 45 °C and stops
-  at 50 °C.
+- The last ten percent of a charge take about 50 minutes, longer than on Android, and the
+  phone does not sleep while the battery is charging: see [`docs/charging.md`](docs/charging.md).
 - Under Plasma Mobile the keyboard did not always open in the SIM PIN popup. Enter the PIN in
   the settings or with `mmcli`.
 - Your phone's modem data (`/lib/firmware/postmarketos/qcom/sdx55m`, calibration and IDs)

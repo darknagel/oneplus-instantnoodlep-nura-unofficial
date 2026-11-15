@@ -1,0 +1,102 @@
+From 6a76f54284c90a14ce8a9e72d161a526b2867985 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 12:07:46 +0100
+Subject: [PATCH 165/167] power: supply: qcom_pm8150b: keep USB input while
+ VBUS is present
+
+When TCPM reports the source offline, or the input policy fails, the
+charger suspended USBIN and programmed a 0 mA input limit. If TCPM loses
+track of an attached charger, the phone then runs from the battery until
+it is empty although VBUS is still present: status reads "Not charging",
+input_current_limit stays 0 and writing it has no effect, because the
+user limit is only an upper bound.
+
+A sink may always draw pSnkStdby (2.5 W, 500 mA at 5 V). Keep at least
+500 mA while USBIN is plugged in and the Type-C block is not in source
+mode, both in the normal policy and in the error path. When the phone
+sources VBUS itself, or VBUS is gone, the input is still suspended.
+---
+ drivers/power/supply/qcom_pm8150b_charger.c | 45 +++++++++++++++++++--
+ 1 file changed, 42 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
+index 73c7abfcf..c12135c51 100644
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -186,6 +186,8 @@
+ #define DCIN_SUSPEND_BIT			BIT(0)
+ 
+ #define TYPE_C_SNK_STATUS			0x506
++#define TYPE_C_MISC_STATUS			0x50b
++#define TYPEC_SNK_SRC_MODE_BIT			BIT(6)
+ #define DETECTED_SRC_TYPE_MASK			GENMASK(6, 0)
+ #define SNK_RP_STD_DAM_BIT			BIT(6)
+ #define SNK_RP_1P5_DAM_BIT			BIT(5)
+@@ -351,6 +353,23 @@ static int smb5_get_prop_usb_online(struct smb5_chip *chip, int *val)
+ 	return 0;
+ }
+ 
++/*
++ * True when the charger sees VBUS that it did not source itself: USBIN is
++ * plugged in and the Type-C block is not in source mode.
++ */
++static bool smb5_sink_vbus_present(struct smb5_chip *chip)
++{
++	unsigned int misc;
++	int online = 0;
++
++	if (smb5_get_prop_usb_online(chip, &online) || !online)
++		return false;
++	if (regmap_read(chip->regmap, chip->base + TYPE_C_MISC_STATUS, &misc))
++		return false;
++
++	return !(misc & TYPEC_SNK_SRC_MODE_BIT);
++}
++
+ /*
+  * Qualcomm "automatic power source detection" aka APSD
+  * tells us what type of charger we're connected to.
+@@ -659,6 +678,18 @@ static void smb5_status_change_work(struct work_struct *work)
+ 	}
+ 
+ apply:
++	/*
++	 * A sink may always draw pSnkStdby (2.5 W, 500 mA at 5 V). Do not cut
++	 * the input completely while an external source still supplies VBUS:
++	 * if TCPM loses track of the partner, the phone would otherwise run
++	 * from the battery until it is empty, with the charger attached.
++	 */
++	if (current_ua < SDP_CURRENT_UA && smb5_sink_vbus_present(chip)) {
++		/* Routine during attach debounce, so not worth a warning. */
++		dev_dbg(chip->dev, "VBUS present without a source limit, using %u uA\n",
++			SDP_CURRENT_UA);
++		current_ua = SDP_CURRENT_UA;
++	}
+ 	chip->source_current_limit = clamp(current_ua, 0, CURRENT_MAX_UA);
+ 	ret = smb5_apply_input_limit(chip,
+ 		min(chip->source_current_limit, chip->user_current_limit), apsd);
+@@ -685,10 +716,18 @@ static void smb5_status_change_work(struct work_struct *work)
+ fail:
+ 	chip->apsd_started = false;
+ 	chip->apsd_retries = 0;
+-	chip->source_current_limit = 0;
+ 	chip->usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
+-	regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
+-			   USBIN_SUSPEND_BIT, USBIN_SUSPEND_BIT);
++	if (smb5_sink_vbus_present(chip)) {
++		/* Keep pSnkStdby so a flat battery is not left to carry the system. */
++		chip->source_current_limit = SDP_CURRENT_UA;
++		smb5_apply_input_limit(chip,
++			min(chip->source_current_limit, chip->user_current_limit),
++			false);
++	} else {
++		chip->source_current_limit = 0;
++		regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
++				   USBIN_SUSPEND_BIT, USBIN_SUSPEND_BIT);
++	}
+ 	dev_err_ratelimited(chip->dev, "Unable to apply input power limit: %d\n", ret);
+ 	mod_delayed_work(system_wq, &chip->status_change_work, HZ);
+ unlock:
+-- 
+2.43.0
+

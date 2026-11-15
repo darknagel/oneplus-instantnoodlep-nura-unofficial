@@ -51,6 +51,8 @@
 | Camera names (Main, Ultrawide, Telephoto, Colour Filter, Front) for PipeWire apps | works | `system/60-oneplus-instantnoodlep-cameras.conf` |
 | Proximity calibration from the Android `persist` partition, at first boot | works | `firmware/dsp-firmware.sh`, `sensors/setup-sensors.sh` |
 | Charging: the PM8150B float voltage register counts from 3.6 V in 10 mV steps, as in the vendor driver; the old encoding selected 4.76 V for the 4.35 V battery. Found by naorunaoru | works | kernel 0068, pmaports 0036 |
+| Charging: at least 500 mA of USB input while VBUS is present and the phone is not the source; before, the input was cut off when TCPM reported the source offline and the phone ran from the battery with the charger attached | works | kernel 0165, pmaports 0075 |
+| Charging: charge by the bq27411 fuel gauge with the temperature zones and limits of the stock firmware; the battery stopped at about 88 % because the PM8150B ends each charge cycle early without its own fuel gauge. See [charging.md](charging.md) | works | kernel 0166–0167, pmaports 0075 |
 | Haptics: AW8697 on I2C11 with the stock LRA0619 tuning (170 Hz, drive level 54) | works | kernel 0074, pmaports 0038 |
 | Flash LEDs: both PM8150L channels, first with conservative limits, raised to the stock ones by 0079 | works | kernel 0075, pmaports 0038 |
 | Wireless charge pump: the stock part is a BQ2597x, not a BQ25980; the node is corrected and stays disabled until wireless charging is integrated | disabled | kernel 0076, pmaports 0038 |
@@ -150,7 +152,9 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   0116 (bounds check in the sensor devinfo SAR parser). The DisplayPort stack
   follows these patches; see the table above. 0066 adds libcamera 0009–0010 (faster autofocus)
   and its tuning, 0067 adds kernel 0152–0156 (telephoto OIS, binned modes) and 0068
-  adds libcamera 0011–0012 (white balance) with the tuning. Package numbers 0062–0065
+  adds libcamera 0011–0012 (white balance) with the tuning. 0075 adds kernel
+  0165–0167 (charging). Package numbers 0070–0074 and kernel numbers 0157–0164 are left
+  for the open DisplayPort pull requests. Package numbers 0062–0065
   and kernel numbers 0148–0151 are left for the open DisplayPort pull requests. Package numbers 0050, 0051 and 0053
   and kernel numbers 0105–0113 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.

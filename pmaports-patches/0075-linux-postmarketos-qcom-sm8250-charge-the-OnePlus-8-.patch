@@ -1,0 +1,942 @@
+From 3b5709e56941c90cf580abbc415aaa2ba2881d00 Mon Sep 17 00:00:00 2001
+From: darknagel <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 15:13:23 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: charge the OnePlus 8 Pro
+ battery to full
+
+Add three patches for the PM8150B charger:
+
+- keep at least 500 mA of USB input while VBUS is present, so the phone
+  no longer runs from the battery with a charger attached when TCPM
+  reports the source offline
+- charge by the bq27411 fuel gauge with the limits of the stock
+  firmware; the battery stopped at about 88 % before
+- name the fuel gauge in the device tree
+---
+ ...m_pm8150b-keep-USB-input-while-VBUS-.patch | 102 +++
+ ...m_pm8150b-charge-by-the-fuel-gauge-l.patch | 736 ++++++++++++++++++
+ ...m8250-oneplus-instantnoodlep-Let-the.patch |  28 +
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |   8 +-
+ 4 files changed, 873 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0165-power-supply-qcom_pm8150b-keep-USB-input-while-VBUS-.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0166-power-supply-qcom_pm8150b-charge-by-the-fuel-gauge-l.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0167-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Let-the.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0165-power-supply-qcom_pm8150b-keep-USB-input-while-VBUS-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0165-power-supply-qcom_pm8150b-keep-USB-input-while-VBUS-.patch
+new file mode 100644
+index 0000000000..b363ebb554
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0165-power-supply-qcom_pm8150b-keep-USB-input-while-VBUS-.patch
+@@ -0,0 +1,102 @@
++From 6a76f54284c90a14ce8a9e72d161a526b2867985 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 15 Nov 2026 12:07:46 +0100
++Subject: [PATCH 165/167] power: supply: qcom_pm8150b: keep USB input while
++ VBUS is present
++
++When TCPM reports the source offline, or the input policy fails, the
++charger suspended USBIN and programmed a 0 mA input limit. If TCPM loses
++track of an attached charger, the phone then runs from the battery until
++it is empty although VBUS is still present: status reads "Not charging",
++input_current_limit stays 0 and writing it has no effect, because the
++user limit is only an upper bound.
++
++A sink may always draw pSnkStdby (2.5 W, 500 mA at 5 V). Keep at least
++500 mA while USBIN is plugged in and the Type-C block is not in source
++mode, both in the normal policy and in the error path. When the phone
++sources VBUS itself, or VBUS is gone, the input is still suspended.
++---
++ drivers/power/supply/qcom_pm8150b_charger.c | 45 +++++++++++++++++++--
++ 1 file changed, 42 insertions(+), 3 deletions(-)
++
++diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
++index 73c7abfcf..c12135c51 100644
++--- a/drivers/power/supply/qcom_pm8150b_charger.c
+++++ b/drivers/power/supply/qcom_pm8150b_charger.c
++@@ -186,6 +186,8 @@
++ #define DCIN_SUSPEND_BIT			BIT(0)
++ 
++ #define TYPE_C_SNK_STATUS			0x506
+++#define TYPE_C_MISC_STATUS			0x50b
+++#define TYPEC_SNK_SRC_MODE_BIT			BIT(6)
++ #define DETECTED_SRC_TYPE_MASK			GENMASK(6, 0)
++ #define SNK_RP_STD_DAM_BIT			BIT(6)
++ #define SNK_RP_1P5_DAM_BIT			BIT(5)
++@@ -351,6 +353,23 @@ static int smb5_get_prop_usb_online(struct smb5_chip *chip, int *val)
++ 	return 0;
++ }
++ 
+++/*
+++ * True when the charger sees VBUS that it did not source itself: USBIN is
+++ * plugged in and the Type-C block is not in source mode.
+++ */
+++static bool smb5_sink_vbus_present(struct smb5_chip *chip)
+++{
+++	unsigned int misc;
+++	int online = 0;
+++
+++	if (smb5_get_prop_usb_online(chip, &online) || !online)
+++		return false;
+++	if (regmap_read(chip->regmap, chip->base + TYPE_C_MISC_STATUS, &misc))
+++		return false;
+++
+++	return !(misc & TYPEC_SNK_SRC_MODE_BIT);
+++}
+++
++ /*
++  * Qualcomm "automatic power source detection" aka APSD
++  * tells us what type of charger we're connected to.
++@@ -659,6 +678,18 @@ static void smb5_status_change_work(struct work_struct *work)
++ 	}
++ 
++ apply:
+++	/*
+++	 * A sink may always draw pSnkStdby (2.5 W, 500 mA at 5 V). Do not cut
+++	 * the input completely while an external source still supplies VBUS:
+++	 * if TCPM loses track of the partner, the phone would otherwise run
+++	 * from the battery until it is empty, with the charger attached.
+++	 */
+++	if (current_ua < SDP_CURRENT_UA && smb5_sink_vbus_present(chip)) {
+++		/* Routine during attach debounce, so not worth a warning. */
+++		dev_dbg(chip->dev, "VBUS present without a source limit, using %u uA\n",
+++			SDP_CURRENT_UA);
+++		current_ua = SDP_CURRENT_UA;
+++	}
++ 	chip->source_current_limit = clamp(current_ua, 0, CURRENT_MAX_UA);
++ 	ret = smb5_apply_input_limit(chip,
++ 		min(chip->source_current_limit, chip->user_current_limit), apsd);
++@@ -685,10 +716,18 @@ static void smb5_status_change_work(struct work_struct *work)
++ fail:
++ 	chip->apsd_started = false;
++ 	chip->apsd_retries = 0;
++-	chip->source_current_limit = 0;
++ 	chip->usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
++-	regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
++-			   USBIN_SUSPEND_BIT, USBIN_SUSPEND_BIT);
+++	if (smb5_sink_vbus_present(chip)) {
+++		/* Keep pSnkStdby so a flat battery is not left to carry the system. */
+++		chip->source_current_limit = SDP_CURRENT_UA;
+++		smb5_apply_input_limit(chip,
+++			min(chip->source_current_limit, chip->user_current_limit),
+++			false);
+++	} else {
+++		chip->source_current_limit = 0;
+++		regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
+++				   USBIN_SUSPEND_BIT, USBIN_SUSPEND_BIT);
+++	}
++ 	dev_err_ratelimited(chip->dev, "Unable to apply input power limit: %d\n", ret);
++ 	mod_delayed_work(system_wq, &chip->status_change_work, HZ);
++ unlock:
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0166-power-supply-qcom_pm8150b-charge-by-the-fuel-gauge-l.patch b/device/testing/linux-postmarketos-qcom-sm8250/0166-power-supply-qcom_pm8150b-charge-by-the-fuel-gauge-l.patch
+new file mode 100644
+index 0000000000..2a4aa33fd6
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0166-power-supply-qcom_pm8150b-charge-by-the-fuel-gauge-l.patch
+@@ -0,0 +1,736 @@
++From 723a145cc9060a1c379667a03f341e0f7622987c Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 15 Nov 2026 13:47:23 +0100
++Subject: [PATCH 166/167] power: supply: qcom_pm8150b: charge by the fuel gauge
++ like the stock firmware
++
++On the OnePlus 8 Pro the battery stops charging at about 88 %. The stock
++firmware runs the PM8150B fuel gauge (FG Gen4), which gives the charger
++the battery current for its termination check. Mainline has no driver
++for it, so the charger ends each charge cycle a few seconds after it
++enters constant voltage, with more than 1 A still flowing.
++
++The stock firmware (oplus_chg with an external gauge) does not rely on
++that check either: it programs a float voltage of 4.435 V, lets the
++bq27411 at the cell decide when the battery is full, and restarts a
++cycle that ended early. Do the same when the device tree names a fuel
++gauge with "qcom,fuel-gauge", with the limits of the stock device tree:
++
++- float voltage and charge current by battery temperature zone, no
++  charging below -2 degC or above 50 degC
++- full when the cell is above 4.385 V with less than 230 mA flowing, or
++  when it reaches the float voltage; recharge 200 mV below it
++- the float voltage is lowered in 8 mV steps if the cell passes 4.445 V
++- a cycle that ended early is restarted while the cell is below the
++  full level
++
++Where this differs from stock it is stricter:
++
++- the cell also counts as full when the gauge reports it full, or when
++  it rests within 35 mV of the stock full level with no current
++- without valid gauge data the limits for an unknown battery apply
++  (3.98 V, 500 mA), also from probe until the first gauge reading
++- charging stops at once 15 mV above the over-voltage limit
++- tighter temperature limits apply without hysteresis
++- the charger watchdog is enabled as in stock (bite stops charging) and
++  only the policy work pets it
++- the system refuses to suspend while the battery is being charged,
++  like the stock wakelock; if it suspends anyway, charging is off until
++  it resumes
++
++Report the charging status from the policy, since the charger state
++flips with every restarted cycle. Also use the charger status values of
++the vendor smb5 headers.
++
++Tested on a OnePlus 8 Pro with an aged battery: charges from 88 % to
++100 % in about 50 minutes, highest cell voltage 4.408 V while charging,
++4.34 V at rest when full.
++---
++ drivers/power/supply/qcom_pm8150b_charger.c | 533 +++++++++++++++++++-
++ 1 file changed, 519 insertions(+), 14 deletions(-)
++
++diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
++index c12135c51..904f9db2d 100644
++--- a/drivers/power/supply/qcom_pm8150b_charger.c
+++++ b/drivers/power/supply/qcom_pm8150b_charger.c
++@@ -10,6 +10,7 @@
++  */
++ 
++ #include <linux/bits.h>
+++#include <linux/delay.h>
++ #include <linux/devm-helpers.h>
++ #include <linux/iio/consumer.h>
++ #include <linux/interrupt.h>
++@@ -19,6 +20,8 @@
++ #include <linux/mutex.h>
++ #include <linux/platform_device.h>
++ #include <linux/pm_wakeirq.h>
+++#include <linux/suspend.h>
+++#include <linux/property.h>
++ #include <linux/of.h>
++ #include <linux/power_supply.h>
++ #include <linux/regmap.h>
++@@ -74,6 +77,12 @@
++ #define FAST_CHARGE_CURRENT_CFG			0x61
++ #define FAST_CHARGE_CURRENT_SETTING_MASK	GENMASK(7, 0)
++ 
+++#define BATTERY_CHARGER_STATUS_8			0x0e
+++#define PRE_TERM_BIT				BIT(2)
+++
+++#define TCCC_CHARGE_CURRENT_TERMINATION_CFG	0x63
+++#define TCCC_CHARGE_CURRENT_TERMINATION_MASK	GENMASK(3, 0)
+++
++ #define FLOAT_VOLTAGE_CFG			0x70
++ #define FLOAT_VOLTAGE_SETTING_MASK		GENMASK(7, 0)
++ #define FLOAT_VOLTAGE_MIN_UV			3600000
++@@ -253,6 +262,9 @@
++ #define SNARL_WDOG_TIMEOUT_MASK			GENMASK(6, 4)
++ #define BARK_WDOG_TIMEOUT_MASK			GENMASK(3, 2)
++ #define BITE_WDOG_TIMEOUT_MASK			GENMASK(1, 0)
+++/* Vendor setting: snarl 8 s, bark 64 s, bite 8 s later, bite stops charging */
+++#define WDOG_POLICY_CFG				(BITE_WDOG_DISABLE_CHARGING_CFG_BIT | \
+++						 0x70 | (2 << 2) | 0x3)
++ 
++ #define AICL_RERUN_TIME_CFG			0x661
++ #define AICL_RERUN_TIME_MASK			GENMASK(1, 0)
++@@ -268,17 +280,79 @@
++ #define CURRENT_SCALE_FACTOR		50000
++ /* clang-format on */
++ 
+++/* BATTERY_CHARGER_STATUS_1 charger states, as in the vendor smb5 headers. */
++ enum charger_status {
++-	TRICKLE_CHARGE = 0,
+++	INHIBIT_CHARGE = 0,
+++	TRICKLE_CHARGE,
++ 	PRE_CHARGE,
++-	FAST_CHARGE,
++ 	FULLON_CHARGE,
++ 	TAPER_CHARGE,
++ 	TERMINATE_CHARGE,
++-	INHIBIT_CHARGE,
+++	PAUSE_CHARGE,
++ 	DISABLE_CHARGE,
++ };
++ 
+++/*
+++ * Charging policy of the stock OnePlus 8 Pro firmware (oplus_chg with an
+++ * external fuel gauge), used when the device tree names a fuel gauge.
+++ *
+++ * The PM8150B float voltage is set above the level at which the cell is
+++ * full, because the charger senses the battery behind the charge path. The
+++ * fuel gauge at the cell decides when the battery is full and stops the
+++ * charger. Limits depend on the battery temperature. All values are those
+++ * of the stock device tree (kona-mtp.dtsi of instantnoodlep); temperatures
+++ * are in 0.1 degC. Where this differs from stock it is stricter.
+++ */
+++struct smb5_temp_zone {
+++	int min_dc;		/* lower bound of the zone */
+++	int fv_uv;		/* PM8150B float voltage */
+++	int fcc_ua;		/* fast charge current */
+++	int full_uv;		/* cell voltage for "full" at low current */
+++	int over_uv;		/* cell voltage that lowers the float voltage */
+++	int recharge_uv;	/* recharge this far below the float voltage */
+++};
+++
+++static const struct smb5_temp_zone smb5_zones[] = {
+++	{ -20, 3980000,  300000, 3980000, 3990000, 400000 },	/* cold */
+++	{   0, 4435000, 1200000, 4385000, 4445000, 300000 },	/* little cold */
+++	{  50, 4435000, 2000000, 4385000, 4445000, 200000 },	/* cool */
+++	{ 120, 4435000, 2000000, 4385000, 4445000, 200000 },	/* little cool */
+++	{ 160, 4435000, 2000000, 4385000, 4445000, 200000 },	/* normal */
+++	{ 450, 4130000, 1100000, 4080000, 4140000, 200000 },	/* warm */
+++};
+++
+++#define ZONE_NONE			-2
+++#define ZONE_TOO_COLD			-1
+++#define ZONE_COLD			0
+++#define ZONE_NORMAL			4
+++#define ZONE_WARM			5
+++#define ZONE_TOO_HOT			6
+++#define POLICY_HOT_DC			500	/* no charging above 50 degC */
+++#define POLICY_HYST_DC			20
+++#define POLICY_INTERVAL			(5 * HZ)
+++/* Stock limits for a battery the gauge cannot vouch for */
+++#define POLICY_FALLBACK_FV_UV		3980000
+++#define POLICY_FALLBACK_FCC_UA		500000
+++#define POLICY_ITERM_UA			230000
+++#define POLICY_SW_FULL_COUNT		5
+++#define POLICY_HW_FULL_COUNT		4
+++#define POLICY_HW_FULL_INC_UV		18000
+++#define POLICY_RECHARGE_COUNT		4
+++#define POLICY_OVER_COUNT		2
+++#define POLICY_FV_STEP_UV		8000
+++#define POLICY_OVP_MARGIN_UV		10000
+++/*
+++ * Without the PMIC fuel gauge the PM8150B has no battery current for its
+++ * termination check and ends each charge cycle after a few seconds in
+++ * constant voltage. The cycle is restarted while the cell, measured by the
+++ * gauge with no current flowing, is this far below the stock full level.
+++ * Stock ends at that level with 230 mA still flowing, so its resting
+++ * voltage is lower than the level itself.
+++ */
+++#define POLICY_REST_MARGIN_UV		35000
+++/* Not in stock: stop at once this far above the over-voltage limit */
+++#define POLICY_HARD_STOP_UV		15000
+++
++ struct smb5_register {
++ 	u16 addr;
++ 	u8 mask;
++@@ -322,6 +396,25 @@ struct smb5_chip {
++ 	unsigned int user_current_limit;
++ 	unsigned int source_current_limit;
++ 	enum power_supply_usb_type usb_type;
+++
+++	/* Charging policy driven by the external fuel gauge */
+++	bool policy;
+++	struct delayed_work policy_work;
+++	struct power_supply *gauge;
+++	struct notifier_block pm_nb;
+++	bool gauge_ok;
+++	bool suspended;
+++	bool charging;
+++	bool user_charge_enable;
+++	bool policy_charge_enable;
+++	bool batt_full;
+++	int zone;
+++	int fv_set_uv;
+++	int sw_full_count;
+++	int hw_full_count;
+++	int recharge_count;
+++	int over_count;
+++	int rest_count;
++ };
++ 
++ static enum power_supply_property smb5_properties[] = {
++@@ -451,6 +544,17 @@ static int smb5_get_prop_status(struct smb5_chip *chip, int *val)
++ 		return rc;
++ 	}
++ 
+++	if (chip->policy) {
+++		/* The charger state flips with every restarted cycle. */
+++		if (READ_ONCE(chip->batt_full))
+++			*val = POWER_SUPPLY_STATUS_FULL;
+++		else if (READ_ONCE(chip->charging))
+++			*val = POWER_SUPPLY_STATUS_CHARGING;
+++		else
+++			*val = POWER_SUPPLY_STATUS_NOT_CHARGING;
+++		return 0;
+++	}
+++
++ 	rc = regmap_bulk_read(chip->regmap,
++ 			      chip->base + BATTERY_CHARGER_STATUS_1, &stat, 2);
++ 	if (rc < 0) {
++@@ -469,11 +573,11 @@ static int smb5_get_prop_status(struct smb5_chip *chip, int *val)
++ 	switch (stat[0]) {
++ 	case TRICKLE_CHARGE:
++ 	case PRE_CHARGE:
++-	case FAST_CHARGE:
++ 	case FULLON_CHARGE:
++ 	case TAPER_CHARGE:
++ 		*val = POWER_SUPPLY_STATUS_CHARGING;
++ 		return rc;
+++	case PAUSE_CHARGE:
++ 	case DISABLE_CHARGE:
++ 		*val = POWER_SUPPLY_STATUS_NOT_CHARGING;
++ 		return rc;
++@@ -734,6 +838,303 @@ static void smb5_status_change_work(struct work_struct *work)
++ 	mutex_unlock(&chip->lock);
++ }
++ 
+++static int smb5_set_float_voltage(struct smb5_chip *chip, int fv_uv)
+++{
+++	/* 3.6 V plus 10 mV per step, as in the vendor smb5 driver */
+++	if (fv_uv < FLOAT_VOLTAGE_MIN_UV || fv_uv > FLOAT_VOLTAGE_MAX_UV)
+++		return -EINVAL;
+++
+++	return regmap_update_bits(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG,
+++				  FLOAT_VOLTAGE_SETTING_MASK,
+++				  (fv_uv - FLOAT_VOLTAGE_MIN_UV) / FLOAT_VOLTAGE_STEP_UV);
+++}
+++
+++static void smb5_apply_charge_enable(struct smb5_chip *chip)
+++{
+++	smb5_set_prop_charging_enabled(chip, chip->user_charge_enable &&
+++					     chip->policy_charge_enable &&
+++					     !chip->suspended);
+++}
+++
+++static int smb5_gauge_read(struct smb5_chip *chip, enum power_supply_property psp,
+++			   int *val)
+++{
+++	union power_supply_propval pval;
+++	int ret;
+++
+++	ret = power_supply_get_property(chip->gauge, psp, &pval);
+++	if (!ret)
+++		*val = pval.intval;
+++	return ret;
+++}
+++
+++static int smb5_zone_for_temp(int temp)
+++{
+++	int i;
+++
+++	if (temp > POLICY_HOT_DC)
+++		return ZONE_TOO_HOT;
+++	if (temp < smb5_zones[ZONE_COLD].min_dc)
+++		return ZONE_TOO_COLD;
+++	for (i = ARRAY_SIZE(smb5_zones) - 1; i > 0; i--)
+++		if (temp >= smb5_zones[i].min_dc)
+++			break;
+++	return i;
+++}
+++
+++/*
+++ * A zone with tighter limits applies at once. Moving back towards the
+++ * normal zone needs the temperature to be 2 degC inside the new zone.
+++ */
+++static int smb5_next_zone(struct smb5_chip *chip, int temp)
+++{
+++	int zone = smb5_zone_for_temp(temp);
+++
+++	if (chip->zone == ZONE_NONE || zone == chip->zone)
+++		return zone;
+++
+++	if (zone > chip->zone && zone <= ZONE_NORMAL) {
+++		zone = smb5_zone_for_temp(temp - POLICY_HYST_DC);
+++		if (zone < chip->zone)
+++			zone = chip->zone;
+++	} else if (zone < chip->zone && zone >= ZONE_NORMAL) {
+++		zone = smb5_zone_for_temp(temp + POLICY_HYST_DC);
+++		if (zone > chip->zone)
+++			zone = chip->zone;
+++	}
+++
+++	return zone;
+++}
+++
+++static void smb5_policy_reset(struct smb5_chip *chip)
+++{
+++	chip->batt_full = false;
+++	chip->sw_full_count = 0;
+++	chip->hw_full_count = 0;
+++	chip->recharge_count = 0;
+++	chip->over_count = 0;
+++	chip->rest_count = 0;
+++}
+++
+++/* Limits for a battery the fuel gauge cannot vouch for, as in stock. */
+++static void smb5_policy_fallback(struct smb5_chip *chip)
+++{
+++	if (chip->gauge_ok || chip->zone != ZONE_NONE)
+++		dev_warn(chip->dev, "no fuel gauge data, charging limited to %d uV\n",
+++			 POLICY_FALLBACK_FV_UV);
+++	chip->gauge_ok = false;
+++	chip->zone = ZONE_NONE;
+++	chip->fv_set_uv = POLICY_FALLBACK_FV_UV;
+++	smb5_set_float_voltage(chip, chip->fv_set_uv);
+++	smb5_set_charge_current(chip, POLICY_FALLBACK_FCC_UA);
+++	smb5_policy_reset(chip);
+++	chip->policy_charge_enable = true;
+++}
+++
+++static void smb5_policy_set_zone(struct smb5_chip *chip, int zone, int vbat)
+++{
+++	const struct smb5_temp_zone *z;
+++	int fcc, old_full_uv = INT_MAX;
+++
+++	dev_info(chip->dev, "battery temperature zone %d -> %d\n", chip->zone, zone);
+++	if (chip->zone >= ZONE_COLD && chip->zone <= ZONE_WARM)
+++		old_full_uv = smb5_zones[chip->zone].full_uv;
+++	chip->zone = zone;
+++	chip->over_count = 0;
+++	if (zone == ZONE_TOO_HOT || zone == ZONE_TOO_COLD)
+++		return;
+++
+++	z = &smb5_zones[zone];
+++	fcc = z->fcc_ua;
+++	if (chip->batt_info->constant_charge_current_max_ua > 0)
+++		fcc = min(fcc, chip->batt_info->constant_charge_current_max_ua);
+++	chip->fv_set_uv = z->fv_uv;
+++	smb5_set_float_voltage(chip, chip->fv_set_uv);
+++	smb5_set_charge_current(chip, fcc);
+++
+++	/* A full state reached under a lower limit does not hold here. */
+++	if (chip->batt_full && old_full_uv < z->full_uv &&
+++	    vbat < z->fv_uv - z->recharge_uv)
+++		smb5_policy_reset(chip);
+++}
+++
+++static void smb5_policy_work(struct work_struct *work)
+++{
+++	struct smb5_chip *chip = container_of(work, struct smb5_chip,
+++					     policy_work.work);
+++	const struct smb5_temp_zone *z;
+++	int temp, vbat, ibat, online = 0, zone, gauge_status;
+++	unsigned int stat;
+++	bool was_full, ovp = false;
+++
+++	mutex_lock(&chip->lock);
+++	if (!chip->ready || chip->suspended)
+++		goto unlock;
+++
+++	if (!chip->gauge) {
+++		chip->gauge = power_supply_get_by_reference(dev_fwnode(chip->dev),
+++							    "qcom,fuel-gauge");
+++		if (IS_ERR_OR_NULL(chip->gauge))
+++			chip->gauge = NULL;
+++		else
+++			dev_info(chip->dev, "charging policy uses %s\n",
+++				 chip->gauge->desc->name);
+++	}
+++
+++	if (!chip->gauge ||
+++	    smb5_gauge_read(chip, POWER_SUPPLY_PROP_TEMP, &temp) ||
+++	    smb5_gauge_read(chip, POWER_SUPPLY_PROP_VOLTAGE_NOW, &vbat) ||
+++	    smb5_gauge_read(chip, POWER_SUPPLY_PROP_CURRENT_NOW, &ibat) ||
+++	    temp < -400 || temp > 1000 || vbat < 2000000 || vbat > 5000000) {
+++		smb5_policy_fallback(chip);
+++		goto apply;
+++	}
+++	chip->gauge_ok = true;
+++
+++	zone = smb5_next_zone(chip, temp);
+++	if (zone != chip->zone)
+++		smb5_policy_set_zone(chip, zone, vbat);
+++
+++	if (zone == ZONE_TOO_HOT || zone == ZONE_TOO_COLD) {
+++		chip->policy_charge_enable = false;
+++		goto apply;
+++	}
+++
+++	smb5_get_prop_usb_online(chip, &online);
+++	if (!online) {
+++		smb5_policy_reset(chip);
+++		chip->policy_charge_enable = true;
+++		goto apply;
+++	}
+++
+++	z = &smb5_zones[zone];
+++	was_full = chip->batt_full;
+++
+++	/* Near the reduced float voltage of the cold and warm zones: pause. */
+++	if ((zone == ZONE_COLD || zone == ZONE_WARM) &&
+++	    vbat >= chip->fv_set_uv - POLICY_OVP_MARGIN_UV)
+++		ovp = true;
+++
+++	if (vbat >= z->over_uv + POLICY_HARD_STOP_UV) {
+++		/* Never charge a cell that is this high, whatever the current. */
+++		if (!chip->batt_full)
+++			dev_warn(chip->dev, "battery at %d uV, charging stopped\n", vbat);
+++		chip->batt_full = true;
+++		chip->recharge_count = 0;
+++	} else if (!chip->batt_full) {
+++		/* Full by gauge: above the limit with only a small current left. */
+++		if (vbat > z->full_uv && ibat <= POLICY_ITERM_UA) {
+++			if (++chip->sw_full_count >
+++			    (ibat > 0 ? POLICY_SW_FULL_COUNT : 2 * POLICY_SW_FULL_COUNT))
+++				chip->batt_full = true;
+++		} else {
+++			chip->sw_full_count = 0;
+++		}
+++
+++		/* Full by the gauge's own judgement, not part of stock. */
+++		if (!smb5_gauge_read(chip, POWER_SUPPLY_PROP_STATUS, &gauge_status) &&
+++		    gauge_status == POWER_SUPPLY_STATUS_FULL)
+++			chip->batt_full = true;
+++
+++		/* Full by voltage: the cell reached the float voltage. */
+++		if (vbat >= z->fv_uv + POLICY_HW_FULL_INC_UV) {
+++			if (++chip->hw_full_count >= POLICY_HW_FULL_COUNT)
+++				chip->batt_full = true;
+++		} else {
+++			chip->hw_full_count = 0;
+++		}
+++
+++		/* Over the cell limit while charging: lower the float voltage. */
+++		if (!chip->batt_full && vbat >= z->over_uv) {
+++			if (++chip->over_count > POLICY_OVER_COUNT &&
+++			    chip->fv_set_uv - POLICY_FV_STEP_UV >= FLOAT_VOLTAGE_MIN_UV) {
+++				chip->over_count = 0;
+++				chip->fv_set_uv -= POLICY_FV_STEP_UV;
+++				smb5_set_float_voltage(chip, chip->fv_set_uv);
+++				dev_info(chip->dev, "battery at %d uV, float voltage now %d uV\n",
+++					 vbat, chip->fv_set_uv);
+++			}
+++		} else {
+++			chip->over_count = 0;
+++		}
+++	} else if (vbat < z->fv_uv - z->recharge_uv) {
+++		if (++chip->recharge_count > POLICY_RECHARGE_COUNT)
+++			smb5_policy_reset(chip);
+++	} else {
+++		chip->recharge_count = 0;
+++	}
+++
+++	if (chip->batt_full != was_full)
+++		dev_info(chip->dev, "battery %s at %d uV, %d uA, %d.%d degC\n",
+++			 chip->batt_full ? "full" : "recharging", vbat, ibat,
+++			 temp / 10, abs(temp % 10));
+++
+++	chip->policy_charge_enable = !chip->batt_full && !ovp;
+++
+++	/*
+++	 * No current to speak of: either the charger ended the cycle early
+++	 * and is restarted, as stock does, or the cell has reached the level
+++	 * at which nothing more is charged and counts as full.
+++	 */
+++	if (chip->policy_charge_enable && chip->user_charge_enable &&
+++	    ibat <= POLICY_ITERM_UA / 2) {
+++		if (vbat > z->full_uv - POLICY_REST_MARGIN_UV) {
+++			if (++chip->rest_count > 2 * POLICY_SW_FULL_COUNT) {
+++				chip->batt_full = true;
+++				chip->policy_charge_enable = false;
+++				dev_info(chip->dev, "battery full at rest, %d uV\n", vbat);
+++			}
+++		} else {
+++			chip->rest_count = 0;
+++			if (!regmap_read(chip->regmap,
+++					 chip->base + BATTERY_CHARGER_STATUS_8, &stat) &&
+++			    (stat & PRE_TERM_BIT)) {
+++				dev_dbg(chip->dev, "charge ended early at %d uV, restarting\n",
+++					vbat);
+++				smb5_set_prop_charging_enabled(chip, 0);
+++				msleep(100);
+++			}
+++		}
+++	} else {
+++		chip->rest_count = 0;
+++	}
+++
+++apply:
+++	smb5_apply_charge_enable(chip);
+++	smb5_get_prop_usb_online(chip, &online);
+++	WRITE_ONCE(chip->charging, online && chip->policy_charge_enable &&
+++				   chip->user_charge_enable);
+++
+++	/*
+++	 * Only this work pets the charger watchdog. If it stops running, the
+++	 * watchdog bites and the PM8150B stops charging by itself.
+++	 */
+++	regmap_write(chip->regmap, chip->base + BARK_BITE_WDOG_PET,
+++		     BARK_BITE_WDOG_PET_BIT);
+++	mod_delayed_work(system_wq, &chip->policy_work, POLICY_INTERVAL);
+++unlock:
+++	mutex_unlock(&chip->lock);
+++}
+++
+++/*
+++ * The battery is only charged under supervision. Like the wakelock of the
+++ * stock firmware, refuse to sleep while it is being charged; once it is
+++ * full the system may sleep.
+++ */
+++static int smb5_pm_notify(struct notifier_block *nb, unsigned long action,
+++			  void *data)
+++{
+++	struct smb5_chip *chip = container_of(nb, struct smb5_chip, pm_nb);
+++
+++	if ((action == PM_SUSPEND_PREPARE || action == PM_HIBERNATION_PREPARE) &&
+++	    READ_ONCE(chip->charging)) {
+++		dev_info_ratelimited(chip->dev, "battery is charging, not suspending\n");
+++		return notifier_from_errno(-EBUSY);
+++	}
+++
+++	return NOTIFY_DONE;
+++}
+++
++ static void smb5_stop(void *data)
++ {
++ 	struct smb5_chip *chip = data;
++@@ -742,6 +1143,13 @@ static void smb5_stop(void *data)
++ 	chip->ready = false;
++ 	mutex_unlock(&chip->lock);
++ 	cancel_delayed_work_sync(&chip->status_change_work);
+++	if (chip->policy) {
+++		cancel_delayed_work_sync(&chip->policy_work);
+++		smb5_set_float_voltage(chip, POLICY_FALLBACK_FV_UV);
+++		if (chip->gauge)
+++			power_supply_put(chip->gauge);
+++		unregister_pm_notifier(&chip->pm_nb);
+++	}
++ 	smb5_set_prop_charging_enabled(chip, 0);
++ 	regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
++ 			   USBIN_SUSPEND_BIT, USBIN_SUSPEND_BIT);
++@@ -874,7 +1282,9 @@ static int smb5_set_property(struct power_supply *psy,
++ 		mod_delayed_work(system_wq, &chip->status_change_work, 0);
++ 		return 0;
++ 	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
++-		return smb5_set_prop_charging_enabled(chip, val->intval);
+++		chip->user_charge_enable = !!val->intval;
+++		smb5_apply_charge_enable(chip);
+++		return 0;
++ 	default:
++ 		dev_err(chip->dev, "No setter for property: %d\n", psp);
++ 		return -EINVAL;
++@@ -921,6 +1331,8 @@ static irqreturn_t smb5_handle_usb_plugin(int irq, void *data)
++ 	chip->apsd_retries = 0;
++ 	if (chip->ready)
++ 		mod_delayed_work(system_wq, &chip->status_change_work, 0);
+++	if (chip->ready && chip->policy)
+++		mod_delayed_work(system_wq, &chip->policy_work, 0);
++ 	mutex_unlock(&chip->lock);
++ 	power_supply_changed(chip->chg_psy);
++ 
++@@ -953,6 +1365,12 @@ static irqreturn_t smb5_handle_wdog_bark(int irq, void *data)
++ 
++ 	power_supply_changed(chip->chg_psy);
++ 
+++	/* With the charging policy, only its work may pet the watchdog. */
+++	if (chip->policy) {
+++		dev_warn(chip->dev, "charger watchdog bark\n");
+++		return IRQ_HANDLED;
+++	}
+++
++ 	rc = regmap_write(chip->regmap, BARK_BITE_WDOG_PET,
++ 			  BARK_BITE_WDOG_PET_BIT);
++ 	if (rc < 0)
++@@ -1144,27 +1562,66 @@ static int smb5_probe(struct platform_device *pdev)
++ 				     "Failed to get battery info\n");
++ 
++ 	INIT_DELAYED_WORK(&chip->status_change_work, smb5_status_change_work);
+++	INIT_DELAYED_WORK(&chip->policy_work, smb5_policy_work);
+++	chip->policy = device_property_present(chip->dev, "qcom,fuel-gauge");
+++	chip->user_charge_enable = true;
+++	chip->policy_charge_enable = true;
+++	chip->zone = ZONE_NONE;
+++	if (chip->policy) {
+++		chip->pm_nb.notifier_call = smb5_pm_notify;
+++		rc = register_pm_notifier(&chip->pm_nb);
+++		if (rc)
+++			return rc;
+++	}
++ 	rc = devm_add_action_or_reset(chip->dev, smb5_stop, chip);
++ 	if (rc)
++ 		return rc;
++ 
++-	/* 3.6 V plus 10 mV per step, as in the vendor smb5 driver */
++-	fv_uv = chip->batt_info->voltage_max_design_uv;
++-	if (fv_uv < FLOAT_VOLTAGE_MIN_UV || fv_uv > FLOAT_VOLTAGE_MAX_UV)
++-		return dev_err_probe(chip->dev, -EINVAL,
++-				     "Invalid battery voltage %d uV\n", fv_uv);
++-	rc = regmap_update_bits(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG,
++-				FLOAT_VOLTAGE_SETTING_MASK,
++-				(fv_uv - FLOAT_VOLTAGE_MIN_UV) / FLOAT_VOLTAGE_STEP_UV);
+++	/*
+++	 * With the charging policy, start from the limits for an unknown
+++	 * battery; the policy raises them once the fuel gauge has been read.
+++	 */
+++	fv_uv = chip->policy ? POLICY_FALLBACK_FV_UV :
+++			       chip->batt_info->voltage_max_design_uv;
+++	rc = smb5_set_float_voltage(chip, fv_uv);
+++	if (rc == -EINVAL)
+++		return dev_err_probe(chip->dev, rc, "Invalid battery voltage %d uV\n",
+++				     fv_uv);
++ 	if (rc < 0)
++ 		return dev_err_probe(chip->dev, rc, "Couldn't set vbat max\n");
+++	chip->fv_set_uv = fv_uv;
++ 	dev_info(chip->dev, "float voltage %d uV\n", fv_uv);
++ 
++-	rc = smb5_set_charge_current(chip,
+++	rc = smb5_set_charge_current(chip, chip->policy ? POLICY_FALLBACK_FCC_UA :
++ 		chip->batt_info->constant_charge_current_max_ua);
++ 	if (rc)
++ 		return dev_err_probe(chip->dev, rc, "Couldn't set battery current limit\n");
++ 
+++	if (chip->policy) {
+++		/* Termination current and charger watchdog as in stock. */
+++		rc = regmap_update_bits(chip->regmap,
+++					chip->base + TCCC_CHARGE_CURRENT_TERMINATION_CFG,
+++					TCCC_CHARGE_CURRENT_TERMINATION_MASK,
+++					POLICY_ITERM_UA / CURRENT_SCALE_FACTOR);
+++		if (!rc)
+++			rc = regmap_write(chip->regmap, chip->base + BARK_BITE_WDOG_PET,
+++					  BARK_BITE_WDOG_PET_BIT);
+++		if (!rc)
+++			rc = regmap_write(chip->regmap,
+++					  chip->base + SNARL_BARK_BITE_WD_CFG,
+++					  WDOG_POLICY_CFG);
+++		if (!rc)
+++			rc = regmap_update_bits(chip->regmap, chip->base + WD_CFG,
+++						WATCHDOG_TRIGGER_AFP_EN_BIT |
+++						WDOG_TIMER_EN_ON_PLUGIN_BIT |
+++						BARK_WDOG_INT_EN_BIT,
+++						WDOG_TIMER_EN_ON_PLUGIN_BIT |
+++						BARK_WDOG_INT_EN_BIT);
+++		if (rc)
+++			return dev_err_probe(chip->dev, rc,
+++					     "Couldn't set up the charging policy\n");
+++	}
+++
++ 	rc = smb5_init_irq(chip, &irq, "bat-ov", smb5_handle_batt_overvoltage);
++ 	if (rc < 0)
++ 		return rc;
++@@ -1207,12 +1664,58 @@ static int smb5_probe(struct platform_device *pdev)
++ 
++ 	mutex_lock(&chip->lock);
++ 	chip->ready = true;
+++	if (chip->policy)
+++		mod_delayed_work(system_wq, &chip->policy_work, 0);
++ 	mutex_unlock(&chip->lock);
++ 	smb5_queue_status_work(chip);
++ 
++ 	return 0;
++ }
++ 
+++/* Nothing supervises the battery while asleep or after shutdown. */
+++static int smb5_suspend(struct device *dev)
+++{
+++	struct smb5_chip *chip = dev_get_drvdata(dev);
+++
+++	if (!chip->policy)
+++		return 0;
+++
+++	mutex_lock(&chip->lock);
+++	chip->suspended = true;
+++	smb5_apply_charge_enable(chip);
+++	mutex_unlock(&chip->lock);
+++	dev_dbg(dev, "charging off while suspended\n");
+++	cancel_delayed_work_sync(&chip->policy_work);
+++
+++	return 0;
+++}
+++
+++static int smb5_resume(struct device *dev)
+++{
+++	struct smb5_chip *chip = dev_get_drvdata(dev);
+++
+++	if (!chip->policy)
+++		return 0;
+++
+++	mutex_lock(&chip->lock);
+++	chip->suspended = false;
+++	if (chip->ready)
+++		mod_delayed_work(system_wq, &chip->policy_work, 0);
+++	mutex_unlock(&chip->lock);
+++
+++	return 0;
+++}
+++
+++static DEFINE_SIMPLE_DEV_PM_OPS(smb5_pm_ops, smb5_suspend, smb5_resume);
+++
+++static void smb5_shutdown(struct platform_device *pdev)
+++{
+++	struct smb5_chip *chip = platform_get_drvdata(pdev);
+++
+++	if (chip && chip->policy)
+++		smb5_set_float_voltage(chip, POLICY_FALLBACK_FV_UV);
+++}
+++
++ static const struct of_device_id smb5_match_id_table[] = {
++ 	{ .compatible = "qcom,pm8150b-charger", .data = "pm8150b" },
++ 	{ /* sentinal */ }
++@@ -1221,9 +1724,11 @@ MODULE_DEVICE_TABLE(of, smb5_match_id_table);
++ 
++ static struct platform_driver qcom_spmi_smb5 = {
++ 	.probe = smb5_probe,
+++	.shutdown = smb5_shutdown,
++ 	.driver = {
++ 		.name = "qcom-pm8150b-charger",
++ 		.of_match_table = smb5_match_id_table,
+++		.pm = pm_sleep_ptr(&smb5_pm_ops),
++ 		},
++ };
++ 
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0167-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Let-the.patch b/device/testing/linux-postmarketos-qcom-sm8250/0167-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Let-the.patch
+new file mode 100644
+index 0000000000..d923e396ae
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0167-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Let-the.patch
+@@ -0,0 +1,28 @@
++From 46aeb492da553ae9437807cc7b48ce399644f0de Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 15 Nov 2026 13:47:23 +0100
++Subject: [PATCH 167/167] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Let
++ the fuel gauge end charging
++
++Name the bq27411 as the charger's fuel gauge, so the PM8150B driver
++applies the stock charging policy and the battery charges to full.
++---
++ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 2 ++
++ 1 file changed, 2 insertions(+)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++index 641d1cfa7..6d66faff8 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++@@ -1469,6 +1469,8 @@ &pm8150b_charger {
++ 	status = "okay";
++ 	monitored-battery = <&battery>;
++ 	power-supplies = <&pm8150b_typec>;
+++	/* The gauge at the cell decides when the battery is full, as in stock. */
+++	qcom,fuel-gauge = <&smart_battery>;
++ };
++ 
++ &pm8150b_typec {
++-- 
++2.43.0
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 04e5f12fa3..87e59168a8 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=86
++pkgrel=87
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -182,6 +182,9 @@ source="
+ 	0154-media-i2c-imx689-Add-a-2000x1500-4x4-binned-mode.patch
+ 	0155-media-i2c-imx586-Add-a-2000x1500-4x4-binned-mode.patch
+ 	0156-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Give-th.patch
++	0165-power-supply-qcom_pm8150b-keep-USB-input-while-VBUS-.patch
++	0166-power-supply-qcom_pm8150b-charge-by-the-fuel-gauge-l.patch
++	0167-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Let-the.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -371,4 +374,7 @@ f511b80c4e3fce3ea9a3e4ed097948d8ff4e60b7d2207e5741329c8a8304d170fba1abd477b8dab0
+ 54cdbacc74f73c75822768696a70cce440d9719c53717ab51b6852dc98497a071c35294cfdb58956b7ff639d5811acd25a12688fe5052cea6566e7c9c70e466a  0154-media-i2c-imx689-Add-a-2000x1500-4x4-binned-mode.patch
+ 1d70c87eb758650ccda96210a573833d01459a9d0d0cdf1c0e5afe259a18d61115217f92d4196107b77b48d8a06e87c332d150c7d82ca260453af0502cf927fb  0155-media-i2c-imx586-Add-a-2000x1500-4x4-binned-mode.patch
+ 2222f6e0f661204650349a7fc774e00f64b393d3711e0f768c7e94a8b963c4180776b03f312479bd7993b3597e4b645546cc24ddea48797731e8fec1f8ed9240  0156-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Give-th.patch
++a77ef5dfd551fe704b0e0493956ea313b62a03be8ac47cb8351b470f8c5fbb908443fbb4be04c190c508e4d77e33aebd9b037e78c573caf71fa74560c8b30851  0165-power-supply-qcom_pm8150b-keep-USB-input-while-VBUS-.patch
++f4a2f77d3ce682ed71486f798703da8a87e440c6560bddbc20e5635d6558130a0f67aff193453d8ae1fe1078245b9d4ab97b5c3217d997680d38050657e28e0a  0166-power-supply-qcom_pm8150b-charge-by-the-fuel-gauge-l.patch
++4ba48c6ba0585966b88b944bbafeff78d18fd037e1d4e66554e413ec837173e98e44694f4cbb961f095d7f1a3b4e3a9ca7ff00cbfc935db8658e5299aa27c598  0167-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Let-the.patch
+ "
+-- 
+2.43.0
+

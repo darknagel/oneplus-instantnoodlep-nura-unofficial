@@ -1,0 +1,28 @@
+From 46aeb492da553ae9437807cc7b48ce399644f0de Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 13:47:23 +0100
+Subject: [PATCH 167/167] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Let
+ the fuel gauge end charging
+
+Name the bq27411 as the charger's fuel gauge, so the PM8150B driver
+applies the stock charging policy and the battery charges to full.
+---
+ arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 641d1cfa7..6d66faff8 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -1469,6 +1469,8 @@ &pm8150b_charger {
+ 	status = "okay";
+ 	monitored-battery = <&battery>;
+ 	power-supplies = <&pm8150b_typec>;
++	/* The gauge at the cell decides when the battery is full, as in stock. */
++	qcom,fuel-gauge = <&smart_battery>;
+ };
+ 
+ &pm8150b_typec {
+-- 
+2.43.0
+
