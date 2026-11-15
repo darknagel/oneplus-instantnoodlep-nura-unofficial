@@ -1,0 +1,124 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Sat, 14 Nov 2026 16:40:00 +0000
+Subject: [PATCH] drm/msm/dpu: on SM8250, pair DSC blocks only with the
+ pingpong of their index
+
+On SM8250 (DPU 6.0) the command-mode DSI panel of the OnePlus 8 Pro uses
+two DSC blocks in merge mode. When DisplayPort still holds PINGPONG_0/1
+in the commit that moves the picture back to the panel, the panel's CRTC
+gets LM_2/LM_3 and PINGPONG_2/3, and the even/odd rule pairs them with
+DSC_0/DSC_1 through the DSC_CTL mux. The panel then completes one frame
+after each CTL reset and none after it: every following kickoff times out
+on PINGPONG_2 and the panel stays grey.
+
+Pair DSC n only with PINGPONG n on DPU 6.0. The same commit then gets
+DSC_2/DSC_3, and the panel runs without a kickoff timeout. Whether the
+DSC_CTL mux cannot route the output of these DSC blocks to another
+pingpong, or the driver programs it wrongly, is not known, and no other
+DPU version was tested, so the others keep the even/odd rule. On DPU 6.0
+the single-DSC allocator now goes on to the next DSC block when one does
+not fit the pingpong, instead of failing the reservation.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c | 25 ++++++++++++++++++++-----
+ drivers/gpu/drm/msm/disp/dpu1/dpu_rm.h |  2 ++
+ 2 files changed, 22 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
+index 7e77d88..ab7d93f 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
+@@ -54,6 +54,8 @@ int dpu_rm_init(struct drm_device *dev,
+ 	memset(rm, 0, sizeof(*rm));
+ 
+ 	rm->has_legacy_ctls = (cat->mdss_ver->core_major_ver < 5);
++	rm->dsc_pp_same_index = (cat->mdss_ver->core_major_ver == 6 &&
++				 cat->mdss_ver->core_minor_ver == 0);
+ 
+ 	/* Interrogate HW catalog and create tracking items for hw blocks */
+ 	for (i = 0; i < cat->mixer_count; i++) {
+@@ -504,8 +506,15 @@ static int _dpu_rm_pingpong_next_index(struct dpu_global_state *global_state,
+ 	return -ENAVAIL;
+ }
+ 
+-static int _dpu_rm_pingpong_dsc_check(int dsc_idx, int pp_idx)
++static int _dpu_rm_pingpong_dsc_check(struct dpu_rm *rm, int dsc_idx, int pp_idx)
+ {
++	/*
++	 * On SM8250 (DPU 6.0) a DSC fed from another PINGPONG through the
++	 * DSC_CTL mux gave the command-mode panel no frames after the first one.
++	 */
++	if (rm->dsc_pp_same_index)
++		return dsc_idx == pp_idx ? 0 : -ENAVAIL;
++
+ 	/*
+ 	 * DSC with even index must be used with the PINGPONG with even index
+ 	 * DSC with odd index must be used with the PINGPONG with odd index
+@@ -538,9 +547,13 @@ static int _dpu_rm_dsc_alloc(struct dpu_rm *rm,
+ 		if (pp_idx < 0)
+ 			return -ENAVAIL;
+ 
+-		ret = _dpu_rm_pingpong_dsc_check(dsc_idx, pp_idx);
+-		if (ret)
++		ret = _dpu_rm_pingpong_dsc_check(rm, dsc_idx, pp_idx);
++		if (ret) {
++			/* Leave pp_idx for the DSC of its own index. */
++			if (rm->dsc_pp_same_index)
++				continue;
+ 			return -ENAVAIL;
++		}
+ 
+ 		global_state->dsc_to_crtc_id[dsc_idx] = crtc_id;
+ 		num_dsc++;
+@@ -581,7 +594,7 @@ static int _dpu_rm_dsc_alloc_pair(struct dpu_rm *rm,
+ 		if (pp_idx < 0)
+ 			return -ENAVAIL;
+ 
+-		ret = _dpu_rm_pingpong_dsc_check(dsc_idx, pp_idx);
++		ret = _dpu_rm_pingpong_dsc_check(rm, dsc_idx, pp_idx);
+ 		if (ret) {
+ 			pp_idx = 0;
+ 			continue;
+@@ -591,7 +604,7 @@ static int _dpu_rm_dsc_alloc_pair(struct dpu_rm *rm,
+ 		if (pp_idx < 0)
+ 			return -ENAVAIL;
+ 
+-		ret = _dpu_rm_pingpong_dsc_check(dsc_idx + 1, pp_idx);
++		ret = _dpu_rm_pingpong_dsc_check(rm, dsc_idx + 1, pp_idx);
+ 		if (ret) {
+ 			pp_idx = 0;
+ 			continue;
+@@ -626,6 +639,8 @@ static int _dpu_rm_reserve_dsc(struct dpu_rm *rm,
+ 	 * 2) DSC pair starts from even index, such as index(0,1), (2,3), etc
+ 	 * 3) even PINGPONG connects to even DSC
+ 	 * 4) odd PINGPONG connects to odd DSC
++	 *    (on DPU 6.0 only the DSC of the same index, see
++	 *    _dpu_rm_pingpong_dsc_check())
+ 	 * 5) pair: encoder +--> pp_idx_0 --> dsc_idx_0
+ 	 *                  +--> pp_idx_1 --> dsc_idx_1
+ 	 */
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.h
+index ccd6440..4981d63 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.h
+@@ -25,6 +25,7 @@ struct dpu_global_state;
+  * @hw_sspp: array of sspp hardware resources
+  * @cdm_blk: cdm hardware resource
+  * @has_legacy_ctls: DPU uses pre-ACTIVE CTL blocks.
++ * @dsc_pp_same_index: pair DSC blocks only with the PINGPONG of the same index (DPU 6.0).
+  */
+ struct dpu_rm {
+ 	struct dpu_hw_blk *pingpong_blks[PINGPONG_MAX - PINGPONG_0];
+@@ -39,6 +40,7 @@ struct dpu_rm {
+ 	struct dpu_hw_sspp *hw_sspp[SSPP_MAX - SSPP_NONE];
+ 	struct dpu_hw_blk *cdm_blk;
+ 	bool has_legacy_ctls;
++	bool dsc_pp_same_index;
+ };
+ 
+ struct dpu_rm_sspp_requirements {
+-- 
+2.51.2
+

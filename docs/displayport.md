@@ -6,9 +6,10 @@ takes power from one that supplies it. VBUS comes from the board's external
 boost, not the PMIC's OTG boost.
 
 Audio is the `HDMI` device of its own UCM use case `DisplayPort`, 48 kHz
-stereo. It is kept out of `HiFi` because, without a display attached, the
-DisplayPort port fails to start and PipeWire would drop the whole profile,
-speakers and microphones included.
+stereo. It was kept out of `HiFi` because, without a display attached, the
+DisplayPort port failed to start and PipeWire dropped the whole profile,
+speakers and microphones included. Opening and preparing the PCM now succeed
+with nothing plugged in; see [Audio with no display](#audio-with-no-display).
 
 Tested with a GR14BU (2880×1800 at 100 and 120 Hz, touch, hub), powered by
 itself and by the phone, in both plug orientations.
@@ -24,9 +25,24 @@ the GR14BU, and reconnecting the ASUS restored HBR3.
 
 The connector has `Colorspace` (`Default`, `BT2020_RGB`) and
 `HDR_OUTPUT_METADATA`. Setting them marks the stream as BT.2020 in the VSC SDP
-and sends the static metadata infoframe; either change causes a modeset. The
+and sends the static metadata infoframe; either change causes a modeset.
+Metadata whose EOTF the display does not list in its EDID is refused. The
 link uses 10 bits per channel whenever the display reports it and the mode
-fits. The image has no compositor, so a DRM client has to set these.
+fits; there is no `max bpc` property yet, so HDR is not refused when the link
+can only carry 8 or 6 bits. The image has no compositor, so a DRM client has
+to set these.
+
+The SM8250 controller (revision 1.2.0.3) latches these packets through
+`SDP_CFG3` (kernel 0141). When that was measured, the driver asked the display
+engine for a peripheral flush only for YUV 4:2:0, never with these packets. It
+now does (kernel 0159); whether the flush alone puts them on the link has not
+been measured.
+
+## Display stream compression
+
+The experimental external DSC path and its known failures are documented in
+[DisplayPort DSC results](displayport-dsc.md). It reduces link bandwidth, while
+the display-engine pixel-rate limit below still applies.
 
 ## System sleep
 
@@ -38,6 +54,54 @@ enable sets it up again.
 
 A link that failed to train has no link clock. Its registers must not be
 written when the output is switched off; that write resets the phone.
+
+HPD on this phone comes from the USB-C connector, so nothing but the plugged
+state keeps the DP controller powered. `detect()` used to take a runtime PM
+reference on every probe and keep it, and the HPD plug handler took one on
+every plug event, which held the controller and the display core power domain
+on after the display was unplugged. Kernel 0157 and 0158 keep one reference
+per plugged state.
+
+Suspending while DisplayPort audio plays still breaks the stream: after resume
+it stalls, and closing it times out in the DSP until a reboot. The AFE port
+stays started while the DP controller is powered down, with and without the
+change in [Audio with no display](#audio-with-no-display).
+
+## Switching back to the phone panel
+
+The panel uses two DSC blocks. After a boot with a monitor attached,
+DisplayPort still holds pingpongs 0/1 in the commit that moves the picture
+back to the panel, so the panel gets pingpongs 2/3. The resource manager used
+to pair those with DSC 0/1 through the DSC_CTL mux: the panel then completed
+one frame after each CTL reset and none after it, and stayed grey. Kernel 0163
+pairs DSC n only with pingpong n on this display engine (DPU 6.0); other DPU
+versions keep the even/odd rule. `tests/displayport/test-dsc-pairing.py`
+checks the allocation against the patched source.
+
+## Audio with no display
+
+PipeWire and PulseAudio open and prepare every PCM of the card to probe it,
+also with nothing plugged into USB-C. Starting the DSP's DisplayPort port
+(AFE port 0x6020) without a stream on the link takes q6afe's whole command
+timeout, so every probe used to wait for it.
+
+- The q6afe DAI configures the DisplayPort port in prepare and starts it from
+  the back-end trigger, when the stream starts. Probing still opens the stream
+  on the DSP but no longer starts the port.
+- The SM8250 machine driver runs the back-end triggers of playback front ends
+  before the front end. The DSP needs the port running before the ASM stream
+  that feeds it starts: started after it, with a 20 ms buffer, every port start
+  timed out. The q6afe change relies on this order, which only this machine
+  driver sets.
+- The machine driver refuses the DisplayPort start with `-ENODEV` while the DP
+  jack reports no display. The DP driver reports the jack while a stream runs
+  on the link, so a refused start never reaches the AFE either, and a display
+  that is switched off counts as no display.
+- Opening and preparing the PCM succeed with nothing plugged in, so the profile
+  stays available.
+
+`tests/displayport/test-audio-start.py` checks the start order against the
+patched source.
 
 ## Pixel-rate limits
 

@@ -7,9 +7,11 @@
 | Display (Samsung AMS678UW01, new panel driver, 1440×3168 @ 120 Hz) | works | kernel 0001–0003, pmaports 0001 |
 | GPU (Adreno 650, Mesa freedreno), Phosh accelerated | works | kernel 0004, pmaports 0001 |
 | USB-C DisplayPort: video with USB2 alongside, VBUS supply and power-role swap, audio | works | kernel 0088–0103, pmaports 0045–0047, 0049; [notes](displayport.md) |
-| DisplayPort HBR3 and HDR signalling (`Colorspace`, `HDR_OUTPUT_METADATA`) | draft | kernel 0138–0143, pmaports 0059; [notes](displayport.md#hdr) |
-| DisplayPort over system sleep: the DP PHY loses its setup while the controller is suspended but was still taken as initialised, so the display was dropped after resume; a link that failed to train was pushed to idle without a link clock, which reset the phone | draft | kernel 0144–0145, pmaports 0060; [notes](displayport.md#system-sleep) |
-| Switching between the phone panel and an external DisplayPort monitor | Tested at 2880×1800, 120 Hz on the GR14BU | kernel 0146–0147, pmaports 0061 |
+| DisplayPort HBR3 and HDR signalling (`Colorspace`, `HDR_OUTPUT_METADATA`) | draft; HDR shown by the ASUS PG32UCDMR, picture looked right | kernel 0138–0143, 0159–0160, pmaports 0059, 0071; [notes](displayport.md#hdr) |
+| DisplayPort over system sleep: the DP PHY loses its setup while the controller is suspended but was still taken as initialised, so the display was dropped after resume; a link that failed to train was pushed to idle without a link clock, which reset the phone; detect() and the HPD plug handler leaked runtime PM references when HPD comes from the USB-C connector | draft | kernel 0144–0145, 0157–0158, pmaports 0060, 0070; [notes](displayport.md#system-sleep) |
+| Switching between the phone panel and an external DisplayPort monitor: disabling the command-mode panel left its interface, mixers and both DSC blocks active, and DisplayPort underran with a blue screen; after a boot with the monitor attached, the phone panel stayed grey on the first switch back | Tested at 2880×1800, 120 Hz on the GR14BU | kernel 0146–0147, 0161–0163, pmaports 0061, 0072; [notes](displayport.md#switching-back-to-the-phone-panel) |
+| DisplayPort audio with nothing plugged in: preparing the PCM started the DSP's DisplayPort port, and the DSP took q6afe's whole command timeout to answer; every probe at boot waited for it | draft; tested on the phone with PulseAudio | kernel 0148–0150, pmaports 0069; [notes](displayport.md#audio-with-no-display) |
+| External DisplayPort DSC | parked, not for merge: 4K 103 Hz at 10 bpc worked; lower resolutions and returning to uncompressed output failed | kernel 0164, pmaports 0073; [results and limits](displayport-dsc.md) |
 | Charger input limit from USB-C/PD or USB-A detection, 2 A battery current | works | kernel 0082–0087, pmaports 0044; [notes](charging.md) |
 | Speakers + 3 microphones (VA macro, mic bias as in vendor DT) | works | kernel 0005, pmaports 0002, 0007 |
 | False headset detection with an ordinary USB cable, codec runtime-PM errors and unsorted RX register defaults | fixed; analog USB-C headsets untested | kernel 0055–0060, pmaports 0030; [notes](audio.md) |
@@ -150,9 +152,9 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   0116 (bounds check in the sensor devinfo SAR parser). The DisplayPort stack
   follows these patches; see the table above. 0066 adds libcamera 0009–0010 (faster autofocus)
   and its tuning, 0067 adds kernel 0152–0156 (telephoto OIS, binned modes) and 0068
-  adds libcamera 0011–0012 (white balance) with the tuning. Package numbers 0062–0065
-  and kernel numbers 0148–0151 are left for the open DisplayPort pull requests. Package numbers 0050, 0051 and 0053
-  and kernel numbers 0105–0113 are unused.
+  adds libcamera 0011–0012 (white balance) with the tuning. From 0069 on the DisplayPort
+  patches continue; see the table above. Package numbers 0050, 0051, 0053 and 0062–0065
+  and kernel numbers 0105–0113 and 0151 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `firmware/` – boot service that copies SLPI, Venus and CDSP firmware from your own phone.
@@ -180,6 +182,26 @@ Use the original from lore.kernel.org if you need it.
 Kernel patch 0101 is not my work: it is v2 of "drm/display: add hw_params callback
 function to drm_connector_hdmi_audio_ops" by Jianfeng Liu, carried unchanged
 (https://lore.kernel.org/r/20250925040530.20731-1-liujianfeng1994@gmail.com).
+
+Kernel patches 0146–0147 and 0161–0162 are not my work: they are patches 2, 3, 1 and 4
+of v2 of "drm/msm/dpu: various dpu resource allocation/release mismatch fix" by Xi Zhang,
+carried unchanged (https://lore.kernel.org/r/20261026-msm-dpu-res-clean-v2-1-3d864435186e@gmail.com).
+Patches 5 (modeset on every colour management change) and 6 (DSC 1.2 hardware, which
+SM8250 does not have) are left out.
+
+Kernel patch 0148 is not my work: it is upstream commit d858770e86e7 ("drm/msm/dp: return
+0 from audio_prepare when cable is disconnected") by Kumar Anurag.
+
+Kernel patch 0145 is not my work: it is "drm/msm/dp: skip PUSH_IDLE when the link was
+never enabled" by Jesse Casco, reviewed by Dmitry Baryshkov
+(https://lore.kernel.org/r/20260808171325.133041-1-jesse.casco@gmail.com), with a note
+on where its hunk lands in 7.2. Kernel patch 0157 is patch 6 of v8 of "drm: handle
+IRQ_HPD events correctly" by Dmitry Baryshkov
+(https://lore.kernel.org/r/20261024-hpd-irq-events-v8-6-6ee949e7a384@oss.qualcomm.com).
+Kernel patch 0158 is v3 of "drm/msm/dp: hold one runtime PM reference per plugged state"
+by Joonhoe Kim, also reviewed by Dmitry Baryshkov
+(https://lore.kernel.org/r/20261024051952.2006-1-26rote@gmail.com), which depends on 0157.
+The code of all three is unchanged.
 
 Kernel patch 0014 (LC898217XC driver) is not my work: it is v4 of the driver Vasiliy
 Doylov posted to the linux-media mailing list in March 2026
