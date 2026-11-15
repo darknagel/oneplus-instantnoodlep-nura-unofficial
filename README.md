@@ -8,10 +8,9 @@ package names still say `postmarketos`, so the commands here do too.
 Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-linux-nura-formerly-postmarketos-for-oneplus-8-pro-instantnoodlep.4807386/)
 
 > [!WARNING]
-> **Images up to v2026.11.10 charge the battery to 4.76 V instead of 4.35 V.** Fixed since
-> v2026.11.11. If you run an older image, [update the kernel](#update-an-older-image) and do not
-> leave the phone charging unattended until then. `apk upgrade` does not fix it.
-> Thanks to naorunaoru for finding it.
+> **Images up to v2026.11.10 overcharge the battery (4.76 V instead of 4.35 V).** Flash
+> v2026.11.15 or [update the kernel](#update-an-older-image); `apk upgrade` does not fix it.
+> Found by naorunaoru.
 
 **Contents:** [Status](#status) · [Install](#install) · [First login](#first-login) ·
 [Desktop](#desktop) · [Phone features](#phone-features) ·
