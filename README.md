@@ -20,22 +20,22 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 
 ## Status
 
+Everything on the phone works, except what is listed below: display (1440×3168, 120 Hz),
+touch, GPU, sound, Wi-Fi, Bluetooth, USB networking, calls (VoLTE and 2G), SMS, mobile
+data, GPS, NFC, all five cameras, the sensors, hardware video decoding and encoding,
+charging, vibration, torch, and an external display over USB-C.
+
+Not working or limited:
+
 | Area | State |
 |---|---|
-| Display (1440×3168, 120 Hz), touch, GPU | works |
-| Speakers, 3 microphones, headset over USB-C | works |
-| Wi-Fi, Bluetooth, USB networking | works |
-| Modem: SIM with PIN, LTE/5G, SMS, mobile data | works |
-| GPS | works, also without SIM |
-| NFC | reading tags works |
-| Cameras: main, ultrawide, telephoto, front, colour filter | work, except phase detection autofocus |
-| Sensors: accelerometer, gyroscope, light, proximity, compass | work |
-| Hardware video decoding and encoding (H.264, HEVC, VP9, …) | works |
-| Charging over USB-C PD and USB-A | works, see [`docs/charging.md`](docs/charging.md) |
-| Vibration, torch | work |
-| External display and audio over USB-C (DisplayPort), with USB hub and charging | works, see [`docs/displayport.md`](docs/displayport.md) |
-| Calls (VoLTE and 2G, earpiece and speaker) | work; no echo cancellation, see [`modem/`](modem/) |
-| Fingerprint reader, fast and wireless charging | not done |
+| Fingerprint reader | not done |
+| Fast charging (Warp) and wireless charging | not done; charging is 5 V, up to 2 A into the battery |
+| Camera autofocus | contrast only, no phase detection |
+| Calls | no echo cancellation, see [`modem/`](modem/) |
+| NFC | reading tags only; writing and card emulation are untested |
+| Charging | the last ten percent are slow, and the phone does not sleep while charging, see [`docs/charging.md`](docs/charging.md) |
+| External display | sound over the monitor breaks after system sleep, see [`docs/displayport.md`](docs/displayport.md) |
 
 Tested on IN2023 phones (EU) with the Samsung AMS678UW01 panel. With another panel the
 screen may stay black, see [`docs/panel-log.md`](docs/panel-log.md). Patch-by-patch details:
