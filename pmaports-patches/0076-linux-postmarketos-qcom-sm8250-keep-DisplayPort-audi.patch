@@ -1,0 +1,311 @@
+From f4fec2fa82c3eec255bd0951f4115dbe3bac57a4 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Sun, 15 Nov 2026 00:06:49 +0000
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: keep DisplayPort audio
+ probeable while unplugged
+
+Add kernel patches 0148-0150: upstream d858770e86e7, start the DisplayPort back end before its front end and refuse that start in the SM8250 machine driver while no display is connected, and start the q6afe DisplayPort port from the trigger instead of prepare. Advance to release 88.
+---
+ ...n-0-from-audio_prepare-when-cable-is.patch |  40 +++++++
+ ...-start-DisplayPort-before-its-front-.patch |  94 ++++++++++++++++
+ ...dai-start-the-DisplayPort-port-when-.patch | 106 ++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |   8 +-
+ 4 files changed, 247 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0148-drm-msm-dp-return-0-from-audio_prepare-when-cable-is.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0149-ASoC-qcom-sm8250-start-DisplayPort-before-its-front-.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0150-ASoC-qcom-q6afe-dai-start-the-DisplayPort-port-when-.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0148-drm-msm-dp-return-0-from-audio_prepare-when-cable-is.patch b/device/testing/linux-postmarketos-qcom-sm8250/0148-drm-msm-dp-return-0-from-audio_prepare-when-cable-is.patch
+new file mode 100644
+index 0000000000..655fd3631b
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0148-drm-msm-dp-return-0-from-audio_prepare-when-cable-is.patch
+@@ -0,0 +1,40 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Kumar Anurag <kumar.singh@oss.qualcomm.com>
++Date: Tue, 16 Jun 2026 08:12:52 -0700
++Subject: [PATCH] drm/msm/dp: return 0 from audio_prepare when cable is
++ disconnected
++
++PipeWire treats a non-zero return from prepare as fatal, marking the
++DP audio device as a dummy sink when the cable is unplugged. The
++active_stream_cnt guard already prevents any unclocked hardware access,
++so return success instead of -EINVAL when the link is not active.
++
++Signed-off-by: Kumar Anurag <kumar.singh@oss.qualcomm.com>
++Suggested-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
++Reviewed-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com> # same behaviour
++Patchwork: https://patchwork.freedesktop.org/patch/733663/
++Link: https://lore.kernel.org/r/20260616151252.3599089-2-kumar.singh@oss.qualcomm.com
++Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
++---
++ drivers/gpu/drm/msm/dp/dp_audio.c | 4 +---
++ 1 file changed, 1 insertion(+), 3 deletions(-)
++
++diff --git a/drivers/gpu/drm/msm/dp/dp_audio.c b/drivers/gpu/drm/msm/dp/dp_audio.c
++index 41018e8..df22294 100644
++--- a/drivers/gpu/drm/msm/dp/dp_audio.c
+++++ b/drivers/gpu/drm/msm/dp/dp_audio.c
++@@ -284,10 +284,8 @@ int msm_dp_audio_prepare(struct drm_bridge *bridge,
++ 	 * such cases check for connection status and bail out if not
++ 	 * connected.
++ 	 */
++-	if (!msm_dp_display->power_on) {
++-		rc = -EINVAL;
+++	if (!msm_dp_display->power_on)
++ 		goto end;
++-	}
++ 
++ 	audio = msm_dp_audio_get_data(msm_dp_display);
++ 	if (IS_ERR(audio)) {
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0149-ASoC-qcom-sm8250-start-DisplayPort-before-its-front-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0149-ASoC-qcom-sm8250-start-DisplayPort-before-its-front-.patch
+new file mode 100644
+index 0000000000..6589cd8901
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0149-ASoC-qcom-sm8250-start-DisplayPort-before-its-front-.patch
+@@ -0,0 +1,94 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Sat, 14 Nov 2026 15:08:59 +0000
++Subject: [PATCH] ASoC: qcom: sm8250: start DisplayPort before its front end,
++ and only with a display
++
++The DP codec reports the DisplayPort jack once the display driver runs
++a stream on the link, and clears it when the stream stops or the display
++is unplugged. Without that stream the DSP does not start its DisplayPort
++port in time, and q6afe gives up only after its command timeout.
++
++Refuse the start of the DisplayPort back end with -ENODEV while the jack
++reports nothing connected. The link trigger runs before the DAI triggers,
++so a refused start never reaches the AFE. Opening and preparing the PCM
++still succeed, so userspace can probe the card with nothing plugged in.
++
++This relies on the DP codec reporting the jack. The DP driver's codec on
++this card does; with a codec whose set_jack() returns -ENOTSUPP the jack
++would never report a display and every start would be refused.
++
++The next patch moves the start of the q6afe DisplayPort port from
++prepare to the back-end trigger. The DSP needs the port running before
++the ASM stream that feeds it starts: started after it, with a 20 ms
++buffer, the port start times out. Run the back-end triggers of playback
++front ends first, as SND_SOC_DPCM_TRIGGER_POST does, so that the port
++still starts first. No other back end on this card acts in its trigger.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ sound/soc/qcom/sm8250.c | 35 +++++++++++++++++++++++++++++++++++
++ 1 file changed, 35 insertions(+)
++
++diff --git a/sound/soc/qcom/sm8250.c b/sound/soc/qcom/sm8250.c
++index 138f09b..54d61cc 100644
++--- a/sound/soc/qcom/sm8250.c
+++++ b/sound/soc/qcom/sm8250.c
++@@ -237,12 +237,39 @@ static int sm8250_snd_hw_free(struct snd_pcm_substream *substream)
++ 	return qcom_snd_sdw_hw_free(substream, &data->stream_prepared[cpu_dai->id]);
++ }
++ 
+++/*
+++ * The DP codec reports the DisplayPort jack while the display driver runs a
+++ * stream on the link. Without one the DSP cannot start its DisplayPort port,
+++ * so refuse the start here instead of waiting for the DSP to time out.
+++ */
+++static int sm8250_snd_trigger(struct snd_pcm_substream *substream, int cmd)
+++{
+++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+++	struct sm8250_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
+++
+++	if (cpu_dai->id != DISPLAY_PORT_RX)
+++		return 0;
+++
+++	switch (cmd) {
+++	case SNDRV_PCM_TRIGGER_START:
+++	case SNDRV_PCM_TRIGGER_RESUME:
+++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+++		if (!(READ_ONCE(data->dp_jack.status) & SND_JACK_LINEOUT))
+++			return -ENODEV;
+++		break;
+++	}
+++
+++	return 0;
+++}
+++
++ static const struct snd_soc_ops sm8250_be_ops = {
++ 	.startup = sm8250_snd_startup,
++ 	.shutdown = qcom_snd_sdw_shutdown,
++ 	.hw_params = sm8250_snd_hw_params,
++ 	.hw_free = sm8250_snd_hw_free,
++ 	.prepare = sm8250_snd_prepare,
+++	.trigger = sm8250_snd_trigger,
++ };
++ 
++ static void sm8250_add_be_ops(struct snd_soc_card *card)
++@@ -256,6 +283,14 @@ static void sm8250_add_be_ops(struct snd_soc_card *card)
++ 			link->exit = sm8250_snd_exit;
++ 			link->be_hw_params_fixup = sm8250_be_hw_params_fixup;
++ 			link->ops = &sm8250_be_ops;
+++		} else if (link->dynamic) {
+++			/*
+++			 * q6afe starts the DisplayPort port from the back-end
+++			 * trigger, and the DSP needs the port running before the
+++			 * ASM stream that feeds it starts. No other back end on
+++			 * this card acts in its trigger.
+++			 */
+++			link->trigger[SNDRV_PCM_STREAM_PLAYBACK] = SND_SOC_DPCM_TRIGGER_POST;
++ 		}
++ 	}
++ }
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0150-ASoC-qcom-q6afe-dai-start-the-DisplayPort-port-when-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0150-ASoC-qcom-q6afe-dai-start-the-DisplayPort-port-when-.patch
+new file mode 100644
+index 0000000000..41b96b07aa
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0150-ASoC-qcom-q6afe-dai-start-the-DisplayPort-port-when-.patch
+@@ -0,0 +1,106 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Sat, 14 Nov 2026 13:27:01 +0000
++Subject: [PATCH] ASoC: qcom: q6afe-dai: start the DisplayPort port when the
++ stream starts
++
++q6afe_dai_prepare() starts every AFE port. Userspace opens and prepares
++the DisplayPort PCM to probe it, also with no display connected, and on
++SM8250 the DSP then takes q6afe's whole command timeout to answer the
++start of port 0x6020. PipeWire opens the PCM several times while it
++probes the card, so a boot with nothing plugged into USB-C loses many
++seconds before any sound comes up.
++
++Configure the DisplayPort port in prepare as before, but start it from
++the trigger, which the Qualcomm DPCM back ends run in nonatomic context.
++A probe that never starts the stream then never starts the AFE port, and
++a start can be refused before it does. Prepare still opens the ASM
++stream and the COPP on the DSP; only the port start moves. An atomic PCM
++keeps starting the port in prepare.
++
++The DSP needs the port running before the ASM stream that feeds it
++starts, so this depends on the machine driver triggering the back end
++before the front end, which the SM8250 machine driver does since the
++previous patch. With the default order the port would start after the
++ASM stream; with a 20 ms buffer none of 12 such starts succeeded.
++Compress front ends always trigger the front end first; this card has
++none.
++
++hw_free and shutdown stop the port as before, and a repeated prepare
++still stops a running port before configuring it again.
++
++Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
++---
++ sound/soc/qcom/qdsp6/q6afe-dai.c | 42 ++++++++++++++++++++++++++++++++
++ 1 file changed, 42 insertions(+)
++
++diff --git a/sound/soc/qcom/qdsp6/q6afe-dai.c b/sound/soc/qcom/qdsp6/q6afe-dai.c
++index 8109db1..085659e 100644
++--- a/sound/soc/qcom/qdsp6/q6afe-dai.c
+++++ b/sound/soc/qcom/qdsp6/q6afe-dai.c
++@@ -437,6 +437,10 @@ static int q6afe_dai_prepare(struct snd_pcm_substream *substream,
++ 		return -EINVAL;
++ 	}
++ 
+++	/* The DisplayPort port is started from q6hdmi_dai_trigger(). */
+++	if (dai->id == DISPLAY_PORT_RX && substream->pcm->nonatomic)
+++		return 0;
+++
++ 	rc = q6afe_port_start(dai_data->port[dai->id]);
++ 	if (rc < 0) {
++ 		dev_err(dai->dev, "fail to start AFE port %x\n", dai->id);
++@@ -447,6 +451,43 @@ static int q6afe_dai_prepare(struct snd_pcm_substream *substream,
++ 	return 0;
++ }
++ 
+++/*
+++ * On SM8250 the DSP takes q6afe's whole command timeout to answer the start of
+++ * the DisplayPort port while no stream runs on the link. Userspace opens and
+++ * prepares the PCM to probe it, also with nothing plugged in, so start this
+++ * port when the stream starts instead. The machine driver can refuse the start
+++ * before this runs. On a nonatomic PCM the trigger may wait for the DSP; an
+++ * atomic one keeps starting the port in prepare.
+++ *
+++ * The DSP needs this port running before the ASM stream that feeds it starts,
+++ * so the machine driver has to trigger the back end before the front end, as
+++ * sm8250.c does for its playback front ends.
+++ */
+++static int q6hdmi_dai_trigger(struct snd_pcm_substream *substream, int cmd,
+++			      struct snd_soc_dai *dai)
+++{
+++	struct q6afe_dai_data *dai_data = dev_get_drvdata(dai->dev);
+++	int rc;
+++
+++	if (dai->id != DISPLAY_PORT_RX || dai_data->is_port_started[dai->id])
+++		return 0;
+++
+++	switch (cmd) {
+++	case SNDRV_PCM_TRIGGER_START:
+++	case SNDRV_PCM_TRIGGER_RESUME:
+++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+++		rc = q6afe_port_start(dai_data->port[dai->id]);
+++		if (rc < 0) {
+++			dev_err(dai->dev, "fail to start AFE port %x\n", dai->id);
+++			return rc;
+++		}
+++		dai_data->is_port_started[dai->id] = true;
+++		break;
+++	}
+++
+++	return 0;
+++}
+++
++ static int q6hdmi_dai_hw_free(struct snd_pcm_substream *substream,
++ 			      struct snd_soc_dai *dai)
++ {
++@@ -735,6 +776,7 @@ static const struct snd_soc_dai_ops q6hdmi_ops = {
++ 	.prepare		= q6afe_dai_prepare,
++ 	.hw_params		= q6hdmi_hw_params,
++ 	.hw_free		= q6hdmi_dai_hw_free,
+++	.trigger		= q6hdmi_dai_trigger,
++ 	.shutdown		= q6afe_dai_shutdown,
++ };
++ 
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 87e59168a8..3f667eecaa 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=87
++pkgrel=88
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -177,6 +177,9 @@ source="
+ 	0145-drm-msm-dp-do-not-push-idle-on-a-link-that-is-down.patch
+ 	0146-drm-msm-dpu-cache-layer-mixers-for-encoder-cleanup.patch
+ 	0147-drm-msm-dpu-clean-up-command-mode-encoder-on-disable.patch
++	0148-drm-msm-dp-return-0-from-audio_prepare-when-cable-is.patch
++	0149-ASoC-qcom-sm8250-start-DisplayPort-before-its-front-.patch
++	0150-ASoC-qcom-q6afe-dai-start-the-DisplayPort-port-when-.patch
+ 	0152-media-i2c-lc898128-Support-a-slave-without-its-own-g.patch
+ 	0153-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
+ 	0154-media-i2c-imx689-Add-a-2000x1500-4x4-binned-mode.patch
+@@ -369,6 +372,9 @@ f4de0c04450a74fcd907836614dfd2444fd47ca65485d671466be914fa1e958e845929d27ba996fb
+ 40ed000dd0c9c30b0e6c6bf7a30a0c6ab4a3bfdcac396d40b83f9cf76ae2c5aab5f5f5c63bd948e176ff2e2c668524191caf556eee4889f4b8b0efa2b01970cb  0145-drm-msm-dp-do-not-push-idle-on-a-link-that-is-down.patch
+ 6c8d1d5e061b60ed57a56fefccdb649fbc93806c141d44f92170ddfe5000384e2d61c8fb46bce927c0383614b4feae2327126050cd149fe15bc1fbbfb24926ae  0146-drm-msm-dpu-cache-layer-mixers-for-encoder-cleanup.patch
+ 87bea574b763f08a75e83d58ad6dcb9f245e34277a2a2c18c9b80d45fcc51f2f5ffcda7787b5a0e2d8c959efdb87dd3461a39bf73fc8389893f5ea48739d04db  0147-drm-msm-dpu-clean-up-command-mode-encoder-on-disable.patch
++1097cc6b5787ac635cb93e96ca425e3ecc750d8bde669961c41d6e9b0dedd5dc6113bba02043c4def611f455ffc427eaeda4fcff1c4434f7b3ac758bcaa815e6  0148-drm-msm-dp-return-0-from-audio_prepare-when-cable-is.patch
++dfe77a990e53d8c08c3254807eacdede80a664fab1589f66339372c3d305674bfaa0d70b62cc6ff981cc5d41de86074e51786b8e1620dce64d426d631e7ff26b  0149-ASoC-qcom-sm8250-start-DisplayPort-before-its-front-.patch
++22c75d25a811931d592b977dd9d630451a2fc676d5cb94c2610203628ae0781f2693a5d02e33a54bd4ee608eb7a32436aa31be1b0b73dd886bd1581785043aad  0150-ASoC-qcom-q6afe-dai-start-the-DisplayPort-port-when-.patch
+ f511b80c4e3fce3ea9a3e4ed097948d8ff4e60b7d2207e5741329c8a8304d170fba1abd477b8dab064821b096ce5745ffb3928b76bbffbfbe22f26a0018383c2  0152-media-i2c-lc898128-Support-a-slave-without-its-own-g.patch
+ 826978cd879c59a5b65107629215c0bd9e5bb36c3751a2098237bf4c8dc0574626da5d3f34b60906e66cd4c35fa4ee7dae4615c028323e82678402ef5d65d4df  0153-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
+ 54cdbacc74f73c75822768696a70cce440d9719c53717ab51b6852dc98497a071c35294cfdb58956b7ff639d5811acd25a12688fe5052cea6566e7c9c70e466a  0154-media-i2c-imx689-Add-a-2000x1500-4x4-binned-mode.patch
+-- 
+2.43.0
+

@@ -10,6 +10,7 @@
 | DisplayPort HBR3 and HDR signalling (`Colorspace`, `HDR_OUTPUT_METADATA`) | draft | kernel 0138–0143, pmaports 0059; [notes](displayport.md#hdr) |
 | DisplayPort over system sleep: the DP PHY loses its setup while the controller is suspended but was still taken as initialised, so the display was dropped after resume; a link that failed to train was pushed to idle without a link clock, which reset the phone | draft | kernel 0144–0145, pmaports 0060; [notes](displayport.md#system-sleep) |
 | Switching between the phone panel and an external DisplayPort monitor | Tested at 2880×1800, 120 Hz on the GR14BU | kernel 0146–0147, pmaports 0061 |
+| DisplayPort audio with nothing plugged in: preparing the PCM started the DSP's DisplayPort port, and the DSP took q6afe's whole command timeout to answer; every probe at boot waited for it | draft; tested on the phone with PulseAudio | kernel 0148–0150, pmaports 0076; [notes](displayport.md#audio-with-no-display) |
 | Charger input limit from USB-C/PD or USB-A detection, 2 A battery current | works | kernel 0082–0087, pmaports 0044; [notes](charging.md) |
 | Speakers + 3 microphones (VA macro, mic bias as in vendor DT) | works | kernel 0005, pmaports 0002, 0007 |
 | False headset detection with an ordinary USB cable, codec runtime-PM errors and unsorted RX register defaults | fixed; analog USB-C headsets untested | kernel 0055–0060, pmaports 0030; [notes](audio.md) |
@@ -153,10 +154,9 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
   follows these patches; see the table above. 0066 adds libcamera 0009–0010 (faster autofocus)
   and its tuning, 0067 adds kernel 0152–0156 (telephoto OIS, binned modes) and 0068
   adds libcamera 0011–0012 (white balance) with the tuning. 0075 adds kernel
-  0165–0167 (charging). Package numbers 0070–0074 and kernel numbers 0157–0164 are left
-  for the open DisplayPort pull requests. Package numbers 0062–0065
-  and kernel numbers 0148–0151 are left for the open DisplayPort pull requests. Package numbers 0050, 0051 and 0053
-  and kernel numbers 0105–0113 are unused.
+  0165–0167 (charging). From 0076 on the DisplayPort patches continue; see the table above.
+  Package numbers 0050, 0051, 0053, 0062–0065 and 0070–0074 and kernel numbers 0105–0113,
+  0151 and 0164 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
 - `sensors/` – script that sets up the sensors from your own phone.
 - `firmware/` – boot service that copies SLPI, Venus and CDSP firmware from your own phone.
@@ -184,6 +184,9 @@ Use the original from lore.kernel.org if you need it.
 Kernel patch 0101 is not my work: it is v2 of "drm/display: add hw_params callback
 function to drm_connector_hdmi_audio_ops" by Jianfeng Liu, carried unchanged
 (https://lore.kernel.org/r/20250925040530.20731-1-liujianfeng1994@gmail.com).
+
+Kernel patch 0148 is not my work: it is upstream commit d858770e86e7 ("drm/msm/dp: return
+0 from audio_prepare when cable is disconnected") by Kumar Anurag.
 
 Kernel patch 0014 (LC898217XC driver) is not my work: it is v4 of the driver Vasiliy
 Doylov posted to the linux-media mailing list in March 2026

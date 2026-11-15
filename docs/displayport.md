@@ -6,9 +6,10 @@ takes power from one that supplies it. VBUS comes from the board's external
 boost, not the PMIC's OTG boost.
 
 Audio is the `HDMI` device of its own UCM use case `DisplayPort`, 48 kHz
-stereo. It is kept out of `HiFi` because, without a display attached, the
-DisplayPort port fails to start and PipeWire would drop the whole profile,
-speakers and microphones included.
+stereo. It was kept out of `HiFi` because, without a display attached, the
+DisplayPort port failed to start and PipeWire dropped the whole profile,
+speakers and microphones included. Opening and preparing the PCM now succeed
+with nothing plugged in; see [Audio with no display](#audio-with-no-display).
 
 Tested with a GR14BU (2880×1800 at 100 and 120 Hz, touch, hub), powered by
 itself and by the phone, in both plug orientations.
@@ -38,6 +39,36 @@ enable sets it up again.
 
 A link that failed to train has no link clock. Its registers must not be
 written when the output is switched off; that write resets the phone.
+
+Suspending while DisplayPort audio plays still breaks the stream: after resume
+it stalls, and closing it times out in the DSP until a reboot. The AFE port
+stays started while the DP controller is powered down, with and without the
+change in [Audio with no display](#audio-with-no-display).
+
+## Audio with no display
+
+PipeWire and PulseAudio open and prepare every PCM of the card to probe it,
+also with nothing plugged into USB-C. Starting the DSP's DisplayPort port
+(AFE port 0x6020) without a stream on the link takes q6afe's whole command
+timeout, so every probe used to wait for it.
+
+- The q6afe DAI configures the DisplayPort port in prepare and starts it from
+  the back-end trigger, when the stream starts. Probing still opens the stream
+  on the DSP but no longer starts the port.
+- The SM8250 machine driver runs the back-end triggers of playback front ends
+  before the front end. The DSP needs the port running before the ASM stream
+  that feeds it starts: started after it, with a 20 ms buffer, every port start
+  timed out. The q6afe change relies on this order, which only this machine
+  driver sets.
+- The machine driver refuses the DisplayPort start with `-ENODEV` while the DP
+  jack reports no display. The DP driver reports the jack while a stream runs
+  on the link, so a refused start never reaches the AFE either, and a display
+  that is switched off counts as no display.
+- Opening and preparing the PCM succeed with nothing plugged in, so the profile
+  stays available.
+
+`tests/displayport/test-audio-start.py` checks the start order against the
+patched source.
 
 ## Pixel-rate limits
 
