@@ -38,6 +38,12 @@ engine for a peripheral flush only for YUV 4:2:0, never with these packets. It
 now does (kernel 0159); whether the flush alone puts them on the link has not
 been measured.
 
+## Display stream compression
+
+The experimental external DSC path and its known failures are documented in
+[DisplayPort DSC results](displayport-dsc.md). It reduces link bandwidth, while
+the display-engine pixel-rate limit below still applies.
+
 ## System sleep
 
 The DP PHY does not keep its registers while the controller is powered down
