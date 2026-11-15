@@ -40,6 +40,13 @@ enable sets it up again.
 A link that failed to train has no link clock. Its registers must not be
 written when the output is switched off; that write resets the phone.
 
+HPD on this phone comes from the USB-C connector, so nothing but the plugged
+state keeps the DP controller powered. `detect()` used to take a runtime PM
+reference on every probe and keep it, and the HPD plug handler took one on
+every plug event, which held the controller and the display core power domain
+on after the display was unplugged. Kernel 0157 and 0158 keep one reference
+per plugged state.
+
 Suspending while DisplayPort audio plays still breaks the stream: after resume
 it stalls, and closing it times out in the DSP until a reboot. The AFE port
 stays started while the DP controller is powered down, with and without the

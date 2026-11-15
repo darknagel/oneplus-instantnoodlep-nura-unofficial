@@ -1,0 +1,331 @@
+From 0b7d9ce5bd49b91ab1edf9c1c18c3b3634f173a5 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Sun, 15 Nov 2026 00:06:49 +0000
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: DisplayPort sleep follow-ups
+
+Replace kernel patch 0145 with Jesse Casco's posted fix for the same bug (skip PUSH_IDLE when the link was never enabled). Add 0157, Dmitry Baryshkov's patch that stops the HPD plug handler from taking a reference on repeated plug events, and 0158, Joonhoe Kim's patch that holds one runtime PM reference per plugged state, so the DP controller can suspend after the display is unplugged. Advance to release 89.
+---
+ ...not-push-idle-on-a-link-that-is-down.patch | 41 ---------
+ ...PUSH_IDLE-when-the-link-was-never-en.patch | 89 +++++++++++++++++++
+ ...-take-extra-references-on-multiple-p.patch | 34 +++++++
+ ...one-runtime-PM-reference-per-plugged.patch | 73 +++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   | 10 ++-
+ 5 files changed, 203 insertions(+), 44 deletions(-)
+ delete mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0145-drm-msm-dp-do-not-push-idle-on-a-link-that-is-down.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0145-drm-msm-dp-skip-PUSH_IDLE-when-the-link-was-never-en.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0157-drm-msm-dp-don-t-take-extra-references-on-multiple-p.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0158-drm-msm-dp-hold-one-runtime-PM-reference-per-plugged.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0145-drm-msm-dp-do-not-push-idle-on-a-link-that-is-down.patch b/device/testing/linux-postmarketos-qcom-sm8250/0145-drm-msm-dp-do-not-push-idle-on-a-link-that-is-down.patch
+deleted file mode 100644
+index f7c7f79965..0000000000
+--- a/device/testing/linux-postmarketos-qcom-sm8250/0145-drm-msm-dp-do-not-push-idle-on-a-link-that-is-down.patch
++++ /dev/null
+@@ -1,41 +0,0 @@
+-From 261bac462ecd3a11fd11a0a388fa37b758b7abeb Mon Sep 17 00:00:00 2001
+-From: Roman Kuraev <naoru.desu@gmail.com>
+-Date: Thu, 12 Nov 2026 15:26:09 +0000
+-Subject: [PATCH] drm/msm/dp: do not push idle on a link that is down
+-
+-When link training fails in msm_dp_bridge_atomic_enable(),
+-msm_dp_ctrl_on_link() has already switched the link clocks off again and
+-power_on stays unset, but the bridge remains enabled as far as the atomic
+-state is concerned. The following msm_dp_bridge_atomic_disable() writes
+-DP_STATE_CTRL_PUSH_IDLE to a link register without a link clock.
+-
+-On SM8250 the SoC resets in the modeset that takes such an output down: the
+-last messages are the failed link training and the encoder being disabled,
+-with no panic.
+-
+-Only push idle patterns on a link that was brought up.
+----
+- drivers/gpu/drm/msm/dp/dp_display.c | 7 +++++++
+- 1 file changed, 7 insertions(+)
+-
+-diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+-index 9c0ee32..873adb3 100644
+---- a/drivers/gpu/drm/msm/dp/dp_display.c
+-+++ b/drivers/gpu/drm/msm/dp/dp_display.c
+-@@ -1481,6 +1481,13 @@ void msm_dp_bridge_atomic_disable(struct drm_bridge *drm_bridge,
+- 
+- 	msm_dp_display = container_of(dp, struct msm_dp_display_private, msm_dp_display);
+- 
+-+	/*
+-+	 * Without a trained link the link clocks are off, and the link
+-+	 * registers must not be accessed.
+-+	 */
+-+	if (!dp->power_on)
+-+		return;
+-+
+- 	msm_dp_ctrl_push_idle(msm_dp_display->ctrl);
+- }
+- 
+--- 
+-2.51.2
+-
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0145-drm-msm-dp-skip-PUSH_IDLE-when-the-link-was-never-en.patch b/device/testing/linux-postmarketos-qcom-sm8250/0145-drm-msm-dp-skip-PUSH_IDLE-when-the-link-was-never-en.patch
+new file mode 100644
+index 0000000000..7c358714f8
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0145-drm-msm-dp-skip-PUSH_IDLE-when-the-link-was-never-en.patch
+@@ -0,0 +1,89 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Jesse Casco <jesse.casco@gmail.com>
++Date: Sat, 8 Aug 2026 13:13:25 -0400
++Subject: [PATCH] drm/msm/dp: skip PUSH_IDLE when the link was never enabled
++
++msm_dp_display_atomic_enable() returns early when link training fails,
++leaving ->power_on false and the main link down.
++msm_dp_display_atomic_disable() nevertheless writes DP_STATE_CTRL_PUSH_IDLE
++and waits for an idle-pattern completion that cannot arrive, so every failed
++enable is followed by "PUSH_IDLE pattern timedout".
++
++Every other step of the teardown is already gated on that flag:
++msm_dp_display_disable(), called from .atomic_post_disable(), returns early
++on !power_on. The PUSH_IDLE write is the only one that is not, so the
++controller's runtime-PM reference is then dropped without the link having
++been taken down.
++
++On glymur (Snapdragon X2 Elite) the consequence is not a warning. The SoC
++does not survive it: TrustZone force-stops the SOCCP and ADSP remote
++processors and the machine resets silently about 50 ms later, with no oops
++and no panic. On an ASUS Zenbook A16 (UX3607OA), whose eDP panel does not
++currently train, this reproduces without any compositor or GPU involvement:
++
++  # eDP enable has already failed with "Failed link training (rc=-104)"
++  echo 1 > /sys/class/graphics/fb0/blank
++
++  [535.645455] === marker ===
++  [535.694833] qcom_q6v5_pas d00000.remoteproc: fatal error received: \
++                 sys_m_smsm.c:512:TZ force stop
++  [535.694875] remoteproc remoteproc0: crash detected in soccp: type fatal error
++  [535.728857] qcom_q6v5_pas 6800000.remoteproc: fatal error received: \
++                 sys_m_smsm.c:783:err fatal notification received from TZ
++  <SoC reset>
++
++Gate the PUSH_IDLE write on ->power_on so the disable path is consistent
++with the rest of the teardown. With this applied the same sequence is
++harmless and the machine stays up; without it, it resets every time.
++
++The unconditional write dates back to the original DP driver
++(c943b4948b58 ("drm/msm/dp: add displayPort driver support")), but the
++surrounding code has been restructured several times since, so no Fixes:
++tag is offered.
++
++Note that the eDP link-training failure that exposes this on the A16 is a
++separate problem in the glymur eDP PHY and is reported separately; this
++change is about not damaging the machine when training fails, for whatever
++reason.
++
++Tested on ASUS Zenbook A16 (UX3607OA), Snapdragon X2 Elite Extreme, on
++linux-next next-20260803 and next-20260807. The machine has since been
++running next-20260807 with this patch as its daily driver.
++
++Link: https://lore.kernel.org/r/20260808171325.133041-1-jesse.casco@gmail.com
++Assisted-by: Anthropic:Claude-Opus-5
++Signed-off-by: Jesse Casco <jesse.casco@gmail.com>
++Reviewed-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
++[ backport to 7.2: the hunk lands in msm_dp_bridge_atomic_disable(); in this tree the disable path's msm_dp_display_disable() is reached from msm_dp_bridge_atomic_post_disable() ]
++---
++ drivers/gpu/drm/msm/dp/dp_display.c | 14 ++++++++++++++
++ 1 file changed, 14 insertions(+)
++
++diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
++index 9c0ee32..9a12d3b 100644
++--- a/drivers/gpu/drm/msm/dp/dp_display.c
+++++ b/drivers/gpu/drm/msm/dp/dp_display.c
++@@ -1481,6 +1481,20 @@ void msm_dp_bridge_atomic_disable(struct drm_bridge *drm_bridge,
++ 
++ 	msm_dp_display = container_of(dp, struct msm_dp_display_private, msm_dp_display);
++ 
+++	/*
+++	 * If .atomic_enable() bailed out - link training failure is the common
+++	 * case - the mainlink was never brought up and ->power_on stayed false.
+++	 * Driving the PUSH_IDLE pattern into a controller that was never
+++	 * enabled times out, and .atomic_post_disable() then drops the
+++	 * controller's runtime-PM reference without tearing the PHY back down,
+++	 * because msm_dp_display_disable() returns early on !power_on.  On
+++	 * glymur (Snapdragon X2 Elite) that combination is answered by a
+++	 * TrustZone-level SOCCP/ADSP force-stop and a silent SoC reset.
+++	 * There is nothing to push idle, so leave it alone.
+++	 */
+++	if (!dp->power_on)
+++		return;
+++
++ 	msm_dp_ctrl_push_idle(msm_dp_display->ctrl);
++ }
++ 
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0157-drm-msm-dp-don-t-take-extra-references-on-multiple-p.patch b/device/testing/linux-postmarketos-qcom-sm8250/0157-drm-msm-dp-don-t-take-extra-references-on-multiple-p.patch
+new file mode 100644
+index 0000000000..7a89c20107
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0157-drm-msm-dp-don-t-take-extra-references-on-multiple-p.patch
+@@ -0,0 +1,34 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
++Date: Sat, 24 Oct 2026 03:35:22 +0300
++Subject: [PATCH] drm/msm/dp: don't take extra references on multiple plug
++ events
++
++The upper layers might signal multiple sequential HPD plug events. Don't
++take extra references and skip all further HPD plug events until we
++receive the unplug event.
++
++Fixes: 3ea2d1c3d154 ("drm/msm/dp: turn link_ready into plugged")
++Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
++Link: https://lore.kernel.org/r/20261024-hpd-irq-events-v8-6-6ee949e7a384@oss.qualcomm.com
++---
++ drivers/gpu/drm/msm/dp/dp_display.c | 3 +++
++ 1 file changed, 3 insertions(+)
++
++diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
++index 9a12d3b..fcc653a 100644
++--- a/drivers/gpu/drm/msm/dp/dp_display.c
+++++ b/drivers/gpu/drm/msm/dp/dp_display.c
++@@ -402,6 +402,9 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
++ 
++ 	guard(mutex)(&dp->plugged_lock);
++ 
+++	if (dp->plugged)
+++		return 0;
+++
++ 	ret = pm_runtime_resume_and_get(&pdev->dev);
++ 	if (ret) {
++ 		DRM_ERROR("failed to pm_runtime_resume\n");
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0158-drm-msm-dp-hold-one-runtime-PM-reference-per-plugged.patch b/device/testing/linux-postmarketos-qcom-sm8250/0158-drm-msm-dp-hold-one-runtime-PM-reference-per-plugged.patch
+new file mode 100644
+index 0000000000..3070ba5ea6
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0158-drm-msm-dp-hold-one-runtime-PM-reference-per-plugged.patch
+@@ -0,0 +1,73 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Joonhoe Kim <26rote@gmail.com>
++Date: Sat, 24 Oct 2026 14:19:52 +0900
++Subject: [PATCH] drm/msm/dp: hold one runtime PM reference per plugged state
++
++msm_dp_bridge_detect() takes a runtime PM reference and keeps it when
++it leaves the sink plugged, so that the plugged state keeps the
++controller on. If the sink was plugged already, the plugged state holds
++a reference, and the new one is leaked. If the sink was plugged and
++detect() finds it gone, it drops only its own reference and clears the
++plugged state, so the unplug handler skips the put and the plugged
++state's reference is leaked as well.
++
++detect() runs on every probe of the connector. When HPD comes from a
++later bridge, such as a USB-C connector, nothing else keeps the
++controller on, and the leaked references keep it and the MDSS core GDSC
++powered after the display is unplugged.
++
++Hold the function's own reference for the duration of the call, take
++the plugged state's reference when detect() sets the plugged state and
++drop it when detect() clears it.
++
++Link: https://lore.kernel.org/r/20261024051952.2006-1-26rote@gmail.com
++Fixes: 3ea2d1c3d154 ("drm/msm/dp: turn link_ready into plugged")
++Signed-off-by: Joonhoe Kim <26rote@gmail.com>
++Reviewed-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
++---
++ drivers/gpu/drm/msm/dp/dp_display.c | 10 ++++++++--
++ 1 file changed, 8 insertions(+), 2 deletions(-)
++
++diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
++index fcc653a..f3a1372 100644
++--- a/drivers/gpu/drm/msm/dp/dp_display.c
+++++ b/drivers/gpu/drm/msm/dp/dp_display.c
++@@ -835,6 +835,7 @@ enum drm_connector_status msm_dp_bridge_detect(struct drm_bridge *bridge,
++ 	u8 dpcd[DP_RECEIVER_CAP_SIZE];
++ 	struct drm_dp_desc desc;
++ 	bool phy_deinit;
+++	bool was_plugged;
++ 	int ret;
++ 
++ 	dp = to_dp_bridge(bridge)->msm_dp_display;
++@@ -842,12 +843,14 @@ enum drm_connector_status msm_dp_bridge_detect(struct drm_bridge *bridge,
++ 	priv = container_of(dp, struct msm_dp_display_private, msm_dp_display);
++ 
++ 	guard(mutex)(&priv->plugged_lock);
++-	ret = pm_runtime_resume_and_get(&dp->pdev->dev);
+++	PM_RUNTIME_ACQUIRE_IF_ENABLED(&dp->pdev->dev, pm);
+++	ret = PM_RUNTIME_ACQUIRE_ERR(&pm);
++ 	if (ret) {
++ 		DRM_ERROR("failed to pm_runtime_resume\n");
++ 		return status;
++ 	}
++ 
+++	was_plugged = priv->plugged;
++ 	phy_deinit = msm_dp_display_host_phy_init(priv);
++ 
++ 	msm_dp_aux_enable_xfers(priv->aux, true);
++@@ -897,7 +900,10 @@ end:
++ 			msm_dp_display_host_phy_exit(priv);
++ 		}
++ 
++-		pm_runtime_put_sync(&dp->pdev->dev);
+++		if (was_plugged)
+++			pm_runtime_put_noidle(&dp->pdev->dev);
+++	} else if (!was_plugged) {
+++		pm_runtime_get_noresume(&dp->pdev->dev);
++ 	}
++ 
++ 	return status;
++-- 
++2.51.2
++
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 3f667eecaa..42782b19ca 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=88
++pkgrel=89
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -174,7 +174,7 @@ source="
+ 	0142-drm-msm-dp-expose-Colorspace-and-HDR_OUTPUT_METADATA.patch
+ 	0143-drm-msm-dp-refresh-link-capabilities-on-sink-discovery.patch
+ 	0144-drm-msm-dp-shut-the-PHY-down-when-the-controller-is-.patch
+-	0145-drm-msm-dp-do-not-push-idle-on-a-link-that-is-down.patch
++	0145-drm-msm-dp-skip-PUSH_IDLE-when-the-link-was-never-en.patch
+ 	0146-drm-msm-dpu-cache-layer-mixers-for-encoder-cleanup.patch
+ 	0147-drm-msm-dpu-clean-up-command-mode-encoder-on-disable.patch
+ 	0148-drm-msm-dp-return-0-from-audio_prepare-when-cable-is.patch
+@@ -185,6 +185,8 @@ source="
+ 	0154-media-i2c-imx689-Add-a-2000x1500-4x4-binned-mode.patch
+ 	0155-media-i2c-imx586-Add-a-2000x1500-4x4-binned-mode.patch
+ 	0156-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Give-th.patch
++	0157-drm-msm-dp-don-t-take-extra-references-on-multiple-p.patch
++	0158-drm-msm-dp-hold-one-runtime-PM-reference-per-plugged.patch
+ 	0165-power-supply-qcom_pm8150b-keep-USB-input-while-VBUS-.patch
+ 	0166-power-supply-qcom_pm8150b-charge-by-the-fuel-gauge-l.patch
+ 	0167-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Let-the.patch
+@@ -369,7 +371,7 @@ f4de0c04450a74fcd907836614dfd2444fd47ca65485d671466be914fa1e958e845929d27ba996fb
+ 20fd1e9b4e7ccb7dd0b6f868e5b1218ff7bf8d26576115f3e8d1075489688c84fb3165f7bb37560c86afa5b56b3cd4b502c481463e515ef2986a4258ed57690e  0142-drm-msm-dp-expose-Colorspace-and-HDR_OUTPUT_METADATA.patch
+ 191498da909f627a069265cbc7a84a0b5b5429800cfd1f82a6c3ca7aa23bcff42b9392b3c088ba16dcb857175d6c6ea30e956b9e2d3937006a26c207e0da86cd  0143-drm-msm-dp-refresh-link-capabilities-on-sink-discovery.patch
+ 72c91435b08133eedb1fb70f948e80e8d705c16d00d19390eba1e24a1864c6c8bc3f888c72e7e3ec0471a2b6546ba6235ef6d0d1b794267826b1421924d9c077  0144-drm-msm-dp-shut-the-PHY-down-when-the-controller-is-.patch
+-40ed000dd0c9c30b0e6c6bf7a30a0c6ab4a3bfdcac396d40b83f9cf76ae2c5aab5f5f5c63bd948e176ff2e2c668524191caf556eee4889f4b8b0efa2b01970cb  0145-drm-msm-dp-do-not-push-idle-on-a-link-that-is-down.patch
++8a001dc2f3e50abef1afa0fd291c479934299800834c24e935771e180f2552eb0009605ada7e95e6de9fd792919f67b6bfd719481c652f742318ab61578e3dbb  0145-drm-msm-dp-skip-PUSH_IDLE-when-the-link-was-never-en.patch
+ 6c8d1d5e061b60ed57a56fefccdb649fbc93806c141d44f92170ddfe5000384e2d61c8fb46bce927c0383614b4feae2327126050cd149fe15bc1fbbfb24926ae  0146-drm-msm-dpu-cache-layer-mixers-for-encoder-cleanup.patch
+ 87bea574b763f08a75e83d58ad6dcb9f245e34277a2a2c18c9b80d45fcc51f2f5ffcda7787b5a0e2d8c959efdb87dd3461a39bf73fc8389893f5ea48739d04db  0147-drm-msm-dpu-clean-up-command-mode-encoder-on-disable.patch
+ 1097cc6b5787ac635cb93e96ca425e3ecc750d8bde669961c41d6e9b0dedd5dc6113bba02043c4def611f455ffc427eaeda4fcff1c4434f7b3ac758bcaa815e6  0148-drm-msm-dp-return-0-from-audio_prepare-when-cable-is.patch
+@@ -380,6 +382,8 @@ f511b80c4e3fce3ea9a3e4ed097948d8ff4e60b7d2207e5741329c8a8304d170fba1abd477b8dab0
+ 54cdbacc74f73c75822768696a70cce440d9719c53717ab51b6852dc98497a071c35294cfdb58956b7ff639d5811acd25a12688fe5052cea6566e7c9c70e466a  0154-media-i2c-imx689-Add-a-2000x1500-4x4-binned-mode.patch
+ 1d70c87eb758650ccda96210a573833d01459a9d0d0cdf1c0e5afe259a18d61115217f92d4196107b77b48d8a06e87c332d150c7d82ca260453af0502cf927fb  0155-media-i2c-imx586-Add-a-2000x1500-4x4-binned-mode.patch
+ 2222f6e0f661204650349a7fc774e00f64b393d3711e0f768c7e94a8b963c4180776b03f312479bd7993b3597e4b645546cc24ddea48797731e8fec1f8ed9240  0156-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Give-th.patch
++d1189b1060c13218b89bb15b24981219b3834d8bd2b86d840f3889b0a8154cfe2f19449b764c8df61fb1836a11f775307a0807dc4315237ff42506a5fbf67a3e  0157-drm-msm-dp-don-t-take-extra-references-on-multiple-p.patch
++e1987069678d09858f8d70778de36981859d220183b2ed985802523a2a64f4aa2d16b4aec9545dfe0db1617b3a6be33f6394351868e6be76d5ab0f0fde507993  0158-drm-msm-dp-hold-one-runtime-PM-reference-per-plugged.patch
+ a77ef5dfd551fe704b0e0493956ea313b62a03be8ac47cb8351b470f8c5fbb908443fbb4be04c190c508e4d77e33aebd9b037e78c573caf71fa74560c8b30851  0165-power-supply-qcom_pm8150b-keep-USB-input-while-VBUS-.patch
+ f4a2f77d3ce682ed71486f798703da8a87e440c6560bddbc20e5635d6558130a0f67aff193453d8ae1fe1078245b9d4ab97b5c3217d997680d38050657e28e0a  0166-power-supply-qcom_pm8150b-charge-by-the-fuel-gauge-l.patch
+ 4ba48c6ba0585966b88b944bbafeff78d18fd037e1d4e66554e413ec837173e98e44694f4cbb961f095d7f1a3b4e3a9ca7ff00cbfc935db8658e5299aa27c598  0167-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Let-the.patch
+-- 
+2.43.0
+
