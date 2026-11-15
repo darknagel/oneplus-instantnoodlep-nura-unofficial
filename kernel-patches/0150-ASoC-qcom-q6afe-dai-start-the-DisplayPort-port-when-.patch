@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Sat, 14 Nov 2026 13:27:01 +0000
+Subject: [PATCH] ASoC: qcom: q6afe-dai: start the DisplayPort port when the
+ stream starts
+
+q6afe_dai_prepare() starts every AFE port. Userspace opens and prepares
+the DisplayPort PCM to probe it, also with no display connected, and on
+SM8250 the DSP then takes q6afe's whole command timeout to answer the
+start of port 0x6020. PipeWire opens the PCM several times while it
+probes the card, so a boot with nothing plugged into USB-C loses many
+seconds before any sound comes up.
+
+Configure the DisplayPort port in prepare as before, but start it from
+the trigger, which the Qualcomm DPCM back ends run in nonatomic context.
+A probe that never starts the stream then never starts the AFE port, and
+a start can be refused before it does. Prepare still opens the ASM
+stream and the COPP on the DSP; only the port start moves. An atomic PCM
+keeps starting the port in prepare.
+
+The DSP needs the port running before the ASM stream that feeds it
+starts, so this depends on the machine driver triggering the back end
+before the front end, which the SM8250 machine driver does since the
+previous patch. With the default order the port would start after the
+ASM stream; with a 20 ms buffer none of 12 such starts succeeded.
+Compress front ends always trigger the front end first; this card has
+none.
+
+hw_free and shutdown stop the port as before, and a repeated prepare
+still stops a running port before configuring it again.
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ sound/soc/qcom/qdsp6/q6afe-dai.c | 42 ++++++++++++++++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+
+diff --git a/sound/soc/qcom/qdsp6/q6afe-dai.c b/sound/soc/qcom/qdsp6/q6afe-dai.c
+index 8109db1..085659e 100644
+--- a/sound/soc/qcom/qdsp6/q6afe-dai.c
++++ b/sound/soc/qcom/qdsp6/q6afe-dai.c
+@@ -437,6 +437,10 @@ static int q6afe_dai_prepare(struct snd_pcm_substream *substream,
+ 		return -EINVAL;
+ 	}
+ 
++	/* The DisplayPort port is started from q6hdmi_dai_trigger(). */
++	if (dai->id == DISPLAY_PORT_RX && substream->pcm->nonatomic)
++		return 0;
++
+ 	rc = q6afe_port_start(dai_data->port[dai->id]);
+ 	if (rc < 0) {
+ 		dev_err(dai->dev, "fail to start AFE port %x\n", dai->id);
+@@ -447,6 +451,43 @@ static int q6afe_dai_prepare(struct snd_pcm_substream *substream,
+ 	return 0;
+ }
+ 
++/*
++ * On SM8250 the DSP takes q6afe's whole command timeout to answer the start of
++ * the DisplayPort port while no stream runs on the link. Userspace opens and
++ * prepares the PCM to probe it, also with nothing plugged in, so start this
++ * port when the stream starts instead. The machine driver can refuse the start
++ * before this runs. On a nonatomic PCM the trigger may wait for the DSP; an
++ * atomic one keeps starting the port in prepare.
++ *
++ * The DSP needs this port running before the ASM stream that feeds it starts,
++ * so the machine driver has to trigger the back end before the front end, as
++ * sm8250.c does for its playback front ends.
++ */
++static int q6hdmi_dai_trigger(struct snd_pcm_substream *substream, int cmd,
++			      struct snd_soc_dai *dai)
++{
++	struct q6afe_dai_data *dai_data = dev_get_drvdata(dai->dev);
++	int rc;
++
++	if (dai->id != DISPLAY_PORT_RX || dai_data->is_port_started[dai->id])
++		return 0;
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		rc = q6afe_port_start(dai_data->port[dai->id]);
++		if (rc < 0) {
++			dev_err(dai->dev, "fail to start AFE port %x\n", dai->id);
++			return rc;
++		}
++		dai_data->is_port_started[dai->id] = true;
++		break;
++	}
++
++	return 0;
++}
++
+ static int q6hdmi_dai_hw_free(struct snd_pcm_substream *substream,
+ 			      struct snd_soc_dai *dai)
+ {
+@@ -735,6 +776,7 @@ static const struct snd_soc_dai_ops q6hdmi_ops = {
+ 	.prepare		= q6afe_dai_prepare,
+ 	.hw_params		= q6hdmi_hw_params,
+ 	.hw_free		= q6hdmi_dai_hw_free,
++	.trigger		= q6hdmi_dai_trigger,
+ 	.shutdown		= q6afe_dai_shutdown,
+ };
+ 
+-- 
+2.51.2
+
