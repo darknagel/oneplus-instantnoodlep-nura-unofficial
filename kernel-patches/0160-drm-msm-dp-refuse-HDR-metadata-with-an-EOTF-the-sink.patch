@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Sat, 14 Nov 2026 21:56:19 +0000
+Subject: [PATCH] drm/msm/dp: refuse HDR metadata with an EOTF the sink does
+ not list
+
+msm_dp_bridge_atomic_check() takes any HDR_OUTPUT_METADATA blob, so a
+client can send PQ or HLG metadata to a display that does not support it.
+
+Refuse metadata that is not static metadata type 1, and an EOTF that the
+sink does not list in the HDR static metadata block of its EDID.
+Traditional SDR gamma needs no such block and is always accepted.
+
+drm_hdmi_infoframe_set_hdr_metadata() only logs such an EOTF, so a client
+that keeps PQ metadata after the display is swapped for one without HDR
+now gets a failed commit instead of an SDR picture with metadata the
+display ignores. Xilin Wu's static HDR series for this driver refuses the
+same metadata, and is stricter: it also requires the block for SDR
+(https://lore.kernel.org/r/20261009-msm-dp-hdr10-v2-20-1835d4966da3@radxa.com).
+
+Signed-off-by: Roman Kuraev <naoru.desu@gmail.com>
+---
+ drivers/gpu/drm/msm/dp/dp_display.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index a86adb9..3215a46 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -1399,6 +1399,24 @@ int msm_dp_bridge_atomic_check(struct drm_bridge *bridge,
+ 		return -EINVAL;
+ 	}
+ 
++	if (conn_state->hdr_output_metadata) {
++		const struct hdr_output_metadata *metadata =
++			conn_state->hdr_output_metadata->data;
++		u8 eotf = metadata->hdmi_metadata_type1.eotf;
++		u8 sink_eotfs = conn_state->connector->display_info.hdr_sink_metadata.hdmi_type1.eotf;
++
++		if (metadata->metadata_type != HDMI_STATIC_METADATA_TYPE1 ||
++		    metadata->hdmi_metadata_type1.metadata_type != HDMI_STATIC_METADATA_TYPE1)
++			return -EINVAL;
++
++		/* Traditional SDR gamma needs no HDR static metadata block. */
++		if (eotf != HDMI_EOTF_TRADITIONAL_GAMMA_SDR &&
++		    (eotf > 7 || !(sink_eotfs & BIT(eotf)))) {
++			drm_dbg_dp(dp->drm_dev, "sink does not list EOTF %u\n", eotf);
++			return -EINVAL;
++		}
++	}
++
+ 	old_conn_state = drm_atomic_get_old_connector_state(conn_state->state,
+ 							   conn_state->connector);
+ 	if (!old_conn_state || !old_conn_state->crtc)
+-- 
+2.51.2
+

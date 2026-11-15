@@ -25,9 +25,18 @@ the GR14BU, and reconnecting the ASUS restored HBR3.
 
 The connector has `Colorspace` (`Default`, `BT2020_RGB`) and
 `HDR_OUTPUT_METADATA`. Setting them marks the stream as BT.2020 in the VSC SDP
-and sends the static metadata infoframe; either change causes a modeset. The
+and sends the static metadata infoframe; either change causes a modeset.
+Metadata whose EOTF the display does not list in its EDID is refused. The
 link uses 10 bits per channel whenever the display reports it and the mode
-fits. The image has no compositor, so a DRM client has to set these.
+fits; there is no `max bpc` property yet, so HDR is not refused when the link
+can only carry 8 or 6 bits. The image has no compositor, so a DRM client has
+to set these.
+
+The SM8250 controller (revision 1.2.0.3) latches these packets through
+`SDP_CFG3` (kernel 0141). When that was measured, the driver asked the display
+engine for a peripheral flush only for YUV 4:2:0, never with these packets. It
+now does (kernel 0159); whether the flush alone puts them on the link has not
+been measured.
 
 ## System sleep
 
