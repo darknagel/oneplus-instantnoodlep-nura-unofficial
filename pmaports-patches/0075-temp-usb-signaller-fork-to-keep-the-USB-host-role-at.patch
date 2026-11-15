@@ -1,0 +1,293 @@
+From 3aa59c03834d489b251908b8d831872f7e13cf73 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Sun, 15 Nov 2026 13:15:45 +0000
+Subject: [PATCH 75/75] temp/usb-signaller: fork to keep the USB host role at
+ boot
+
+usb-signaller 0.4.3 switches the USB role from host to device when it applies its default mode at startup and when it stops. When a USB-C hub or monitor is attached at boot, the Type-C port controller often picks host role before usb-signaller starts, so the hub and everything behind it, such as a monitor's touchscreen, stay off until plugged in again. Fork it with a patch that defers the default mode while the role is host and applies it once a USB device controller appears, and that leaves the role alone on stop.
+---
+ ...st-role-picked-by-the-Type-C-port-co.patch | 184 ++++++++++++++++++
+ temp/usb-signaller/APKBUILD                   |  60 ++++++
+ temp/usb-signaller/usb-signaller.initd        |  12 ++
+ 3 files changed, 256 insertions(+)
+ create mode 100644 temp/usb-signaller/0001-main-keep-the-host-role-picked-by-the-Type-C-port-co.patch
+ create mode 100644 temp/usb-signaller/APKBUILD
+ create mode 100644 temp/usb-signaller/usb-signaller.initd
+
+diff --git a/temp/usb-signaller/0001-main-keep-the-host-role-picked-by-the-Type-C-port-co.patch b/temp/usb-signaller/0001-main-keep-the-host-role-picked-by-the-Type-C-port-co.patch
+new file mode 100644
+index 000000000..3d9ed1fb0
+--- /dev/null
++++ b/temp/usb-signaller/0001-main-keep-the-host-role-picked-by-the-Type-C-port-co.patch
+@@ -0,0 +1,184 @@
++From 0b3d015aaa3c4b23a47cd287691cbff000d9e8bf Mon Sep 17 00:00:00 2001
++From: Roman Kuraev <naoru.desu@gmail.com>
++Date: Sun, 15 Nov 2026 13:10:09 +0000
++Subject: [PATCH] main: keep the host role picked by the Type-C port controller
++
++On a phone whose Type-C port controller switches the USB role, the port
++goes to host role as soon as the phone powers an attached hub or
++display, which can happen before usb-signaller starts. Applying the
++default mode then switched the role from host to device, and so did the
++charging_only cleanup when the service stopped. Both disconnect
++everything attached until it is plugged in again: on the OnePlus 8 Pro,
++the USB hub and touchscreen of a USB-C monitor stayed dead after boot.
++
++While the role is host, defer the default mode and apply it once a UDC
++appears, which happens when the role switches to device, and skip the
++cleanup on stop. An explicit set_mode request over D-Bus still switches
++the role.
++---
++ src/main.rs    | 50 ++++++++++++++++++++++++++++++++++----------------
++ src/monitor.rs | 30 +++++++++++++++++++++++++++++-
++ src/urs.rs     | 11 +++++++++++
++ 3 files changed, 74 insertions(+), 17 deletions(-)
++
++diff --git a/src/main.rs b/src/main.rs
++index 0cf27ea..d5a7864 100644
++--- a/src/main.rs
+++++ b/src/main.rs
++@@ -40,7 +40,7 @@ use crate::configuration::Configuration;
++ use crate::dbus::{UsbModedDBus, create_usbmoded_connection};
++ use crate::monitor::monitor_usb_events;
++ use crate::udc::{UDC, discover_udcs};
++-use crate::urs::{URS, discover_urss};
+++use crate::urs::{URS, discover_urss, host_role_active};
++ 
++ #[tokio::main]
++ async fn main() -> Result<()> {
++@@ -103,13 +103,26 @@ async fn main() -> Result<()> {
++     /* Create DBus server */
++     let connection = create_usbmoded_connection().await?;
++ 
++-    /* Apply default mode if needed */
+++    /*
+++     * Apply default mode if needed. In host role there is no UDC to configure
+++     * and switching to device role would disconnect what is attached, so
+++     * defer the default mode until a UDC appears (role switched to device).
+++     */
+++    let mut deferred_mode: Option<String> = None;
++     if let Ok(default_mode) = Configuration::get_default_mode() {
++-        println!("ℹ️  Applying default mode: {default_mode}");
++-        let emitter = SignalEmitter::new(&connection.clone(), "/com/meego/usb_moded")?;
++-        if let Err(error) = UsbModedDBus::set_mode(&UsbModedDBus, &default_mode, emitter).await {
++-            eprintln!("⚠️  Failed to set default mode: {error:?}");
++-        };
+++        if host_role_active() {
+++            println!(
+++                "ℹ️  USB role is host, deferring default mode until a UDC appears: {default_mode}"
+++            );
+++            deferred_mode = Some(default_mode);
+++        } else {
+++            println!("ℹ️  Applying default mode: {default_mode}");
+++            let emitter = SignalEmitter::new(&connection.clone(), "/com/meego/usb_moded")?;
+++            if let Err(error) = UsbModedDBus::set_mode(&UsbModedDBus, &default_mode, emitter).await
+++            {
+++                eprintln!("⚠️  Failed to set default mode: {error:?}");
+++            };
+++        }
++     }
++ 
++     /* Spawn udev monitor as background task */
++@@ -119,7 +132,7 @@ async fn main() -> Result<()> {
++             let shutdown_connection = &connection.clone();
++             tokio::task::spawn_local(async move {
++                 println!("ℹ️  Running udev monitor");
++-                if let Err(error) = monitor_usb_events(connection.clone()).await {
+++                if let Err(error) = monitor_usb_events(connection.clone(), deferred_mode).await {
++                     eprintln!("⚠️  Failed to monitor udev events: {error:?}");
++                 }
++             });
++@@ -137,15 +150,20 @@ async fn main() -> Result<()> {
++                 }
++             }
++ 
++-            /* Clean up */
+++            /* Clean up, but never switch away from host role: that disconnects what is attached */
++             println!("ℹ️  Cleaning up!");
++-            let emitter =
++-                SignalEmitter::new(&shutdown_connection.clone(), "/com/meego/usb_moded").unwrap();
++-            if let Err(error) =
++-                UsbModedDBus::set_mode(&UsbModedDBus, "charging_only", emitter).await
++-            {
++-                eprintln!("⚠️  Failed to clean up before shutdown: {error:?}");
++-            };
+++            if host_role_active() {
+++                println!("ℹ️  USB role is host, leaving the role and gadgets as they are");
+++            } else {
+++                let emitter =
+++                    SignalEmitter::new(&shutdown_connection.clone(), "/com/meego/usb_moded")
+++                        .unwrap();
+++                if let Err(error) =
+++                    UsbModedDBus::set_mode(&UsbModedDBus, "charging_only", emitter).await
+++                {
+++                    eprintln!("⚠️  Failed to clean up before shutdown: {error:?}");
+++                };
+++            }
++         })
++         .await;
++ 
++diff --git a/src/monitor.rs b/src/monitor.rs
++index e142c69..b172d67 100644
++--- a/src/monitor.rs
+++++ b/src/monitor.rs
++@@ -3,18 +3,46 @@ use tokio_udev::{AsyncMonitorSocket, EventType};
++ use zbus::{Connection, object_server::SignalEmitter};
++ 
++ use crate::UsbModedDBus;
+++use crate::udc::discover_udcs;
++ 
++-pub async fn monitor_usb_events(connection: Connection) -> anyhow::Result<()> {
+++/* Apply the default mode deferred at startup because the USB role was host */
+++async fn apply_deferred_mode(deferred_mode: &mut Option<String>, emitter: &SignalEmitter<'_>) {
+++    if let Some(mode) = deferred_mode.take() {
+++        println!("ℹ️  UDC available, applying deferred default mode: {mode}");
+++        if let Err(error) = UsbModedDBus::set_mode(&UsbModedDBus, &mode, emitter.clone()).await {
+++            eprintln!("⚠️  Failed to set default mode: {error:?}");
+++        }
+++    }
+++}
+++
+++pub async fn monitor_usb_events(
+++    connection: Connection,
+++    mut deferred_mode: Option<String>,
+++) -> anyhow::Result<()> {
++     let mut monitor = AsyncMonitorSocket::new(
++         tokio_udev::MonitorBuilder::new()?
++             .match_subsystem("typec")?
+++            .match_subsystem("udc")?
++             .listen()?,
++     )?;
++     let emitter = SignalEmitter::new(&connection, "/com/meego/usb_moded")?;
++ 
+++    /* The role may have switched to device before the monitor started */
+++    if deferred_mode.is_some() && !discover_udcs().is_empty() {
+++        apply_deferred_mode(&mut deferred_mode, &emitter).await;
+++    }
+++
++     while let Some(event) = monitor.next().await {
++         let event = event?;
++ 
+++        /* A UDC appears when the USB role switches to device */
+++        if event.subsystem().is_some_and(|s| s == "udc") {
+++            if matches!(event.event_type(), EventType::Add) {
+++                apply_deferred_mode(&mut deferred_mode, &emitter).await;
+++            }
+++            continue;
+++        }
+++
++         match event.event_type() {
++             EventType::Add => {
++                 println!("ℹ️  Cable connected (typec)");
++diff --git a/src/urs.rs b/src/urs.rs
++index 8ab71c8..4200d65 100644
++--- a/src/urs.rs
+++++ b/src/urs.rs
++@@ -54,6 +54,17 @@ pub fn discover_urss() -> Vec<String> {
++     return urss;
++ }
++ 
+++/*
+++ * True if a USB Role Switcher is in host role. On ports with a Type-C port
+++ * controller, the controller picks host role when a device or hub is
+++ * attached; switching to device role then disconnects it.
+++ */
+++pub fn host_role_active() -> bool {
+++    return discover_urss()
+++        .iter()
+++        .any(|name| matches!(URS::load(name), Ok(urs) if urs.role == URSRole::Host));
+++}
+++
++ impl URS {
++     fn wait_for_role(switch_name: &str, role: &str) -> anyhow::Result<()> {
++         for _n in 1..30 {
++-- 
++2.51.2
++
+diff --git a/temp/usb-signaller/APKBUILD b/temp/usb-signaller/APKBUILD
+new file mode 100644
+index 000000000..34202584e
+--- /dev/null
++++ b/temp/usb-signaller/APKBUILD
+@@ -0,0 +1,60 @@
++# Forked from Alpine: keep the USB host role that the Type-C port controller
++# picks when the phone powers a hub or monitor at boot, instead of switching
++# it to device role for the default mode. From instantnoodlep-nura-unofficial,
++# usb-signaller-patches/
++maintainer="Dylan Van Assche <dylan@postmarketos.org>"
++pkgname=usb-signaller
++pkgver=0.4.3
++pkgrel=10
++pkgdesc="Switch between different USB gadgets"
++url="https://codeberg.org/DylanVanAssche/usb-signaller"
++arch="all"
++license="GPL-3.0-or-later"
++source="$pkgname-$pkgver.tar.gz::https://codeberg.org/DylanVanAssche/usb-signaller/archive/v$pkgver.tar.gz
++	usb-signaller.initd
++	0001-main-keep-the-host-role-picked-by-the-Type-C-port-co.patch
++"
++makedepends="cargo-auditable eudev-dev"
++subpackages="$pkgname-systemd $pkgname-openrc"
++options="net"
++builddir="$srcdir/$pkgname"
++
++prepare() {
++	default_prepare
++	cargo fetch --target="$CHOST" --locked
++}
++
++build() {
++	cargo auditable build --release --frozen
++}
++
++check() {
++	cargo test --frozen
++}
++
++package() {
++	install -Dm755 target/release/usb-signaller "$pkgdir"/usr/bin/usb-signaller
++
++	# Init service files
++	for f in "$srcdir"/usb-signaller.initd distro/openrc/*.initd; do
++		install -Dm755 "$f" "$pkgdir"/etc/init.d/"$(basename "$f" .initd)"
++	done
++
++	for f in *.service distro/systemd/*.service; do
++		install -Dm644 "$f" "$pkgdir"/usr/lib/systemd/system/"$(basename "$f")"
++	done
++
++	for f in distro/scripts/*.sh; do
++		# service scripts/units expect no .sh extension
++		install -Dm755 "$f" "$pkgdir"/usr/bin/"$(basename "$f" .sh)"
++	done
++
++	# DBus policy
++	install -Dm644 com.meego.usb_moded.conf -t "$pkgdir"/usr/share/dbus-1/system.d/
++}
++
++sha512sums="
++10be75cccb2fa02bb818c2d02e57067b4bb9405041b0989537e0ecc53b9917e7bdc5ada4666a1cff3fa8e3f3c4593535ecf5470db86c6822b9b049d871f539dd  usb-signaller-0.4.3.tar.gz
++39d604f91a8cb5bdb358fda05902a67de6403b99e5cba8d094b18f463cc1520cf80a43e2a60acf7fcfff85b9d4b0c57f64cedba8d080acd2f809b0c699683490  usb-signaller.initd
++33220b055ccf5068aa2c4165bae4f9e0cee3d8c10588b8f97ba83e9049012e84ec54d89c51bd4222d8e73202622eae6f06b5b82ba6f5dca6251e382c7f81205b  0001-main-keep-the-host-role-picked-by-the-Type-C-port-co.patch
++"
+diff --git a/temp/usb-signaller/usb-signaller.initd b/temp/usb-signaller/usb-signaller.initd
+new file mode 100644
+index 000000000..c4e775f5f
+--- /dev/null
++++ b/temp/usb-signaller/usb-signaller.initd
+@@ -0,0 +1,12 @@
++#!/sbin/openrc-run
++
++supervisor=supervise-daemon
++name=usb-signaller
++description="usb-signaller USB gadget controller"
++command="/usr/bin/usb-signaller"
++output_logger="logger -t usb-signaller -p daemon.info"
++error_logger="logger -t usb-signaller -p daemon.warning"
++
++depend() {
++	need dbus
++}
+-- 
+2.51.2
+

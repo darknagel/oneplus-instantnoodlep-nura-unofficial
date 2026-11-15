@@ -1,0 +1,184 @@
+From 0b3d015aaa3c4b23a47cd287691cbff000d9e8bf Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Sun, 15 Nov 2026 13:10:09 +0000
+Subject: [PATCH] main: keep the host role picked by the Type-C port controller
+
+On a phone whose Type-C port controller switches the USB role, the port
+goes to host role as soon as the phone powers an attached hub or
+display, which can happen before usb-signaller starts. Applying the
+default mode then switched the role from host to device, and so did the
+charging_only cleanup when the service stopped. Both disconnect
+everything attached until it is plugged in again: on the OnePlus 8 Pro,
+the USB hub and touchscreen of a USB-C monitor stayed dead after boot.
+
+While the role is host, defer the default mode and apply it once a UDC
+appears, which happens when the role switches to device, and skip the
+cleanup on stop. An explicit set_mode request over D-Bus still switches
+the role.
+---
+ src/main.rs    | 50 ++++++++++++++++++++++++++++++++++----------------
+ src/monitor.rs | 30 +++++++++++++++++++++++++++++-
+ src/urs.rs     | 11 +++++++++++
+ 3 files changed, 74 insertions(+), 17 deletions(-)
+
+diff --git a/src/main.rs b/src/main.rs
+index 0cf27ea..d5a7864 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -40,7 +40,7 @@ use crate::configuration::Configuration;
+ use crate::dbus::{UsbModedDBus, create_usbmoded_connection};
+ use crate::monitor::monitor_usb_events;
+ use crate::udc::{UDC, discover_udcs};
+-use crate::urs::{URS, discover_urss};
++use crate::urs::{URS, discover_urss, host_role_active};
+ 
+ #[tokio::main]
+ async fn main() -> Result<()> {
+@@ -103,13 +103,26 @@ async fn main() -> Result<()> {
+     /* Create DBus server */
+     let connection = create_usbmoded_connection().await?;
+ 
+-    /* Apply default mode if needed */
++    /*
++     * Apply default mode if needed. In host role there is no UDC to configure
++     * and switching to device role would disconnect what is attached, so
++     * defer the default mode until a UDC appears (role switched to device).
++     */
++    let mut deferred_mode: Option<String> = None;
+     if let Ok(default_mode) = Configuration::get_default_mode() {
+-        println!("ℹ️  Applying default mode: {default_mode}");
+-        let emitter = SignalEmitter::new(&connection.clone(), "/com/meego/usb_moded")?;
+-        if let Err(error) = UsbModedDBus::set_mode(&UsbModedDBus, &default_mode, emitter).await {
+-            eprintln!("⚠️  Failed to set default mode: {error:?}");
+-        };
++        if host_role_active() {
++            println!(
++                "ℹ️  USB role is host, deferring default mode until a UDC appears: {default_mode}"
++            );
++            deferred_mode = Some(default_mode);
++        } else {
++            println!("ℹ️  Applying default mode: {default_mode}");
++            let emitter = SignalEmitter::new(&connection.clone(), "/com/meego/usb_moded")?;
++            if let Err(error) = UsbModedDBus::set_mode(&UsbModedDBus, &default_mode, emitter).await
++            {
++                eprintln!("⚠️  Failed to set default mode: {error:?}");
++            };
++        }
+     }
+ 
+     /* Spawn udev monitor as background task */
+@@ -119,7 +132,7 @@ async fn main() -> Result<()> {
+             let shutdown_connection = &connection.clone();
+             tokio::task::spawn_local(async move {
+                 println!("ℹ️  Running udev monitor");
+-                if let Err(error) = monitor_usb_events(connection.clone()).await {
++                if let Err(error) = monitor_usb_events(connection.clone(), deferred_mode).await {
+                     eprintln!("⚠️  Failed to monitor udev events: {error:?}");
+                 }
+             });
+@@ -137,15 +150,20 @@ async fn main() -> Result<()> {
+                 }
+             }
+ 
+-            /* Clean up */
++            /* Clean up, but never switch away from host role: that disconnects what is attached */
+             println!("ℹ️  Cleaning up!");
+-            let emitter =
+-                SignalEmitter::new(&shutdown_connection.clone(), "/com/meego/usb_moded").unwrap();
+-            if let Err(error) =
+-                UsbModedDBus::set_mode(&UsbModedDBus, "charging_only", emitter).await
+-            {
+-                eprintln!("⚠️  Failed to clean up before shutdown: {error:?}");
+-            };
++            if host_role_active() {
++                println!("ℹ️  USB role is host, leaving the role and gadgets as they are");
++            } else {
++                let emitter =
++                    SignalEmitter::new(&shutdown_connection.clone(), "/com/meego/usb_moded")
++                        .unwrap();
++                if let Err(error) =
++                    UsbModedDBus::set_mode(&UsbModedDBus, "charging_only", emitter).await
++                {
++                    eprintln!("⚠️  Failed to clean up before shutdown: {error:?}");
++                };
++            }
+         })
+         .await;
+ 
+diff --git a/src/monitor.rs b/src/monitor.rs
+index e142c69..b172d67 100644
+--- a/src/monitor.rs
++++ b/src/monitor.rs
+@@ -3,18 +3,46 @@ use tokio_udev::{AsyncMonitorSocket, EventType};
+ use zbus::{Connection, object_server::SignalEmitter};
+ 
+ use crate::UsbModedDBus;
++use crate::udc::discover_udcs;
+ 
+-pub async fn monitor_usb_events(connection: Connection) -> anyhow::Result<()> {
++/* Apply the default mode deferred at startup because the USB role was host */
++async fn apply_deferred_mode(deferred_mode: &mut Option<String>, emitter: &SignalEmitter<'_>) {
++    if let Some(mode) = deferred_mode.take() {
++        println!("ℹ️  UDC available, applying deferred default mode: {mode}");
++        if let Err(error) = UsbModedDBus::set_mode(&UsbModedDBus, &mode, emitter.clone()).await {
++            eprintln!("⚠️  Failed to set default mode: {error:?}");
++        }
++    }
++}
++
++pub async fn monitor_usb_events(
++    connection: Connection,
++    mut deferred_mode: Option<String>,
++) -> anyhow::Result<()> {
+     let mut monitor = AsyncMonitorSocket::new(
+         tokio_udev::MonitorBuilder::new()?
+             .match_subsystem("typec")?
++            .match_subsystem("udc")?
+             .listen()?,
+     )?;
+     let emitter = SignalEmitter::new(&connection, "/com/meego/usb_moded")?;
+ 
++    /* The role may have switched to device before the monitor started */
++    if deferred_mode.is_some() && !discover_udcs().is_empty() {
++        apply_deferred_mode(&mut deferred_mode, &emitter).await;
++    }
++
+     while let Some(event) = monitor.next().await {
+         let event = event?;
+ 
++        /* A UDC appears when the USB role switches to device */
++        if event.subsystem().is_some_and(|s| s == "udc") {
++            if matches!(event.event_type(), EventType::Add) {
++                apply_deferred_mode(&mut deferred_mode, &emitter).await;
++            }
++            continue;
++        }
++
+         match event.event_type() {
+             EventType::Add => {
+                 println!("ℹ️  Cable connected (typec)");
+diff --git a/src/urs.rs b/src/urs.rs
+index 8ab71c8..4200d65 100644
+--- a/src/urs.rs
++++ b/src/urs.rs
+@@ -54,6 +54,17 @@ pub fn discover_urss() -> Vec<String> {
+     return urss;
+ }
+ 
++/*
++ * True if a USB Role Switcher is in host role. On ports with a Type-C port
++ * controller, the controller picks host role when a device or hub is
++ * attached; switching to device role then disconnects it.
++ */
++pub fn host_role_active() -> bool {
++    return discover_urss()
++        .iter()
++        .any(|name| matches!(URS::load(name), Ok(urs) if urs.role == URSRole::Host));
++}
++
+ impl URS {
+     fn wait_for_role(switch_name: &str, role: &str) -> anyhow::Result<()> {
+         for _n in 1..30 {
+-- 
+2.51.2
+
