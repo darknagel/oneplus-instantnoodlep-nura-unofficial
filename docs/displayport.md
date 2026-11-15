@@ -61,6 +61,17 @@ it stalls, and closing it times out in the DSP until a reboot. The AFE port
 stays started while the DP controller is powered down, with and without the
 change in [Audio with no display](#audio-with-no-display).
 
+## Switching back to the phone panel
+
+The panel uses two DSC blocks. After a boot with a monitor attached,
+DisplayPort still holds pingpongs 0/1 in the commit that moves the picture
+back to the panel, so the panel gets pingpongs 2/3. The resource manager used
+to pair those with DSC 0/1 through the DSC_CTL mux: the panel then completed
+one frame after each CTL reset and none after it, and stayed grey. Kernel 0163
+pairs DSC n only with pingpong n on this display engine (DPU 6.0); other DPU
+versions keep the even/odd rule. `tests/displayport/test-dsc-pairing.py`
+checks the allocation against the patched source.
+
 ## Audio with no display
 
 PipeWire and PulseAudio open and prepare every PCM of the card to probe it,
