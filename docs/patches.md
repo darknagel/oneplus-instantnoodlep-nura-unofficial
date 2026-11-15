@@ -9,7 +9,7 @@
 | USB-C DisplayPort: video with USB2 alongside, VBUS supply and power-role swap, audio | works | kernel 0088–0103, pmaports 0045–0047, 0049; [notes](displayport.md) |
 | DisplayPort HBR3 and HDR signalling (`Colorspace`, `HDR_OUTPUT_METADATA`) | draft; HDR shown by the ASUS PG32UCDMR, picture looked right | kernel 0138–0143, 0159–0160, pmaports 0059, 0078; [notes](displayport.md#hdr) |
 | DisplayPort over system sleep: the DP PHY loses its setup while the controller is suspended but was still taken as initialised, so the display was dropped after resume; a link that failed to train was pushed to idle without a link clock, which reset the phone; detect() and the HPD plug handler leaked runtime PM references when HPD comes from the USB-C connector | draft | kernel 0144–0145, 0157–0158, pmaports 0060, 0077; [notes](displayport.md#system-sleep) |
-| Switching between the phone panel and an external DisplayPort monitor | Tested at 2880×1800, 120 Hz on the GR14BU | kernel 0146–0147, pmaports 0061 |
+| Switching between the phone panel and an external DisplayPort monitor: disabling the command-mode panel left its interface, mixers and both DSC blocks active, and DisplayPort underran with a blue screen; after a boot with the monitor attached, the phone panel stayed grey on the first switch back | Tested at 2880×1800, 120 Hz on the GR14BU | kernel 0146–0147, 0161–0163, pmaports 0061, 0079; [notes](displayport.md#switching-back-to-the-phone-panel) |
 | DisplayPort audio with nothing plugged in: preparing the PCM started the DSP's DisplayPort port, and the DSP took q6afe's whole command timeout to answer; every probe at boot waited for it | draft; tested on the phone with PulseAudio | kernel 0148–0150, pmaports 0076; [notes](displayport.md#audio-with-no-display) |
 | Charger input limit from USB-C/PD or USB-A detection, 2 A battery current | works | kernel 0082–0087, pmaports 0044; [notes](charging.md) |
 | Speakers + 3 microphones (VA macro, mic bias as in vendor DT) | works | kernel 0005, pmaports 0002, 0007 |
@@ -184,6 +184,12 @@ Use the original from lore.kernel.org if you need it.
 Kernel patch 0101 is not my work: it is v2 of "drm/display: add hw_params callback
 function to drm_connector_hdmi_audio_ops" by Jianfeng Liu, carried unchanged
 (https://lore.kernel.org/r/20250925040530.20731-1-liujianfeng1994@gmail.com).
+
+Kernel patches 0146–0147 and 0161–0162 are not my work: they are patches 2, 3, 1 and 4
+of v2 of "drm/msm/dpu: various dpu resource allocation/release mismatch fix" by Xi Zhang,
+carried unchanged (https://lore.kernel.org/r/20261026-msm-dpu-res-clean-v2-1-3d864435186e@gmail.com).
+Patches 5 (modeset on every colour management change) and 6 (DSC 1.2 hardware, which
+SM8250 does not have) are left out.
 
 Kernel patch 0148 is not my work: it is upstream commit d858770e86e7 ("drm/msm/dp: return
 0 from audio_prepare when cable is disconnected") by Kumar Anurag.
