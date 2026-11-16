@@ -127,9 +127,24 @@ make your changes and export them again with `git format-patch` into the kernel 
 directory (`device/testing/linux-postmarketos-qcom-sm8250/`), add them to `source=` in the
 APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
 
+## Iris VP9 experiment
+
+Kernel patches 0174–0176 and package patch 0091 carry the SM8250 VP9 firmware fixes
+and zero-delay decoder controls, rebased onto main `4e04b52`; the package keeps
+Venus selected and leaves Iris disabled until fresh runtime validation.
+The November 14 r88 tests produced reference-exact 720p VP9 through Iris and the
+QCOM VA-API bridge, and direct V4L2 playback rendered all 240 frames at 2160p50;
+VA-API rendering dropped frames and screen-off decoding corrupted pixels.
+The separate `qcom-va-driver-patches/0001-export-the-versioned-libva-entry-point.patch`
+applies to bridge commit `0980a1d`, whose current master still lacks the fix;
+installing the bridge and rebuilding QtWebEngine with VA-API remain separate work.
+On November 16, the complete kernel patch stack replayed successfully and Iris
+compiled and linked against the fresh package configuration with Iris enabled for
+the build check; the rebased code has not been tested on the phone.
+
 ## Patch numbers in use
 
-The next free numbers are kernel 0174 and package 0091. Kernel 0164 is kept for the
+The next free numbers are kernel 0177 and package 0092. Kernel 0164 is kept for the
 DisplayPort DSC draft. Most package patches change the release and the checksums of the
 kernel package, so a new one has to be made on top of the last one; package numbers
 0070–0074 cannot be filled in later.
