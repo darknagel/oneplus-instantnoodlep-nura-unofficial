@@ -1,12 +1,19 @@
-From 871889463d067533090ad50fe7593ce99c8503c4 Mon Sep 17 00:00:00 2001
+From 2d8c22a95fb5511813a1818ee1456634090b9a2c Mon Sep 17 00:00:00 2001
 From: Roman Kuraev <naoru.desu@gmail.com>
-Date: Mon, 16 Nov 2026 15:46:46 +0000
+Date: Mon, 16 Nov 2026 16:30:13 +0000
 Subject: [PATCH 176/176] media: iris: support decoder display-delay controls
  on HFI gen1
 
-Extend the display-delay controls to SM8250 using the output-order property
-already used by Venus and the Android driver. Preserve the firmware default until
-userspace sets the enable control; support zero delay and reject streaming changes.
+Adapt Xilin Wu's "media: iris: support decode-order output on HFI gen2"
+patch to SM8250 HFI Gen1, retaining its zero-delay capability definitions and
+client-set gating. The Gen1 output-order property and enums follow the existing
+Venus driver and the Qualcomm Android driver published by OnePlus.
+
+Preserve the firmware default until userspace sets the enable control; support
+zero delay and reject streaming changes.
+
+Based-on: https://lore.kernel.org/linux-media/20261029-iris-va-fixes-v1-1-44a2783f782b@radxa.com/
+Link: https://github.com/OnePlusOSS/android_kernel_oneplus_sm8250/blob/cad09e061ef6cf689a4a1e54d27562e0f042236a/techpack/video/msm/vidc/msm_vdec.c
 ---
  .../media/platform/qcom/iris/iris_hfi_gen1.c  | 17 +++++++++++++++++
  .../qcom/iris/iris_hfi_gen1_command.c         | 19 +++++++++++++++++++

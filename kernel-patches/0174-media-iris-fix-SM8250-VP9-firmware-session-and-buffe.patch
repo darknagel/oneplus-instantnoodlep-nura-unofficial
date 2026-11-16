@@ -1,6 +1,6 @@
-From b040d1c802189f06e226df8b6b0d73e7e7eed24e Mon Sep 17 00:00:00 2001
+From 29ab4cc5e908a51913249a6fc90683c00242acb3 Mon Sep 17 00:00:00 2001
 From: Roman Kuraev <naoru.desu@gmail.com>
-Date: Mon, 16 Nov 2026 15:46:46 +0000
+Date: Mon, 16 Nov 2026 16:30:12 +0000
 Subject: [PATCH 174/176] media: iris: fix SM8250 VP9 firmware session and
  buffer handling
 
@@ -9,6 +9,12 @@ firmware with output extradata storage, and initialize the compressed input pack
 
 These changes returned reference-exact VP9 frames on the OnePlus 8 Pro r88 test
 kernel. Buffer counts are unchanged. Screen-off corruption remains unresolved.
+
+Protocol reference: Qualcomm video driver published by OnePlus, whose source
+credits The Linux Foundation (2012-2020). The secure-session property and output
+extradata handling were checked against that driver during this port investigation.
+
+Link: https://github.com/OnePlusOSS/android_kernel_oneplus_sm8250/blob/cad09e061ef6cf689a4a1e54d27562e0f042236a/techpack/video/msm/vidc/msm_vdec.c
 ---
  .../media/platform/qcom/iris/iris_buffer.c    | 12 ++++++++
  .../media/platform/qcom/iris/iris_buffer.h    |  8 +++++

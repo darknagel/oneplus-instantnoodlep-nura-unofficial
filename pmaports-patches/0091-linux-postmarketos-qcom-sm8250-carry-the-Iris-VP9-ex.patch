@@ -1,4 +1,4 @@
-From c990d3031ca8e6bdd8fba5e4a0ecda29a1898036 Mon Sep 17 00:00:00 2001
+From 743d941d7bcfaa44d27ad3430103178d25fa19e0 Mon Sep 17 00:00:00 2001
 From: Roman Kuraev <naoru.desu@gmail.com>
 Date: Mon, 16 Nov 2026 15:47:56 +0000
 Subject: [PATCH] linux-postmarketos-qcom-sm8250: carry the Iris VP9 experiment
@@ -7,24 +7,24 @@ Add the SM8250 VP9 firmware-interface fixes and decoder display-delay controls.
 Keep the current Venus configuration until Iris has fresh runtime validation.
 Advance to release 104 without enabling Iris or changing driver selection.
 ---
- ...M8250-VP9-firmware-session-and-buffe.patch | 224 ++++++++++++++++++
- ...port-decode-order-output-on-HFI-gen2.patch | 169 +++++++++++++
- ...rt-decoder-display-delay-controls-on.patch | 112 +++++++++
+ ...M8250-VP9-firmware-session-and-buffe.patch | 230 ++++++++++++++++++
+ ...port-decode-order-output-on-HFI-gen2.patch | 174 +++++++++++++
+ ...rt-decoder-display-delay-controls-on.patch | 119 +++++++++
  .../linux-postmarketos-qcom-sm8250/APKBUILD   |   8 +-
- 4 files changed, 512 insertions(+), 1 deletion(-)
+ 4 files changed, 530 insertions(+), 1 deletion(-)
  create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0174-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
  create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0175-media-iris-support-decode-order-output-on-HFI-gen2.patch
  create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0176-media-iris-support-decoder-display-delay-controls-on.patch
 
 diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0174-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch b/device/testing/linux-postmarketos-qcom-sm8250/0174-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
 new file mode 100644
-index 0000000..8b8eb2e
+index 0000000..0240a21
 --- /dev/null
 +++ b/device/testing/linux-postmarketos-qcom-sm8250/0174-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
-@@ -0,0 +1,224 @@
-+From b040d1c802189f06e226df8b6b0d73e7e7eed24e Mon Sep 17 00:00:00 2001
+@@ -0,0 +1,230 @@
++From 29ab4cc5e908a51913249a6fc90683c00242acb3 Mon Sep 17 00:00:00 2001
 +From: Roman Kuraev <naoru.desu@gmail.com>
-+Date: Mon, 16 Nov 2026 15:46:46 +0000
++Date: Mon, 16 Nov 2026 16:30:12 +0000
 +Subject: [PATCH 174/176] media: iris: fix SM8250 VP9 firmware session and
 + buffer handling
 +
@@ -33,6 +33,12 @@ index 0000000..8b8eb2e
 +
 +These changes returned reference-exact VP9 frames on the OnePlus 8 Pro r88 test
 +kernel. Buffer counts are unchanged. Screen-off corruption remains unresolved.
++
++Protocol reference: Qualcomm video driver published by OnePlus, whose source
++credits The Linux Foundation (2012-2020). The secure-session property and output
++extradata handling were checked against that driver during this port investigation.
++
++Link: https://github.com/OnePlusOSS/android_kernel_oneplus_sm8250/blob/cad09e061ef6cf689a4a1e54d27562e0f042236a/techpack/video/msm/vidc/msm_vdec.c
 +---
 + .../media/platform/qcom/iris/iris_buffer.c    | 12 ++++++++
 + .../media/platform/qcom/iris/iris_buffer.h    |  8 +++++
@@ -248,19 +254,24 @@ index 0000000..8b8eb2e
 +
 diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0175-media-iris-support-decode-order-output-on-HFI-gen2.patch b/device/testing/linux-postmarketos-qcom-sm8250/0175-media-iris-support-decode-order-output-on-HFI-gen2.patch
 new file mode 100644
-index 0000000..046d353
+index 0000000..b1f3e3f
 --- /dev/null
 +++ b/device/testing/linux-postmarketos-qcom-sm8250/0175-media-iris-support-decode-order-output-on-HFI-gen2.patch
-@@ -0,0 +1,169 @@
-+From 87d29cd05c675bd92c2635c3cead4c063408f3dd Mon Sep 17 00:00:00 2001
+@@ -0,0 +1,174 @@
++From fa8827614785283123f4b2fb6ceeaba30b65dc12 Mon Sep 17 00:00:00 2001
 +From: Xilin Wu <sophon@radxa.com>
 +Date: Thu, 29 Oct 2026 11:58:06 +0800
 +Subject: [PATCH 175/176] media: iris: support decode-order output on HFI gen2
 +
-+Expose the standard display-delay controls for synchronous per-picture clients.
++Synchronous per-picture clients such as VA-API can stall when firmware
++holds decoded pictures for display reordering while the client waits for
++the current picture before submitting more input.
 +
-+Backport of Xilin Wu's upstream submission, with surrounding context adapted to
-+the Nura kernel. The 49 added lines are unchanged.
++Expose the decoder display-delay controls on HFI gen2, with a zero delay
++selecting decode-order output. Keep display-order output as the default.
++
++Backport note: surrounding context was adapted to the Nura kernel; all 49 added
++lines from Xilin Wu's submitted patch are unchanged.
 +
 +Link: https://lore.kernel.org/linux-media/20261029-iris-va-fixes-v1-1-44a2783f782b@radxa.com/
 +Signed-off-by: Xilin Wu <sophon@radxa.com>
@@ -423,19 +434,26 @@ index 0000000..046d353
 +
 diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0176-media-iris-support-decoder-display-delay-controls-on.patch b/device/testing/linux-postmarketos-qcom-sm8250/0176-media-iris-support-decoder-display-delay-controls-on.patch
 new file mode 100644
-index 0000000..ae2782a
+index 0000000..6f82c58
 --- /dev/null
 +++ b/device/testing/linux-postmarketos-qcom-sm8250/0176-media-iris-support-decoder-display-delay-controls-on.patch
-@@ -0,0 +1,112 @@
-+From 871889463d067533090ad50fe7593ce99c8503c4 Mon Sep 17 00:00:00 2001
+@@ -0,0 +1,119 @@
++From 2d8c22a95fb5511813a1818ee1456634090b9a2c Mon Sep 17 00:00:00 2001
 +From: Roman Kuraev <naoru.desu@gmail.com>
-+Date: Mon, 16 Nov 2026 15:46:46 +0000
++Date: Mon, 16 Nov 2026 16:30:13 +0000
 +Subject: [PATCH 176/176] media: iris: support decoder display-delay controls
 + on HFI gen1
 +
-+Extend the display-delay controls to SM8250 using the output-order property
-+already used by Venus and the Android driver. Preserve the firmware default until
-+userspace sets the enable control; support zero delay and reject streaming changes.
++Adapt Xilin Wu's "media: iris: support decode-order output on HFI gen2"
++patch to SM8250 HFI Gen1, retaining its zero-delay capability definitions and
++client-set gating. The Gen1 output-order property and enums follow the existing
++Venus driver and the Qualcomm Android driver published by OnePlus.
++
++Preserve the firmware default until userspace sets the enable control; support
++zero delay and reject streaming changes.
++
++Based-on: https://lore.kernel.org/linux-media/20261029-iris-va-fixes-v1-1-44a2783f782b@radxa.com/
++Link: https://github.com/OnePlusOSS/android_kernel_oneplus_sm8250/blob/cad09e061ef6cf689a4a1e54d27562e0f042236a/techpack/video/msm/vidc/msm_vdec.c
 +---
 + .../media/platform/qcom/iris/iris_hfi_gen1.c  | 17 +++++++++++++++++
 + .../qcom/iris/iris_hfi_gen1_command.c         | 19 +++++++++++++++++++
@@ -540,7 +558,7 @@ index 0000000..ae2782a
 +2.56.0
 +
 diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
-index f872c89..c66c4b7 100644
+index f872c89..2cd245c 100644
 --- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
 +++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
 @@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
@@ -566,9 +584,9 @@ index f872c89..c66c4b7 100644
  29484dce40e54b8d184e79342bc0fa29e1a81756fa2690d25476ad78108ea3067d0a26d61b414d426a69d9a9cce3b1bb22ac2e4f4ecac70f6958b4bdb14804e9  0171-PCI-host-common-Let-only-the-endpoints-decide-about-.patch
  19be441bdc367cc19edb435d63b02816b3e83e2c3fe1eabe621250658bfdaf9139c101cc8c10ae1965ade7bd7ed1639696e31835e3f64c92de282bb537ab0179  0172-bus-mhi-host-pci_generic-Make-the-flashless-SDX55-a-.patch
  d0ae61f124942d2cfff2d7c4599479149105c2ad9d282b8dd280e09baca4ffc5a36fb8b0974a15685ad9901dd196b7dea8937c099ce14d6b2566f4702f74568d  0173-PCI-qcom-Wake-the-system-on-WAKE.patch
-+5610f290c2f0b8969d222156b8560ed6e9d2bb6d77473a6bd6fc801b07efc819d3589566be8d1d1dcc73355c11bca64244f6fc271a19de6e7c05d099d9f882f9  0174-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
-+a0bb681eb402376981c176a71a72d0b74a9890298b29f71fd8553c7151793e66257878fc2ae32c61ff85483b11b65989311a21fb4c8f512766b8c29a542d28dd  0175-media-iris-support-decode-order-output-on-HFI-gen2.patch
-+32ca2ffb1bd36c4c55f18baaa869204f58f60040f7a04808525d0d48e54b5c5c93e36ee95d0d1f97e17543470734d98ad6d037e7aabcf6a7e6a3081d087a5946  0176-media-iris-support-decoder-display-delay-controls-on.patch
++b2f4105ad323f30e1dcfde62ac3a6e70afb70285af28283b9bb7e7391a2c255d4cd99340935e49c0004cd6b75cc966fb6b7b9ae02a696f1a9ee1efcebd15fa45  0174-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
++ad380e0b8179ca062c40182453c5fd42bab79e3f9e9cac7fa7cb6e63af605e5b9ad80f6e775822d556138fea1ad5c41000adcec09de2531638cafa6070a5e435  0175-media-iris-support-decode-order-output-on-HFI-gen2.patch
++a03197607df2a6b36edf959cafe699da67ce1e318e4df7ed9c90ad7f74c7117ddb6f828e59114b401372dbdcdbb3385732fdc289670e2bc823b69cc4b55a0d9f  0176-media-iris-support-decoder-display-delay-controls-on.patch
  "
 -- 
 2.54.0

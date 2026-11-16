@@ -1,12 +1,17 @@
-From 87d29cd05c675bd92c2635c3cead4c063408f3dd Mon Sep 17 00:00:00 2001
+From fa8827614785283123f4b2fb6ceeaba30b65dc12 Mon Sep 17 00:00:00 2001
 From: Xilin Wu <sophon@radxa.com>
 Date: Thu, 29 Oct 2026 11:58:06 +0800
 Subject: [PATCH 175/176] media: iris: support decode-order output on HFI gen2
 
-Expose the standard display-delay controls for synchronous per-picture clients.
+Synchronous per-picture clients such as VA-API can stall when firmware
+holds decoded pictures for display reordering while the client waits for
+the current picture before submitting more input.
 
-Backport of Xilin Wu's upstream submission, with surrounding context adapted to
-the Nura kernel. The 49 added lines are unchanged.
+Expose the decoder display-delay controls on HFI gen2, with a zero delay
+selecting decode-order output. Keep display-order output as the default.
+
+Backport note: surrounding context was adapted to the Nura kernel; all 49 added
+lines from Xilin Wu's submitted patch are unchanged.
 
 Link: https://lore.kernel.org/linux-media/20261029-iris-va-fixes-v1-1-44a2783f782b@radxa.com/
 Signed-off-by: Xilin Wu <sophon@radxa.com>

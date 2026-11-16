@@ -6,7 +6,11 @@ linked into this backend and exports its own versioned entry point, so dlsym can
 resolve that symbol from Mesa instead of reaching the QCOM backend's 1.0 entry.
 Export an alias for the ABI used to build this backend to keep initialization here.
 
+This is a local compatibility fix for the separate qcom-va-driver project.
+The base project is MIT-licensed and credits the libva-v4l2 contributors.
+
 Based-on: radxa-pkg/qcom-va-driver 0980a1decf26d34c9aa71cd0a4a0d25703a7a17f
+Link: https://github.com/radxa-pkg/qcom-va-driver/tree/0980a1decf26d34c9aa71cd0a4a0d25703a7a17f
 
 diff --git a/src/backend.cpp b/src/backend.cpp
 index 56fc3e6..9d7881d 100644
