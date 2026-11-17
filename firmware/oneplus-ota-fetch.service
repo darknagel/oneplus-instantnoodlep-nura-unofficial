@@ -1,0 +1,16 @@
+[Unit]
+Description=Fetch the proprietary OnePlus files (fingerprint TA, sensor configuration) from OnePlus' official OTA
+Documentation=file:///usr/local/bin/oneplus-ota-fetch
+Wants=network-online.target
+After=network-online.target dsp-firmware.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/oneplus-ota-fetch
+# no network yet, or a broken download: try again later
+Restart=on-failure
+RestartSec=10min
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

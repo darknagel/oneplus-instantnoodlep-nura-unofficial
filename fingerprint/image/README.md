@@ -16,15 +16,17 @@ the imaging, enrollment and matching. Linux reaches it through:
 
 The TA is proprietary OnePlus/Goodix firmware and is **not** part of the image.
 
-**Automatic (default):** at boot, `fingerprint-ta-fetch.service` downloads it once
-the phone has internet. It takes only the `odm` partition (about 133 MB) from
-OnePlus' official OxygenOS 13 full OTA on Google's OTA server, with HTTP range
-requests. Every chunk is checked against the OTA manifest, and the image and the
-TA against fixed hashes. Then it installs `/lib/firmware/gfp9608.mbn` and starts
-the loader. If there is no network yet, it tries again every 10 minutes. Progress:
+**Automatic (default):** at boot, `oneplus-ota-fetch.service` downloads it once the
+phone has internet, together with the sensor DSP configuration (see
+`firmware/oneplus-ota-fetch`). It takes only the parts of OnePlus' official
+OxygenOS 13 full OTA on Google's OTA server that hold these files (about 40 MB of
+4.4 GB), with HTTP range requests. Every chunk is checked against the OTA
+manifest, and every file and the TA against fixed hashes. Then it installs
+`/lib/firmware/gfp9608.mbn` and starts the loader. If there is no network yet, it
+tries again every 10 minutes. Progress:
 
 ```sh
-journalctl -u fingerprint-ta-fetch
+journalctl -u oneplus-ota-fetch
 ```
 
 **By hand (no internet, or your own Android files):** Android keeps the TA on the

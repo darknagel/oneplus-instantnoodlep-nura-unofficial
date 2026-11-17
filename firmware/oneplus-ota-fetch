@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""Fetch the proprietary OnePlus files this image cannot ship, from OnePlus' OTA.
+
+Some pieces of the OnePlus 8 Pro support are proprietary and may not be
+redistributed, and the partitions that held them under Android (odm, vendor)
+were replaced by the installation. This script downloads them on the phone,
+straight from the official OxygenOS 13 full OTA on Google's OTA server:
+
+  - the Goodix fingerprint trusted application (odm/vendor/firmware/gfp96xx.*),
+    joined into /lib/firmware/<name>.mbn, then its loader is started,
+  - the sensor DSP configuration (vendor/etc/sensors, odm/etc/sensor/config),
+    handed to setup-sensors when the sensors are not set up yet.
+
+Only the parts of the OTA that hold these files are fetched (about 40 MB of
+4.4 GB), with HTTP range requests. Every downloaded chunk is checked against
+the SHA-256 in the OTA manifest and every extracted file against a known hash
+(oneplus-ota-fetch.json). Files are read with dump.erofs (erofs-utils).
+
+Run without arguments; fetches only what is missing. --force fetches again.
+"""
+import bz2
+import hashlib
+import json
+import lzma
+import os
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import urllib.request
+
+DATA_FILE = '/usr/local/share/oneplus-ota-fetch/oneplus-ota-fetch.json'
+# OnePlus 8 Pro OxygenOS 13 IN2025_11.F.13_2130_202211142346 (full OTA)
+OTA_URL = ('https://android.googleapis.com/packages/ota-api/package/'
+           '055f1d0089a2a397bebd5882a9a63bdb779f4834.zip')
+OTA_SIZE = 4653394422
+TA_SHA256 = {
+    'gfp9608': '858399168360e7145283eb2b1f372ad474b36bbee6fa6ae35d5c64662abfce2a',
+    'gfp9638': 'ea080a62bb01a401b5d0638f825ff3601b916d087d5d6bbee0c8f6570f00b7cd',
+}
+FIRMWARE_DIR = '/lib/firmware'
+FP_SYSFS = '/sys/class/misc/goodix_fp/device/firmware_name'
+SENSORS = '/usr/share/qcom/sm8250/OnePlus/instantnoodlep/sensors'
+WORK_DIR = '/var/tmp'
+
+
+def log(msg):
+    print('oneplus-ota-fetch: ' + msg, flush=True)
+
+
+def get(start, length):
+    req = urllib.request.Request(OTA_URL, headers={
+        'Range': 'bytes=%d-%d' % (start, start + length - 1),
+        'User-Agent': 'oneplus-ota-fetch'})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        if r.status != 206:
+            raise RuntimeError('server ignored the range request (HTTP %d)' % r.status)
+        if int(r.headers['Content-Range'].split('/')[1]) != OTA_SIZE:
+            raise RuntimeError('the OTA package changed on the server')
+        data = r.read()
+    if len(data) != length:
+        raise RuntimeError('short read')
+    return data
+
+
+def fetch_partition(data, name, path):
+    """Write a sparse image holding only the OTA operations we need."""
+    part = data['partitions'][name]
+    block = data['block_size']
+    base = data['payload_offset'] + 24 + data['manifest_size'] + data['signature_size']
+    total = sum(op[2] for op in part['ops'])
+    done = 0
+    with open(path, 'wb') as f:
+        f.truncate(part['size'])
+        for typ, off, length, sha, dst in part['ops']:
+            raw = get(base + off, length)
+            if sha and hashlib.sha256(raw).hexdigest() != sha:
+                raise RuntimeError('checksum mismatch in the download')
+            if typ == 0:
+                out = raw
+            elif typ == 1:
+                out = bz2.decompress(raw)
+            elif typ == 8:
+                out = lzma.decompress(raw)
+            else:
+                raise RuntimeError('unsupported operation %d' % typ)
+            pos = 0
+            for start, num in dst:
+                f.seek(start * block)
+                f.write(out[pos:pos + num * block])
+                pos += num * block
+            done += length
+        log('%s: %d MB downloaded' % (name, done >> 20))
+
+
+def extract(data, name, image, wanted, outdir):
+    """Read files from the image with dump.erofs and check their hashes."""
+    files = data['partitions'][name]['files']
+    for path in wanted:
+        size, sha = files[path]
+        blob = subprocess.run(['dump.erofs', '--cat', '--path=' + path, image],
+                              capture_output=True, check=True).stdout
+        if len(blob) != size or hashlib.sha256(blob).hexdigest() != sha:
+            raise RuntimeError('%s:%s does not match its known hash' % (name, path))
+        dst = os.path.join(outdir, path.lstrip('/'))
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with open(dst, 'wb') as f:
+            f.write(blob)
+
+
+def squash(mdt_path, out_path):
+    """Join <name>.mdt + <name>.bNN into one ELF; segment i goes to its p_offset."""
+    with open(mdt_path, 'rb') as f:
+        mdt = f.read()
+    if mdt[4] == 2:
+        phoff, = struct.unpack_from('<Q', mdt, 0x20)
+        phentsize, phnum = struct.unpack_from('<HH', mdt, 0x36)
+        fmt, pick = '<IIQQQQQQ', (lambda p: (p[2], p[5]))
+    else:
+        phoff, = struct.unpack_from('<I', mdt, 0x1c)
+        phentsize, phnum = struct.unpack_from('<HH', mdt, 0x2a)
+        fmt, pick = '<IIIIIIII', (lambda p: (p[1], p[4]))
+    segs = [pick(struct.unpack_from(fmt, mdt, phoff + i * phentsize)) for i in range(phnum)]
+    image = bytearray(max(o + s for o, s in segs))
+    image[:len(mdt)] = mdt
+    for i, (off, size) in enumerate(segs):
+        if not size:
+            continue
+        seg = '%s.b%02d' % (mdt_path[:-4], i)
+        if not os.path.exists(seg):
+            if off + size <= len(mdt):
+                continue
+            raise RuntimeError('missing ' + seg)
+        with open(seg, 'rb') as f:
+            blob = f.read()
+        if len(blob) != size:
+            raise RuntimeError('bad segment size ' + seg)
+        image[off:off + size] = blob
+    with open(out_path, 'wb') as f:
+        f.write(image)
+
+
+def install(src, target):
+    tmp = target + '.new'
+    shutil.copyfile(src, tmp)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, target)
+
+
+def main():
+    force = '--force' in sys.argv[1:]
+    data = json.load(open(DATA_FILE))
+
+    ta = None
+    try:
+        with open(FP_SYSFS) as f:
+            ta = f.read().strip() or None
+    except OSError:
+        pass
+    want_ta = ta in TA_SHA256 and (force or not os.path.exists(os.path.join(FIRMWARE_DIR, ta + '.mbn')))
+    want_sensors = force or not os.path.isdir(os.path.join(SENSORS, 'config')) or \
+        not os.listdir(os.path.join(SENSORS, 'config'))
+    if want_sensors and not shutil.which('setup-sensors'):
+        want_sensors = False
+    if not want_ta and not want_sensors:
+        return 0
+
+    with tempfile.TemporaryDirectory(dir=WORK_DIR, prefix='oneplus-ota.') as tmp:
+        files = os.path.join(tmp, 'files')
+        odm = os.path.join(tmp, 'odm.img')
+        log('downloading parts of the official OxygenOS 13 OTA')
+        fetch_partition(data, 'odm', odm)
+        odm_files = data['partitions']['odm']['files']
+
+        if want_ta:
+            names = sorted(p for p in odm_files if p.startswith('/vendor/firmware/%s.' % ta))
+            extract(data, 'odm', odm, names, os.path.join(files, 'odm'))
+            mbn = os.path.join(tmp, ta + '.mbn')
+            squash(os.path.join(files, 'odm', 'vendor', 'firmware', ta + '.mdt'), mbn)
+            with open(mbn, 'rb') as f:
+                if hashlib.sha256(f.read()).hexdigest() != TA_SHA256[ta]:
+                    raise RuntimeError('fingerprint TA hash mismatch')
+            install(mbn, os.path.join(FIRMWARE_DIR, ta + '.mbn'))
+            log('installed the fingerprint trusted application %s' % ta)
+            subprocess.run(['systemctl', '--no-block', 'restart',
+                            'qsee-app-loader@%s.service' % ta], check=False)
+
+        if want_sensors:
+            vendor = os.path.join(tmp, 'vendor.img')
+            fetch_partition(data, 'vendor', vendor)
+            src = os.path.join(tmp, 'sensors')
+            extract(data, 'odm', odm, sorted(p for p in odm_files
+                                             if p.startswith('/etc/sensor/config/')), files)
+            vfiles = data['partitions']['vendor']['files']
+            vendor_out = os.path.join(files, 'vendor')
+            extract(data, 'vendor', vendor, sorted(vfiles), vendor_out)
+            # the layout setup-sensors expects: vendor/ = /vendor/etc/sensors,
+            # odm/ = /odm/etc/sensor
+            os.makedirs(src)
+            shutil.copytree(os.path.join(vendor_out, 'etc', 'sensors'), os.path.join(src, 'vendor'))
+            shutil.copytree(os.path.join(files, 'etc', 'sensor'), os.path.join(src, 'odm'))
+            subprocess.run(['setup-sensors', src], check=True)
+            log('set up the sensor DSP configuration')
+            subprocess.run(['systemctl', '--no-block', 'restart', 'hexagonrpcd-sdsp.service',
+                            'iio-sensor-proxy.service'], check=False)
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except Exception as e:  # retried by the service
+        log('failed: %s' % e)
+        sys.exit(1)
