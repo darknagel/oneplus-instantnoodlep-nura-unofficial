@@ -141,6 +141,28 @@ def squash(mdt_path, out_path):
         f.write(image)
 
 
+def restart_slpi():
+    """Without its configuration the sensor DSP may have crashed until
+    slpi-guard switched its recovery off; bring it back now."""
+    base = '/sys/class/remoteproc'
+    for rp in os.listdir(base) if os.path.isdir(base) else []:
+        path = os.path.join(base, rp)
+        try:
+            with open(os.path.join(path, 'name')) as f:
+                if f.read().strip() != 'slpi':
+                    continue
+            with open(os.path.join(path, 'recovery'), 'w') as f:
+                f.write('enabled')
+            with open(os.path.join(path, 'state')) as f:
+                state = f.read().strip()
+            if state != 'running':
+                with open(os.path.join(path, 'state'), 'w') as f:
+                    f.write('start')
+                log('restarted the sensor DSP (was %s)' % state)
+        except OSError as e:
+            log('could not restart the sensor DSP: %s' % e)
+
+
 def install(src, target):
     tmp = target + '.new'
     shutil.copyfile(src, tmp)
@@ -201,8 +223,12 @@ def main():
             shutil.copytree(os.path.join(vendor_out, 'etc', 'sensors'), os.path.join(src, 'vendor'))
             shutil.copytree(os.path.join(files, 'etc', 'sensor'), os.path.join(src, 'odm'))
             subprocess.run(['setup-sensors', src], check=True)
-            log('set up the sensor DSP configuration')
-            subprocess.run(['systemctl', '--no-block', 'restart', 'hexagonrpcd-sdsp.service',
+            # The sensor DSP reads its registry only when it boots with the
+            # phone; a remoteproc restart alone does not bring the sensors up.
+            log('set up the sensor DSP configuration; the sensors work after the next reboot')
+            subprocess.run(['systemctl', 'restart', 'hexagonrpcd-sdsp.service'], check=False)
+            restart_slpi()
+            subprocess.run(['systemctl', '--no-block', 'restart', 'slpi-guard.service',
                             'iio-sensor-proxy.service'], check=False)
     return 0
 
