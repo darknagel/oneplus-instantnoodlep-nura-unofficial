@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 23:38:43 +0100
+Subject: [PATCH 222/222] arm64: dts: qcom: sm8250-oneplus-instantnoodlep: Add
+ the fingerprint sensor
+
+The optical in-display Goodix sensor sits on QUP SE14, which is owned by
+the TrustZone: the Goodix trusted application drives the SPI bus itself.
+Linux only switches the 3.3 V load switch (GPIO 125), releases the reset
+(GPIO 68) and takes the interrupt (GPIO 23).
+
+firmware-name names the trusted application. This unit has the G5 sensor
+(GF9608); G6 units (GPIO 77 low) use gfp9638 and are untested.
+---
+ .../qcom/sm8250-oneplus-instantnoodlep.dts    | 56 +++++++++++++++++++
+ 1 file changed, 56 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+index 6d66faff8e..5a1f70c35f 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-instantnoodlep.dts
+@@ -395,6 +395,41 @@ vreg_cam_tele_vaf: regulator-cam-tele-vaf {
+ 		pinctrl-names = "default";
+ 	};
+ 
++	/* Goodix optical in-display fingerprint sensor, load switch on GPIO 125 */
++	vreg_fp_vdd: regulator-fp-vdd {
++		compatible = "regulator-fixed";
++		regulator-name = "fp_vdd";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++
++		gpio = <&tlmm 125 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		vin-supply = <&vph_pwr>;
++
++		pinctrl-0 = <&fp_vdd_en>;
++		pinctrl-names = "default";
++	};
++
++	fingerprint {
++		compatible = "goodix,gf3626";
++
++		interrupt-parent = <&tlmm>;
++		interrupts = <23 IRQ_TYPE_EDGE_RISING>;
++
++		reset-gpios = <&tlmm 68 GPIO_ACTIVE_LOW>;
++		vdd-supply = <&vreg_fp_vdd>;
++
++		/*
++		 * Trusted application in QSEE. GPIO 77 (fp-id) tells the two sensor
++		 * variants apart: high = G5 (GF9608, "gfp9608"), low = G6 (GF9638,
++		 * "gfp9638"). Only G5 has been tested so far.
++		 */
++		firmware-name = "gfp9608";
++
++		pinctrl-0 = <&fp_int_default>, <&fp_rst_default>;
++		pinctrl-names = "default";
++	};
++
+ 	vreg_cam_tele_avdd: regulator-cam-tele-avdd {
+ 		compatible = "regulator-fixed";
+ 		regulator-name = "cam_tele_avdd";
+@@ -1856,6 +1891,27 @@ cam_tele_avdd_en: cam-tele-avdd-en-state {
+ 		bias-disable;
+ 	};
+ 
++	fp_int_default: fp-int-default-state {
++		pins = "gpio23";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
++	fp_rst_default: fp-rst-default-state {
++		pins = "gpio68";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
++	fp_vdd_en: fp-vdd-en-state {
++		pins = "gpio125";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
+ 	cam_tele_default: cam-tele-default-state {
+ 		mclk-pins {
+ 			pins = "gpio96";

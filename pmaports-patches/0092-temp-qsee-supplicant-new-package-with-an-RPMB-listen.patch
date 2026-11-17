@@ -1,0 +1,372 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 22:36:27 +0100
+Subject: [PATCH 92/93] temp/qsee-supplicant: new package, with an RPMB
+ listener
+
+Machine-wide supplicant and application loader for QSEECOM trusted
+applications. Adds the RPMB listener (0x2000) that Gatekeeper needs and
+lets GPFS requests use the whole shared buffer (fingerprint templates).
+---
+ ...equests-up-to-the-shared-buffer-size.patch |  26 ++
+ ...RPMB-listener-service-0x2000-for-UFS.patch | 266 ++++++++++++++++++
+ temp/qsee-supplicant/APKBUILD                 |  44 +++
+ 3 files changed, 336 insertions(+)
+ create mode 100644 temp/qsee-supplicant/0001-gpfs-accept-requests-up-to-the-shared-buffer-size.patch
+ create mode 100644 temp/qsee-supplicant/0002-rpmb-add-the-RPMB-listener-service-0x2000-for-UFS.patch
+ create mode 100644 temp/qsee-supplicant/APKBUILD
+
+diff --git a/temp/qsee-supplicant/0001-gpfs-accept-requests-up-to-the-shared-buffer-size.patch b/temp/qsee-supplicant/0001-gpfs-accept-requests-up-to-the-shared-buffer-size.patch
+new file mode 100644
+index 0000000000..a13d2cb1a2
+--- /dev/null
++++ b/temp/qsee-supplicant/0001-gpfs-accept-requests-up-to-the-shared-buffer-size.patch
+@@ -0,0 +1,26 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 16 Nov 2026 23:40:29 +0100
++Subject: [PATCH 1/2] gpfs: accept requests up to the shared buffer size
++
++QSEE sizes GPFS data chunks from the registered buffer, not from
++QS_GPFS_DATA_SIZE: with the 504 KiB buffer it sends 515824-byte
++chunks (Goodix fingerprint templates are ~545 KB). The remaining checks
++already bound the length by the actual buffer size.
++---
++ src/gpfs.c | 2 +-
++ 1 file changed, 1 insertion(+), 1 deletion(-)
++
++diff --git a/src/gpfs.c b/src/gpfs.c
++index 46b7578..0225d25 100644
++--- a/src/gpfs.c
+++++ b/src/gpfs.c
++@@ -166,7 +166,7 @@ int qs_gpfs_dispatch(struct qs_store *store, void *buffer, size_t size)
++ 	if (command % 4 == 0 || command % 4 == 1) {
++ 		offset = read_request->offset;
++ 		length = read_request->count;
++-		if (offset < 0 || length > QS_GPFS_DATA_SIZE ||
+++		if (offset < 0 ||
++ 		    (command % 4 == 0 &&
++ 		     (size_t)length > size - offsetof(struct qs_gpfs_io_response, data)) ||
++ 		    (command % 4 == 1 &&
+diff --git a/temp/qsee-supplicant/0002-rpmb-add-the-RPMB-listener-service-0x2000-for-UFS.patch b/temp/qsee-supplicant/0002-rpmb-add-the-RPMB-listener-service-0x2000-for-UFS.patch
+new file mode 100644
+index 0000000000..7a9d7e6a81
+--- /dev/null
++++ b/temp/qsee-supplicant/0002-rpmb-add-the-RPMB-listener-service-0x2000-for-UFS.patch
+@@ -0,0 +1,266 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 16 Nov 2026 23:40:31 +0100
++Subject: [PATCH 2/2] rpmb: add the RPMB listener service (0x2000) for UFS
++
++QSEE keeps replay-protected data (e.g. Gatekeeper's per-user records)
++in the RPMB partition and reaches it through listener 0x2000, served by
++librpmb in Qualcomm's qseecomd. Without it, Gatekeeper enroll fails in
++gk_storage_platform_init.
++
++The protocol was recovered from librpmb: 0x101 returns the RPMB size,
++the reliable-write frame count and the device type; 0x102 sends one
++request frame and reads back the response frames; 0x103 writes data
++frames in reliable-write sized transactions, each followed by a result
++read request. Frames are passed through unchanged: TrustZone builds
++and authenticates them, this service only moves them to the RPMB well
++known LUN with SECURITY PROTOCOL IN/OUT (protocol 0xEC) over SG_IO.
++Only UFS is handled; the geometry comes from the UFS sysfs descriptors.
++---
++ Makefile                  |   2 +-
++ include/qsee_supplicant.h |   3 +
++ src/rpmb.c                | 188 ++++++++++++++++++++++++++++++++++++++
++ src/services.c            |   1 +
++ 4 files changed, 193 insertions(+), 1 deletion(-)
++ create mode 100755 src/rpmb.c
++
++diff --git a/Makefile b/Makefile
++index ba1ada5..c794287 100644
++--- a/Makefile
+++++ b/Makefile
++@@ -3,7 +3,7 @@ CPPFLAGS += -D_GNU_SOURCE -Iinclude
++ CFLAGS ?= -O2 -g
++ CFLAGS += -std=c11 -Wall -Wextra -Werror
++ 
++-COMMON = src/path.c src/services.c src/handle_db.c src/fs.c src/gpfs.c
+++COMMON = src/path.c src/services.c src/handle_db.c src/fs.c src/gpfs.c src/rpmb.c
++ NOTIFY = src/notify.c
++ APP_ACQUIRE = src/app_acquire.c
++ THREAD_LIBS = -pthread
++diff --git a/include/qsee_supplicant.h b/include/qsee_supplicant.h
++index bf66f9e..42604fa 100644
++--- a/include/qsee_supplicant.h
+++++ b/include/qsee_supplicant.h
++@@ -8,6 +8,8 @@
++ 
++ #define QS_FS_SERVICE_ID 10u
++ #define QS_GPFS_SERVICE_ID 0x7000u
+++#define QS_RPMB_SERVICE_ID 0x2000u
+++#define QS_RPMB_BUFFER_SIZE 25600u
++ #define QS_FS_BUFFER_SIZE (20u * 1024u)
++ #define QS_GPFS_BUFFER_SIZE (504u * 1024u)
++ 
++@@ -36,6 +38,7 @@ int qs_open_parent(struct qs_store *store, const char *path, bool create,
++ 
++ int qs_fs_dispatch(struct qs_store *store, void *buffer, size_t size);
++ void qs_fs_reset(void);
+++int qs_rpmb_dispatch(struct qs_store *store, void *buffer, size_t size);
++ int qs_gpfs_dispatch(struct qs_store *store, void *buffer, size_t size);
++ 
++ extern const struct qs_service qs_builtin_services[];
++diff --git a/src/rpmb.c b/src/rpmb.c
++new file mode 100755
++index 0000000..a514fc7
++--- /dev/null
+++++ b/src/rpmb.c
++@@ -0,0 +1,188 @@
+++// SPDX-License-Identifier: BSD-2-Clause
+++/* QSEE RPMB listener (service 0x2000) for UFS, protocol as used by Qualcomm's
+++ * librpmb (qseecomd): 0x101 init, 0x102 read, 0x103 write, 0x104 partition cfg.
+++ * Frames are passed through unchanged as JEDEC RPMB frames (512 bytes each) via
+++ * SCSI SECURITY PROTOCOL IN/OUT (protocol 0xEC, SPSP 0x0001) on the RPMB W-LU.
+++ * TrustZone builds and authenticates all frames; this code only transports them. */
+++#include "qsee_supplicant.h"
+++
+++#include <dirent.h>
+++#include <errno.h>
+++#include <fcntl.h>
+++#include <limits.h>
+++#include <scsi/sg.h>
+++#include <stdint.h>
+++#include <stdio.h>
+++#include <stdlib.h>
+++#include <string.h>
+++#include <sys/ioctl.h>
+++#include <unistd.h>
+++
+++#define RPMB_FRAME 512u
+++#define RPMB_WLUN_SDEV "49476" /* 0xC144 -> scsi lun 49476 */
+++
+++static int rpmb_fd = -1;
+++static uint32_t rpmb_size, rpmb_rel_wr;
+++
+++static int read_sysfs_ul(const char *path, unsigned long *val)
+++{
+++	char buf[64]; FILE *f = fopen(path, "r");
+++	if (!f) return -1;
+++	if (!fgets(buf, sizeof(buf), f)) { fclose(f); return -1; }
+++	fclose(f);
+++	*val = strtoul(buf, NULL, 0);
+++	return 0;
+++}
+++
+++static int rpmb_open(void)
+++{
+++	char path[PATH_MAX], link[PATH_MAX], dev[64];
+++	DIR *d; struct dirent *e; ssize_t n; unsigned long v;
+++
+++	if (rpmb_fd >= 0) return 0;
+++	d = opendir("/sys/class/scsi_device");
+++	if (!d) return -1;
+++	path[0] = 0;
+++	while ((e = readdir(d))) {
+++		const char *c = strrchr(e->d_name, ':');
+++		if (c && !strcmp(c + 1, RPMB_WLUN_SDEV)) {
+++			snprintf(path, sizeof(path), "/sys/class/scsi_device/%s/device", e->d_name);
+++			break;
+++		}
+++	}
+++	closedir(d);
+++	if (!path[0]) { errno = ENODEV; return -1; }
+++	snprintf(link, sizeof(link), "%s/generic", path);
+++	n = readlink(link, dev, sizeof(dev) - 1);
+++	if (n < 0) return -1;
+++	dev[n] = 0;
+++	snprintf(link, sizeof(link), "/dev/%s", strrchr(dev, '/') ? strrchr(dev, '/') + 1 : dev);
+++	rpmb_fd = open(link, O_RDWR | O_CLOEXEC);
+++	if (rpmb_fd < 0) return -1;
+++
+++	snprintf(link, sizeof(link), "%s/unit_descriptor/logical_block_count", path);
+++	if (read_sysfs_ul(link, &v)) return -1;
+++	rpmb_size = (uint32_t)(v >> 1); /* 256-byte blocks -> 512-byte sectors, like librpmb */
+++	rpmb_rel_wr = 0;
+++	d = opendir("/sys/bus/platform/devices");
+++	if (d) {
+++		while ((e = readdir(d))) {
+++			if (!strstr(e->d_name, "ufshc")) continue;
+++			snprintf(link, sizeof(link), "/sys/bus/platform/devices/%s/geometry_descriptor/rpmb_rw_size", e->d_name);
+++			if (!read_sysfs_ul(link, &v)) { rpmb_rel_wr = (uint32_t)v; break; }
+++		}
+++		closedir(d);
+++	}
+++	if (!rpmb_rel_wr) rpmb_rel_wr = 1;
+++	fprintf(stderr, "event=rpmb_open dev=%s size=%u rel_wr=%u\n", dev, rpmb_size, rpmb_rel_wr);
+++	return 0;
+++}
+++
+++static int sec_proto(int out, void *buf, uint32_t len)
+++{
+++	uint8_t cdb[12] = { out ? 0xB5 : 0xA2, 0xEC, 0x00, 0x01, 0, 0,
+++			    len >> 24, len >> 16, len >> 8, len, 0, 0 };
+++	uint8_t sense[32];
+++	sg_io_hdr_t io;
+++	int attempt;
+++
+++	for (attempt = 0; attempt < 3; attempt++) {
+++	memset(&io, 0, sizeof(io));
+++	memset(sense, 0, sizeof(sense));
+++	io.interface_id = 'S';
+++	io.dxfer_direction = out ? SG_DXFER_TO_DEV : SG_DXFER_FROM_DEV;
+++	io.cmd_len = sizeof(cdb);
+++	io.cmdp = cdb;
+++	io.dxfer_len = len;
+++	io.dxferp = buf;
+++	io.mx_sb_len = sizeof(sense);
+++	io.sbp = sense;
+++	io.timeout = 20000;
+++	if (ioctl(rpmb_fd, SG_IO, &io) < 0) return -1;
+++	if (!io.status && !io.host_status && !io.driver_status)
+++		return 0;
+++	fprintf(stderr, "event=rpmb_sg_error out=%d status=0x%x host=0x%x driver=0x%x sense=%02x/%02x/%02x try=%d\n",
+++		out, io.status, io.host_status, io.driver_status, sense[2] & 0xf, sense[12], sense[13], attempt);
+++	if ((sense[2] & 0xf) != 0x6) /* retry only UNIT ATTENTION */
+++		break;
+++	}
+++	errno = EIO;
+++	return -1;
+++}
+++
+++int qs_rpmb_dispatch(struct qs_store *store, void *buffer, size_t size)
+++{
+++	uint32_t *w = buffer;
+++	uint8_t *b = buffer;
+++	uint32_t cmd = w[0];
+++	(void)store;
+++
+++	if (size < 0x40) return -EINVAL;
+++	if (cmd == 0x101) {
+++		uint32_t ver = w[1];
+++		int32_t ret = rpmb_open() ? -1 : 0;
+++		memset(b, 0, 0x28);
+++		w[0] = cmd;
+++		w[1] = ver >= 2 ? 2 : 1;
+++		w[2] = (uint32_t)ret;
+++		w[3] = rpmb_size;
+++		w[4] = rpmb_rel_wr;
+++		if (ver >= 2) w[5] = 9; /* device type: UFS */
+++		return 0;
+++	}
+++	if (cmd == 0x102 || cmd == 0x103) {
+++		uint32_t blk = w[1], off = w[3], per_tx = cmd == 0x103 ? w[5] : 0;
+++		uint8_t *frames = b + off, *resp = b + 0x14;
+++		int32_t ret = -1;
+++		uint32_t rlen = 0;
+++
+++		if (rpmb_open() || !blk || off < 0x14 || (size_t)off + (size_t)blk * RPMB_FRAME > size) {
+++			fprintf(stderr, "event=rpmb_bad_req cmd=0x%x blk=%u off=0x%x\n", cmd, blk, off);
+++		} else if (cmd == 0x102) {
+++			/* one request frame out, blk response frames in */
+++			uint8_t req[RPMB_FRAME];
+++			memcpy(req, frames, RPMB_FRAME);
+++			if ((size_t)0x14 + (size_t)blk * RPMB_FRAME <= size &&
+++			    !sec_proto(1, req, RPMB_FRAME) && !sec_proto(0, resp, blk * RPMB_FRAME)) {
+++				ret = 0; rlen = blk * RPMB_FRAME;
+++			}
+++			if (ret)
+++				fprintf(stderr, "event=rpmb_read_failed blk=%u\n", blk);
+++		} else {
+++			uint8_t *copy = malloc((size_t)blk * RPMB_FRAME);
+++			uint8_t resreq[RPMB_FRAME];
+++			uint32_t done = 0, n;
+++			if (!per_tx || per_tx > rpmb_rel_wr) per_tx = blk < rpmb_rel_wr ? blk : rpmb_rel_wr;
+++			if (copy) {
+++				memcpy(copy, frames, (size_t)blk * RPMB_FRAME);
+++				ret = 0;
+++				while (done < blk && !ret) {
+++					n = blk - done < per_tx ? blk - done : per_tx;
+++					memset(resreq, 0, sizeof(resreq));
+++					resreq[511] = 0x05; /* result read request */
+++					if (sec_proto(1, copy + (size_t)done * RPMB_FRAME, n * RPMB_FRAME) ||
+++					    sec_proto(1, resreq, RPMB_FRAME) ||
+++					    sec_proto(0, resp, RPMB_FRAME))
+++						ret = -1;
+++					done += n;
+++				}
+++				free(copy);
+++				if (!ret) rlen = RPMB_FRAME;
+++			}
+++			if (ret)
+++				fprintf(stderr, "event=rpmb_write_failed blk=%u per_tx=%u\n", blk, per_tx);
+++		}
+++		w[1] = (uint32_t)ret;
+++		w[2] = rlen;
+++		w[3] = 0x14;
+++		return 0;
+++	}
+++	if (cmd == 0x104) {
+++		/* no partition config file: report failure like librpmb does */
+++		w[1] = (uint32_t)-1; w[2] = 0; w[3] = 16;
+++		return 0;
+++	}
+++	fprintf(stderr, "event=rpmb_unknown cmd=0x%x\n", cmd);
+++	w[1] = (uint32_t)-1; w[3] = 0x14;
+++	return 0;
+++}
++diff --git a/src/services.c b/src/services.c
++index e323233..27d88f9 100644
++--- a/src/services.c
+++++ b/src/services.c
++@@ -4,6 +4,7 @@
++ const struct qs_service qs_builtin_services[] = {
++ 	{ QS_FS_SERVICE_ID, QS_FS_BUFFER_SIZE, qs_fs_dispatch, qs_fs_reset },
++ 	{ QS_GPFS_SERVICE_ID, QS_GPFS_BUFFER_SIZE, qs_gpfs_dispatch, NULL },
+++	{ QS_RPMB_SERVICE_ID, QS_RPMB_BUFFER_SIZE, qs_rpmb_dispatch, NULL },
++ };
++ 
++ const size_t qs_builtin_service_count =
+diff --git a/temp/qsee-supplicant/APKBUILD b/temp/qsee-supplicant/APKBUILD
+new file mode 100644
+index 0000000000..ac7ade2936
+--- /dev/null
++++ b/temp/qsee-supplicant/APKBUILD
+@@ -0,0 +1,44 @@
++# Maintainer: Timo <1788603+darknagel@users.noreply.github.com>
++# Based on the APKBUILD shipped by upstream (packaging/alpine).
++pkgname=qsee-supplicant
++pkgver=0.1.1_git20261116
++pkgrel=0
++_commit=36e06680cf7f690fccbdcd07abc2a64c4bb061d8
++pkgdesc="Userspace services for Qualcomm QSEECOM trusted applications"
++url="https://github.com/wrobelda/qsee-supplicant"
++arch="aarch64"
++license="BSD-2-Clause AND BSD-3-Clause-Clear"
++makedepends="linux-headers"
++subpackages="$pkgname-doc $pkgname-systemd:systemd"
++source="$pkgname-$_commit.tar.gz::https://github.com/wrobelda/qsee-supplicant/archive/$_commit.tar.gz
++	0001-gpfs-accept-requests-up-to-the-shared-buffer-size.patch
++	0002-rpmb-add-the-RPMB-listener-service-0x2000-for-UFS.patch
++	"
++builddir="$srcdir/qsee-supplicant-$_commit"
++
++build() {
++	make
++}
++
++check() {
++	make check
++}
++
++package() {
++	make DESTDIR="$pkgdir" install-bin install-systemd install-doc
++	install -Dm644 LICENSE "$pkgdir"/usr/share/licenses/$pkgname/LICENSE
++	install -Dm644 LICENSES/BSD-3-Clause-Clear.txt \
++		"$pkgdir"/usr/share/licenses/$pkgname/BSD-3-Clause-Clear.txt
++}
++
++systemd() {
++	pkgdesc="$pkgdesc (systemd services)"
++	depends="systemd"
++	install_if="$pkgname=$pkgver-r$pkgrel systemd"
++	amove usr/lib/systemd/system
++}
++sha512sums="
++c2cc66029081a336ebb550d7841c5514a260ca3ce21c62fa52a7f5e7fb7ad2e713c290f5c3056e4a4ed8aae0f465ef09591a84cc86c4dacfe6517c6b2bf87b45  qsee-supplicant-36e06680cf7f690fccbdcd07abc2a64c4bb061d8.tar.gz
++f1df0f9aa4f6a9979b88a29ab2a538e489fa504c84cbb8e50e0cea464e5d0fd8015301d2936b93f57bab5b5787e9ca2b3bcb4379c7dc384d1db9ae66cfb2257a  0001-gpfs-accept-requests-up-to-the-shared-buffer-size.patch
++c9cee83d8cd3eb2f8ac3e2c151978daa722f619e0d447864430692681e0d979c39c085da88bc6878b472aff10b28e7a2ef1c80efc69d31cdef16b25cec1982c7  0002-rpmb-add-the-RPMB-listener-service-0x2000-for-UFS.patch
++"

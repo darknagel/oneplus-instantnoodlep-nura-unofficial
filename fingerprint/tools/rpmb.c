@@ -1,0 +1,188 @@
+// SPDX-License-Identifier: BSD-2-Clause
+/* QSEE RPMB listener (service 0x2000) for UFS, protocol as used by Qualcomm's
+ * librpmb (qseecomd): 0x101 init, 0x102 read, 0x103 write, 0x104 partition cfg.
+ * Frames are passed through unchanged as JEDEC RPMB frames (512 bytes each) via
+ * SCSI SECURITY PROTOCOL IN/OUT (protocol 0xEC, SPSP 0x0001) on the RPMB W-LU.
+ * TrustZone builds and authenticates all frames; this code only transports them. */
+#include "qsee_supplicant.h"
+
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <scsi/sg.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+#define RPMB_FRAME 512u
+#define RPMB_WLUN_SDEV "49476" /* 0xC144 -> scsi lun 49476 */
+
+static int rpmb_fd = -1;
+static uint32_t rpmb_size, rpmb_rel_wr;
+
+static int read_sysfs_ul(const char *path, unsigned long *val)
+{
+	char buf[64]; FILE *f = fopen(path, "r");
+	if (!f) return -1;
+	if (!fgets(buf, sizeof(buf), f)) { fclose(f); return -1; }
+	fclose(f);
+	*val = strtoul(buf, NULL, 0);
+	return 0;
+}
+
+static int rpmb_open(void)
+{
+	char path[PATH_MAX], link[PATH_MAX], dev[64];
+	DIR *d; struct dirent *e; ssize_t n; unsigned long v;
+
+	if (rpmb_fd >= 0) return 0;
+	d = opendir("/sys/class/scsi_device");
+	if (!d) return -1;
+	path[0] = 0;
+	while ((e = readdir(d))) {
+		const char *c = strrchr(e->d_name, ':');
+		if (c && !strcmp(c + 1, RPMB_WLUN_SDEV)) {
+			snprintf(path, sizeof(path), "/sys/class/scsi_device/%s/device", e->d_name);
+			break;
+		}
+	}
+	closedir(d);
+	if (!path[0]) { errno = ENODEV; return -1; }
+	snprintf(link, sizeof(link), "%s/generic", path);
+	n = readlink(link, dev, sizeof(dev) - 1);
+	if (n < 0) return -1;
+	dev[n] = 0;
+	snprintf(link, sizeof(link), "/dev/%s", strrchr(dev, '/') ? strrchr(dev, '/') + 1 : dev);
+	rpmb_fd = open(link, O_RDWR | O_CLOEXEC);
+	if (rpmb_fd < 0) return -1;
+
+	snprintf(link, sizeof(link), "%s/unit_descriptor/logical_block_count", path);
+	if (read_sysfs_ul(link, &v)) return -1;
+	rpmb_size = (uint32_t)(v >> 1); /* 256-byte blocks -> 512-byte sectors, like librpmb */
+	rpmb_rel_wr = 0;
+	d = opendir("/sys/bus/platform/devices");
+	if (d) {
+		while ((e = readdir(d))) {
+			if (!strstr(e->d_name, "ufshc")) continue;
+			snprintf(link, sizeof(link), "/sys/bus/platform/devices/%s/geometry_descriptor/rpmb_rw_size", e->d_name);
+			if (!read_sysfs_ul(link, &v)) { rpmb_rel_wr = (uint32_t)v; break; }
+		}
+		closedir(d);
+	}
+	if (!rpmb_rel_wr) rpmb_rel_wr = 1;
+	fprintf(stderr, "event=rpmb_open dev=%s size=%u rel_wr=%u\n", dev, rpmb_size, rpmb_rel_wr);
+	return 0;
+}
+
+static int sec_proto(int out, void *buf, uint32_t len)
+{
+	uint8_t cdb[12] = { out ? 0xB5 : 0xA2, 0xEC, 0x00, 0x01, 0, 0,
+			    len >> 24, len >> 16, len >> 8, len, 0, 0 };
+	uint8_t sense[32];
+	sg_io_hdr_t io;
+	int attempt;
+
+	for (attempt = 0; attempt < 3; attempt++) {
+	memset(&io, 0, sizeof(io));
+	memset(sense, 0, sizeof(sense));
+	io.interface_id = 'S';
+	io.dxfer_direction = out ? SG_DXFER_TO_DEV : SG_DXFER_FROM_DEV;
+	io.cmd_len = sizeof(cdb);
+	io.cmdp = cdb;
+	io.dxfer_len = len;
+	io.dxferp = buf;
+	io.mx_sb_len = sizeof(sense);
+	io.sbp = sense;
+	io.timeout = 20000;
+	if (ioctl(rpmb_fd, SG_IO, &io) < 0) return -1;
+	if (!io.status && !io.host_status && !io.driver_status)
+		return 0;
+	fprintf(stderr, "event=rpmb_sg_error out=%d status=0x%x host=0x%x driver=0x%x sense=%02x/%02x/%02x try=%d\n",
+		out, io.status, io.host_status, io.driver_status, sense[2] & 0xf, sense[12], sense[13], attempt);
+	if ((sense[2] & 0xf) != 0x6) /* retry only UNIT ATTENTION */
+		break;
+	}
+	errno = EIO;
+	return -1;
+}
+
+int qs_rpmb_dispatch(struct qs_store *store, void *buffer, size_t size)
+{
+	uint32_t *w = buffer;
+	uint8_t *b = buffer;
+	uint32_t cmd = w[0];
+	(void)store;
+
+	if (size < 0x40) return -EINVAL;
+	if (cmd == 0x101) {
+		uint32_t ver = w[1];
+		int32_t ret = rpmb_open() ? -1 : 0;
+		memset(b, 0, 0x28);
+		w[0] = cmd;
+		w[1] = ver >= 2 ? 2 : 1;
+		w[2] = (uint32_t)ret;
+		w[3] = rpmb_size;
+		w[4] = rpmb_rel_wr;
+		if (ver >= 2) w[5] = 9; /* device type: UFS */
+		return 0;
+	}
+	if (cmd == 0x102 || cmd == 0x103) {
+		uint32_t blk = w[1], off = w[3], per_tx = cmd == 0x103 ? w[5] : 0;
+		uint8_t *frames = b + off, *resp = b + 0x14;
+		int32_t ret = -1;
+		uint32_t rlen = 0;
+
+		if (rpmb_open() || !blk || off < 0x14 || (size_t)off + (size_t)blk * RPMB_FRAME > size) {
+			fprintf(stderr, "event=rpmb_bad_req cmd=0x%x blk=%u off=0x%x\n", cmd, blk, off);
+		} else if (cmd == 0x102) {
+			/* one request frame out, blk response frames in */
+			uint8_t req[RPMB_FRAME];
+			memcpy(req, frames, RPMB_FRAME);
+			if ((size_t)0x14 + (size_t)blk * RPMB_FRAME <= size &&
+			    !sec_proto(1, req, RPMB_FRAME) && !sec_proto(0, resp, blk * RPMB_FRAME)) {
+				ret = 0; rlen = blk * RPMB_FRAME;
+			}
+			if (ret)
+				fprintf(stderr, "event=rpmb_read_failed blk=%u\n", blk);
+		} else {
+			uint8_t *copy = malloc((size_t)blk * RPMB_FRAME);
+			uint8_t resreq[RPMB_FRAME];
+			uint32_t done = 0, n;
+			if (!per_tx || per_tx > rpmb_rel_wr) per_tx = blk < rpmb_rel_wr ? blk : rpmb_rel_wr;
+			if (copy) {
+				memcpy(copy, frames, (size_t)blk * RPMB_FRAME);
+				ret = 0;
+				while (done < blk && !ret) {
+					n = blk - done < per_tx ? blk - done : per_tx;
+					memset(resreq, 0, sizeof(resreq));
+					resreq[511] = 0x05; /* result read request */
+					if (sec_proto(1, copy + (size_t)done * RPMB_FRAME, n * RPMB_FRAME) ||
+					    sec_proto(1, resreq, RPMB_FRAME) ||
+					    sec_proto(0, resp, RPMB_FRAME))
+						ret = -1;
+					done += n;
+				}
+				free(copy);
+				if (!ret) rlen = RPMB_FRAME;
+			}
+			if (ret)
+				fprintf(stderr, "event=rpmb_write_failed blk=%u per_tx=%u\n", blk, per_tx);
+		}
+		w[1] = (uint32_t)ret;
+		w[2] = rlen;
+		w[3] = 0x14;
+		return 0;
+	}
+	if (cmd == 0x104) {
+		/* no partition config file: report failure like librpmb does */
+		w[1] = (uint32_t)-1; w[2] = 0; w[3] = 16;
+		return 0;
+	}
+	fprintf(stderr, "event=rpmb_unknown cmd=0x%x\n", cmd);
+	w[1] = (uint32_t)-1; w[3] = 0x14;
+	return 0;
+}

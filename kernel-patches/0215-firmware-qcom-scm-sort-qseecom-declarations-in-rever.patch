@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dawid=20Wr=C3=B3bel?= <me@dawidwrobel.com>
+Date: Mon, 2 Nov 2026 16:05:40 +0100
+Subject: [PATCH 215/222] firmware: qcom: scm: sort qseecom declarations in
+ reverse xmas tree
+
+(cherry picked from commit e05d675f1b99e78a759ed439ea70a09f35cbc42e)
+---
+ drivers/firmware/qcom/qcom_scm.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/firmware/qcom/qcom_scm.c b/drivers/firmware/qcom/qcom_scm.c
+index 993efd1e24..2d3950435f 100644
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -2172,8 +2172,8 @@ static int qcom_scm_qseecom_service_listeners(struct qcom_scm_qseecom_resp *res)
+ 	struct qcom_scm_qseecom_listener *listener;
+ 	unsigned int rounds = 0;
+ 	u32 status;
+-	u32 id;
+ 	int ret;
++	u32 id;
+ 
+ 	lockdep_assert_held(&qcom_scm_qseecom_call_lock);
+ 
+@@ -2525,9 +2525,9 @@ EXPORT_SYMBOL_GPL(qcom_scm_qseecom_app_get_id);
+ int qcom_scm_qseecom_app_load(void *img, size_t mdt_len, size_t img_len,
+ 			      u32 *app_id)
+ {
+-	phys_addr_t img_phys;
+ 	struct qcom_scm_qseecom_resp res = {};
+ 	struct qcom_scm_desc desc = {};
++	phys_addr_t img_phys;
+ 	int status;
+ 
+ 	if (!img || !mdt_len || mdt_len > img_len)

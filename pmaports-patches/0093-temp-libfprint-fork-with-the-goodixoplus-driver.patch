@@ -1,0 +1,1842 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 22:36:27 +0100
+Subject: [PATCH 93/93] temp/libfprint: fork with the goodixoplus driver
+
+Dawid Wrobel's libfprint branch plus a driver for the Oplus Goodix optical
+in-display sensor behind the QSEE trusted application (OnePlus 8 Pro).
+---
+ ...a-driver-for-the-Oplus-Goodix-optica.patch | 1758 +++++++++++++++++
+ temp/libfprint/APKBUILD                       |   58 +
+ 2 files changed, 1816 insertions(+)
+ create mode 100644 temp/libfprint/0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch
+ create mode 100644 temp/libfprint/APKBUILD
+
+diff --git a/temp/libfprint/0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch b/temp/libfprint/0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch
+new file mode 100644
+index 0000000000..8e3f6fef0b
+--- /dev/null
++++ b/temp/libfprint/0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch
+@@ -0,0 +1,1758 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 16 Nov 2026 23:41:47 +0100
++Subject: [PATCH] goodixoplus: add a driver for the Oplus Goodix optical QSEE
++ sensor
++
++Optical in-display Goodix sensor of the OnePlus 8 Pro (G5, TA gfp9608),
++match-on-chip through the Oplus/Goodix trusted application in QSEE.
++The protocol (64-byte request header, payload with target/command,
++Gatekeeper-signed enrollment tokens, keymaster-wrapped HMAC key) was
++recovered from the Android HAL. The finger is detected on the
++touchscreen, and the sensor is lit with a white disk on the framebuffer.
++See libfprint/drivers/goodixoplus/README.md for details and limits.
++---
++ libfprint/drivers/goodixoplus/README.md       |  66 ++
++ .../drivers/goodixoplus/goodix-oplus-io.c     | 316 +++++++
++ .../drivers/goodixoplus/goodix-oplus-io.h     |  41 +
++ .../drivers/goodixoplus/goodix-oplus-tee.c    | 347 +++++++
++ .../drivers/goodixoplus/goodix-oplus-tee.h    |  40 +
++ libfprint/drivers/goodixoplus/goodix-oplus.c  | 854 ++++++++++++++++++
++ libfprint/meson.build                         |   5 +
++ meson.build                                   |   1 +
++ 8 files changed, 1670 insertions(+)
++ create mode 100755 libfprint/drivers/goodixoplus/README.md
++ create mode 100755 libfprint/drivers/goodixoplus/goodix-oplus-io.c
++ create mode 100755 libfprint/drivers/goodixoplus/goodix-oplus-io.h
++ create mode 100755 libfprint/drivers/goodixoplus/goodix-oplus-tee.c
++ create mode 100755 libfprint/drivers/goodixoplus/goodix-oplus-tee.h
++ create mode 100755 libfprint/drivers/goodixoplus/goodix-oplus.c
++
++diff --git a/libfprint/drivers/goodixoplus/README.md b/libfprint/drivers/goodixoplus/README.md
++new file mode 100755
++index 0000000..f2dcb30
++--- /dev/null
+++++ b/libfprint/drivers/goodixoplus/README.md
++@@ -0,0 +1,66 @@
+++# libfprint driver `goodixoplus`
+++
+++Driver for the optical under-display Goodix sensor of the OnePlus 8 Pro
+++(instantnoodlep, SM8250), reached through the Oplus/Goodix QSEE trusted
+++application (`gfp9608` for G5, `gfp9638` for G6). Match-on-chip: images and
+++templates never leave TrustZone. Templates are sealed by the TA and stored
+++through the machine-wide `qsee-supplicant`.
+++
+++Files go to `libfprint/drivers/goodixoplus/` in wrobelda's libfprint fork
+++(branch `goodix-qsee`), plus entries in `meson.build` and `libfprint/meson.build`.
+++The fork's own `goodixqsee` driver matches the same compatible
+++(`goodix,gf3626`), so build only this one: `-Ddrivers=goodixoplus`.
+++
+++## Requirements at runtime
+++
+++- Kernel: wrobelda's QSEECOM TEE driver, the `goodix_fp_spi` misc driver, and a DT
+++  `firmware-name` of `gfp96xx`.
+++- `qsee-supplicant` with the FS, GPFS and **RPMB (0x2000)** listeners
+++  (`../tools/qsee-supplicant-rpmb-gpfs.patch`, which also removes the 500 KiB GPFS
+++  length cap). Without RPMB, Gatekeeper cannot store anything and enrollment fails.
+++- `qsee-app-loader gfp9608` running. The TA must be the squashed single-file `.mbn`,
+++  because mainline `mdt_loader` cannot parse ELF64.
+++- fprintd drop-in:
+++
+++```ini
+++[Service]
+++DeviceAllow=/dev/goodix_fp rw
+++DeviceAllow=char-tee rw
+++DeviceAllow=char-input r
+++DeviceAllow=/dev/fb0 rw
+++ReadWritePaths=/var/lib/goodix-oplus
+++```
+++
+++## How it works
+++
+++- **Open:** powers and resets the sensor, then runs the HAL init chain
+++  (`1002/9`, `1002/0`, `1002/1`, `1002/2`, `1002/11`, `1001/0`, `1001/20`, `1002/8`,
+++  `1000/13`). Then it fetches the HMAC key from `keymaster64` (`0x207` SET_VERSION,
+++  then `0x205`), passes it in with `1000/10`, and sets the active group with
+++  `1000/0` (path `/data/vendor_de/0/fpdata`).
+++- **Finger detection:** a touch on the sensor area of the touchscreen, the same
+++  trigger as the Android HAL. While waiting it draws a blue ring at the sensor; for
+++  each capture it draws a white disk under the sensor, writing to `/dev/fb0`.
+++- **Enroll:** `1000/2` returns a challenge, Gatekeeper verify produces a HAT, and
+++  `1000/3` starts the session. Each touch is `1002/9`, `1001/15`, `1002/3`,
+++  `1002/101`, `1001/1`, until the remaining count reaches 0. `1000/9` saves the
+++  template.
+++- **Identify:** `1000/1`, then up to 4 rounds of `1002/3`, `1002/101`, `1001/2`. A
+++  match returns the finger id at `+0x30`.
+++- **List:** `1000/7`. **Delete:** `1000/6` (group at `+0x1c`, finger at `+0x20`).
+++
+++## Limitations / honesty
+++
+++- **Gatekeeper token:** the driver enrolls a random machine-local secret
+++  (`/var/lib/goodix-oplus/gatekeeper`, root-only) with Gatekeeper and verifies it
+++  to mint the HAT. This is a real Gatekeeper-signed token, but it does not prove
+++  that the user knew their password.
+++- **Factory calibration:** `gf_persist.so` and the other persist files written by
+++  Android fail the TA's HMAC check on mainline. The TA runs with default
+++  calibration and its own auto-calibration, which works, but quality is likely
+++  below Android.
+++- **Display:** the ring and the light disk go straight to `/dev/fb0`. Under a
+++  compositor (Phosh, Plasma, GDM) this needs compositor or KMS support instead,
+++  plus panel HBM.
+++- **Sensor position:** hardcoded for the 1440x3168 panel, as fractions of the panel
+++  size.
++diff --git a/libfprint/drivers/goodixoplus/goodix-oplus-io.c b/libfprint/drivers/goodixoplus/goodix-oplus-io.c
++new file mode 100755
++index 0000000..97efc2a
++--- /dev/null
+++++ b/libfprint/drivers/goodixoplus/goodix-oplus-io.c
++@@ -0,0 +1,316 @@
+++/* SPDX-License-Identifier: LGPL-2.1-or-later */
+++#include "goodix-oplus-io.h"
+++
+++#include <dirent.h>
+++#include <errno.h>
+++#include <fcntl.h>
+++#include <linux/fb.h>
+++#include <linux/input.h>
+++#include <math.h>
+++#include <poll.h>
+++#include <stdio.h>
+++#include <stdlib.h>
+++#include <string.h>
+++#include <sys/ioctl.h>
+++#include <unistd.h>
+++
+++#define GF_IOC_MAGIC 'g'
+++#define GF_IOC_RESET _IO (GF_IOC_MAGIC, 2)
+++#define GF_IOC_ENABLE_IRQ _IO (GF_IOC_MAGIC, 3)
+++#define GF_IOC_ENABLE_POWER _IO (GF_IOC_MAGIC, 7)
+++
+++#define BITS_PER_LONG (sizeof (long) * 8)
+++#define NLONGS(x) (((x) + BITS_PER_LONG - 1) / BITS_PER_LONG)
+++#define TEST_BIT(bit, array) ((array[(bit) / BITS_PER_LONG] >> ((bit) % BITS_PER_LONG)) & 1)
+++
+++static int
+++open_touchscreen (int *max_x, int *max_y)
+++{
+++  DIR *dir = opendir ("/dev/input");
+++  struct dirent *entry;
+++  int fd = -1;
+++
+++  if (!dir)
+++    return -1;
+++  while ((entry = readdir (dir)))
+++    {
+++      unsigned long absbits[NLONGS (ABS_CNT)] = {0};
+++      unsigned long props[NLONGS (INPUT_PROP_CNT)] = {0};
+++      struct input_absinfo ax, ay;
+++      char path[300];
+++
+++      if (strncmp (entry->d_name, "event", 5))
+++        continue;
+++      snprintf (path, sizeof (path), "/dev/input/%s", entry->d_name);
+++      fd = open (path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+++      if (fd < 0)
+++        continue;
+++      if (ioctl (fd, EVIOCGBIT (EV_ABS, sizeof (absbits)), absbits) >= 0 &&
+++          ioctl (fd, EVIOCGPROP (sizeof (props)), props) >= 0 &&
+++          TEST_BIT (ABS_MT_POSITION_X, absbits) && TEST_BIT (ABS_MT_POSITION_Y, absbits) &&
+++          TEST_BIT (INPUT_PROP_DIRECT, props) &&
+++          !ioctl (fd, EVIOCGABS (ABS_MT_POSITION_X), &ax) &&
+++          !ioctl (fd, EVIOCGABS (ABS_MT_POSITION_Y), &ay) &&
+++          ax.maximum > 0 && ay.maximum > 0)
+++        {
+++          *max_x = ax.maximum;
+++          *max_y = ay.maximum;
+++          closedir (dir);
+++          return fd;
+++        }
+++      close (fd);
+++      fd = -1;
+++    }
+++  closedir (dir);
+++  errno = ENODEV;
+++  return -1;
+++}
+++
+++static void
+++open_framebuffer (struct goodix_oplus_io *io)
+++{
+++  struct fb_var_screeninfo var;
+++  struct fb_fix_screeninfo fix;
+++
+++  io->fb_fd = open ("/dev/fb0", O_RDWR | O_CLOEXEC);
+++  if (io->fb_fd < 0)
+++    return;
+++  if (ioctl (io->fb_fd, FBIOGET_VSCREENINFO, &var) ||
+++      ioctl (io->fb_fd, FBIOGET_FSCREENINFO, &fix) || var.bits_per_pixel != 32)
+++    {
+++      close (io->fb_fd);
+++      io->fb_fd = -1;
+++      return;
+++    }
+++  io->fb_w = var.xres;
+++  io->fb_h = var.yres;
+++  io->fb_bpp = var.bits_per_pixel;
+++  io->fb_stride = fix.line_length;
+++}
+++
+++int
+++goodix_oplus_io_open (struct goodix_oplus_io *io, const char *sensor_path)
+++{
+++  memset (io, 0, sizeof (*io));
+++  io->sensor_fd = io->touch_fd = io->fb_fd = -1;
+++  io->tracking = -1;
+++  /* OnePlus 8 Pro (instantnoodlep), 1440x3168 panel: sensor at (720, 2547) */
+++  io->geo.center_x = 0.5;
+++  io->geo.center_y = 2547.0 / 3168.0;
+++  io->geo.accept_radius = 0.20;
+++  io->geo.spot_radius = 190.0 / 1440.0;
+++
+++  io->sensor_fd = open (sensor_path, O_RDWR | O_CLOEXEC);
+++  if (io->sensor_fd < 0 ||
+++      ioctl (io->sensor_fd, GF_IOC_ENABLE_POWER) ||
+++      ioctl (io->sensor_fd, GF_IOC_RESET) ||
+++      ioctl (io->sensor_fd, GF_IOC_ENABLE_IRQ))
+++    goto fail;
+++  usleep (50000);
+++  io->touch_fd = open_touchscreen (&io->touch_max_x, &io->touch_max_y);
+++  if (io->touch_fd < 0)
+++    goto fail;
+++  open_framebuffer (io); /* optional */
+++  return 0;
+++fail:
+++  {
+++    int saved = errno;
+++    goodix_oplus_io_close (io);
+++    errno = saved;
+++  }
+++  return -1;
+++}
+++
+++void
+++goodix_oplus_io_close (struct goodix_oplus_io *io)
+++{
+++  goodix_oplus_io_light (io, false);
+++  goodix_oplus_io_guide (io, false);
+++  if (io->fb_fd >= 0) close (io->fb_fd);
+++  if (io->touch_fd >= 0) close (io->touch_fd);
+++  if (io->sensor_fd >= 0) close (io->sensor_fd);
+++  io->fb_fd = io->touch_fd = io->sensor_fd = -1;
+++}
+++
+++static bool
+++on_sensor (struct goodix_oplus_io *io)
+++{
+++  double x = (double) io->cur_x / io->touch_max_x - io->geo.center_x;
+++  double y = ((double) io->cur_y / io->touch_max_y - io->geo.center_y) *
+++             ((double) io->touch_max_y / io->touch_max_x);
+++
+++  return io->tracking >= 0 && sqrt (x * x + y * y) <= io->geo.accept_radius;
+++}
+++
+++/* Process pending events; returns 1 if a down/up transition of interest occurred. */
+++static int
+++pump (struct goodix_oplus_io *io, bool want_down)
+++{
+++  struct input_event ev[64];
+++  ssize_t n;
+++  int i, transition = 0;
+++
+++  while ((n = read (io->touch_fd, ev, sizeof (ev))) > 0)
+++    {
+++      for (i = 0; i < n / (ssize_t) sizeof (ev[0]); i++)
+++        {
+++          if (ev[i].type == EV_ABS && ev[i].code == ABS_MT_TRACKING_ID)
+++            {
+++              io->tracking = ev[i].value;
+++              if (!want_down && ev[i].value < 0)
+++                transition = 1;
+++            }
+++          else if (ev[i].type == EV_ABS && ev[i].code == ABS_MT_POSITION_X)
+++            io->cur_x = ev[i].value;
+++          else if (ev[i].type == EV_ABS && ev[i].code == ABS_MT_POSITION_Y)
+++            io->cur_y = ev[i].value;
+++          else if (ev[i].type == EV_SYN && ev[i].code == SYN_REPORT && want_down && on_sensor (io))
+++            transition = 1;
+++        }
+++      if (transition)
+++        return 1;
+++    }
+++  if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+++    return -1;
+++  return 0;
+++}
+++
+++static int
+++wait_transition (struct goodix_oplus_io *io, bool down, int timeout_ms)
+++{
+++  struct pollfd pfd = { .fd = io->touch_fd, .events = POLLIN };
+++  int r;
+++
+++  if (!down && io->tracking < 0)
+++    return 1;
+++  r = pump (io, down);
+++  if (r)
+++    return r;
+++  do r = poll (&pfd, 1, timeout_ms); while (r < 0 && errno == EINTR);
+++  if (r <= 0)
+++    return r;
+++  return pump (io, down);
+++}
+++
+++int
+++goodix_oplus_io_wait_down (struct goodix_oplus_io *io, int timeout_ms)
+++{
+++  return wait_transition (io, true, timeout_ms);
+++}
+++
+++int
+++goodix_oplus_io_wait_up (struct goodix_oplus_io *io, int timeout_ms)
+++{
+++  return wait_transition (io, false, timeout_ms);
+++}
+++
+++void
+++goodix_oplus_io_guide (struct goodix_oplus_io *io, bool on)
+++{
+++  int cx, cy, r_out, r_in, y0, y1, y;
+++  uint8_t *band;
+++
+++  if (io->fb_fd < 0)
+++    return;
+++  if (!on)
+++    {
+++      if (io->guide_saved)
+++        {
+++          if (pwrite (io->fb_fd, io->guide_saved, io->guide_size, io->guide_off) < 0)
+++            { /* best effort */ }
+++          free (io->guide_saved);
+++          io->guide_saved = NULL;
+++        }
+++      return;
+++    }
+++  if (io->guide_saved)
+++    return;
+++  cx = (int) (io->geo.center_x * io->fb_w);
+++  cy = (int) (io->geo.center_y * io->fb_h);
+++  r_out = (int) (io->geo.spot_radius * io->fb_w) + 12;
+++  r_in = r_out - 14;
+++  y0 = cy - r_out < 0 ? 0 : cy - r_out;
+++  y1 = cy + r_out >= (int) io->fb_h ? (int) io->fb_h - 1 : cy + r_out;
+++  io->guide_off = (size_t) y0 * io->fb_stride;
+++  io->guide_size = (size_t) (y1 - y0 + 1) * io->fb_stride;
+++  io->guide_saved = malloc (io->guide_size);
+++  band = malloc (io->guide_size);
+++  if (!io->guide_saved || !band ||
+++      pread (io->fb_fd, io->guide_saved, io->guide_size, io->guide_off) != (ssize_t) io->guide_size)
+++    {
+++      free (io->guide_saved);
+++      io->guide_saved = NULL;
+++      free (band);
+++      return;
+++    }
+++  memcpy (band, io->guide_saved, io->guide_size);
+++  for (y = y0; y <= y1; y++)
+++    {
+++      int x;
+++      for (x = cx - r_out; x <= cx + r_out; x++)
+++        {
+++          int dx = x - cx, dy = y - cy, d2 = dx * dx + dy * dy;
+++          if (x < 0 || x >= (int) io->fb_w || d2 > r_out * r_out || d2 < r_in * r_in)
+++            continue;
+++          /* XRGB8888: light blue */
+++          band[(size_t) (y - y0) * io->fb_stride + (size_t) x * 4 + 0] = 0xff;
+++          band[(size_t) (y - y0) * io->fb_stride + (size_t) x * 4 + 1] = 0xa0;
+++          band[(size_t) (y - y0) * io->fb_stride + (size_t) x * 4 + 2] = 0x00;
+++        }
+++    }
+++  if (pwrite (io->fb_fd, band, io->guide_size, io->guide_off) < 0)
+++    { /* best effort */ }
+++  free (band);
+++}
+++
+++void
+++goodix_oplus_io_light (struct goodix_oplus_io *io, bool on)
+++{
+++  int cx, cy, r, y0, y1, y;
+++
+++  if (io->fb_fd < 0)
+++    return;
+++  if (!on)
+++    {
+++      if (io->saved)
+++        {
+++          if (pwrite (io->fb_fd, io->saved, io->saved_size, io->saved_off) < 0)
+++            { /* best effort */ }
+++          free (io->saved);
+++          io->saved = NULL;
+++        }
+++      return;
+++    }
+++  if (io->saved)
+++    return;
+++  cx = (int) (io->geo.center_x * io->fb_w);
+++  cy = (int) (io->geo.center_y * io->fb_h);
+++  r = (int) (io->geo.spot_radius * io->fb_w);
+++  y0 = cy - r < 0 ? 0 : cy - r;
+++  y1 = cy + r >= (int) io->fb_h ? (int) io->fb_h - 1 : cy + r;
+++  io->saved_off = (size_t) y0 * io->fb_stride;
+++  io->saved_size = (size_t) (y1 - y0 + 1) * io->fb_stride;
+++  io->saved = malloc (io->saved_size);
+++  if (!io->saved)
+++    return;
+++  if (pread (io->fb_fd, io->saved, io->saved_size, io->saved_off) != (ssize_t) io->saved_size)
+++    { free (io->saved); io->saved = NULL; return; }
+++  {
+++    uint8_t *band = malloc (io->saved_size);
+++    if (!band)
+++      return;
+++    memcpy (band, io->saved, io->saved_size);
+++    for (y = y0; y <= y1; y++)
+++      {
+++        int dy = y - cy, dx = (int) sqrt ((double) r * r - (double) dy * dy), x0, x1;
+++        x0 = cx - dx < 0 ? 0 : cx - dx;
+++        x1 = cx + dx >= (int) io->fb_w ? (int) io->fb_w - 1 : cx + dx;
+++        memset (band + (size_t) (y - y0) * io->fb_stride + (size_t) x0 * 4, 0xff,
+++                (size_t) (x1 - x0 + 1) * 4);
+++      }
+++    /* write() (not mmap) so DRM fbdev emulation flushes the damage */
+++    if (pwrite (io->fb_fd, band, io->saved_size, io->saved_off) < 0)
+++      { /* best effort */ }
+++    free (band);
+++  }
+++}
++diff --git a/libfprint/drivers/goodixoplus/goodix-oplus-io.h b/libfprint/drivers/goodixoplus/goodix-oplus-io.h
++new file mode 100755
++index 0000000..c30ef97
++--- /dev/null
+++++ b/libfprint/drivers/goodixoplus/goodix-oplus-io.h
++@@ -0,0 +1,41 @@
+++/* SPDX-License-Identifier: LGPL-2.1-or-later */
+++#pragma once
+++
+++#include <stdbool.h>
+++#include <stddef.h>
+++#include <stdint.h>
+++
+++/* Sensor position on the panel as fractions of width/height. */
+++struct goodix_oplus_geometry {
+++  double center_x, center_y; /* sensor centre */
+++  double accept_radius;      /* touches within this (fraction of width) count */
+++  double spot_radius;        /* illuminated disk radius (fraction of width) */
+++};
+++
+++struct goodix_oplus_io {
+++  int sensor_fd;   /* /dev/goodix_fp */
+++  int touch_fd;    /* direct multitouch evdev */
+++  int touch_max_x, touch_max_y;
+++  int fb_fd;       /* /dev/fb0 or -1 */
+++  uint32_t fb_w, fb_h, fb_stride, fb_bpp;
+++  uint8_t *saved;  /* framebuffer band under the spot */
+++  size_t saved_size, saved_off;
+++  uint8_t *guide_saved; /* framebuffer band under the guide ring */
+++  size_t guide_size, guide_off;
+++  struct goodix_oplus_geometry geo;
+++  /* touch tracking state */
+++  int cur_x, cur_y, tracking;
+++};
+++
+++int goodix_oplus_io_open (struct goodix_oplus_io *io, const char *sensor_path);
+++void goodix_oplus_io_close (struct goodix_oplus_io *io);
+++
+++/* Wait (up to timeout_ms) for a finger to go down on the sensor area.
+++ * Returns 1 when down, 0 on timeout, -1 on error. */
+++int goodix_oplus_io_wait_down (struct goodix_oplus_io *io, int timeout_ms);
+++/* Wait for the finger to lift; 1 lifted, 0 timeout, -1 error. */
+++int goodix_oplus_io_wait_up (struct goodix_oplus_io *io, int timeout_ms);
+++
+++void goodix_oplus_io_light (struct goodix_oplus_io *io, bool on);
+++/* Ring marking the sensor while waiting for a finger. */
+++void goodix_oplus_io_guide (struct goodix_oplus_io *io, bool on);
++diff --git a/libfprint/drivers/goodixoplus/goodix-oplus-tee.c b/libfprint/drivers/goodixoplus/goodix-oplus-tee.c
++new file mode 100755
++index 0000000..17f2083
++--- /dev/null
+++++ b/libfprint/drivers/goodixoplus/goodix-oplus-tee.c
++@@ -0,0 +1,347 @@
+++/* SPDX-License-Identifier: LGPL-2.1-or-later */
+++#include "goodix-oplus-tee.h"
+++
+++#include <errno.h>
+++#include <fcntl.h>
+++#include <linux/tee.h>
+++#include <stdio.h>
+++#include <string.h>
+++#include <sys/ioctl.h>
+++#include <sys/mman.h>
+++#include <time.h>
+++#include <unistd.h>
+++
+++#define QSEECOM_IMPL_ID 5u
+++
+++struct shm { int id; uint8_t *data; size_t size; };
+++
+++static int
+++shm_alloc (int fd, size_t size, struct shm *s)
+++{
+++  struct tee_ioctl_shm_alloc_data d = { .size = size };
+++  int sfd = ioctl (fd, TEE_IOC_SHM_ALLOC, &d);
+++
+++  s->data = NULL;
+++  if (sfd < 0)
+++    return -1;
+++  s->data = mmap (NULL, d.size, PROT_READ | PROT_WRITE, MAP_SHARED, sfd, 0);
+++  close (sfd);
+++  if (s->data == MAP_FAILED)
+++    { s->data = NULL; return -1; }
+++  s->id = d.id;
+++  s->size = d.size;
+++  memset (s->data, 0, s->size);
+++  return 0;
+++}
+++
+++static void
+++shm_free (struct shm *s)
+++{
+++  if (s->data)
+++    munmap (s->data, s->size);
+++  s->data = NULL;
+++}
+++
+++static int
+++open_client (void)
+++{
+++  struct tee_ioctl_version_data version;
+++  char path[32];
+++  int i, fd;
+++
+++  for (i = 0; i < 8; i++)
+++    {
+++      snprintf (path, sizeof (path), "/dev/tee%d", i);
+++      fd = open (path, O_RDWR | O_CLOEXEC);
+++      if (fd < 0)
+++        continue;
+++      if (!ioctl (fd, TEE_IOC_VERSION, &version) && version.impl_id == QSEECOM_IMPL_ID)
+++        return fd;
+++      close (fd);
+++    }
+++  errno = ENODEV;
+++  return -1;
+++}
+++
+++int
+++goodix_oplus_tee_open (struct goodix_oplus_tee *tee, const char *app_name)
+++{
+++  struct {
+++    struct tee_ioctl_open_session_arg arg;
+++    struct tee_ioctl_param params[1];
+++  } request = {0};
+++  struct tee_ioctl_buf_data data;
+++  struct shm name = {0};
+++  int saved;
+++
+++  tee->fd = -1;
+++  tee->session = 0;
+++  if (!app_name || strlen (app_name) >= 64)
+++    { errno = EINVAL; return -1; }
+++  tee->fd = open_client ();
+++  if (tee->fd < 0 || shm_alloc (tee->fd, 64, &name))
+++    goto fail;
+++  memcpy (name.data, app_name, strlen (app_name) + 1);
+++  request.arg.num_params = 1;
+++  request.params[0].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INPUT;
+++  request.params[0].b = strlen (app_name) + 1;
+++  request.params[0].c = name.id;
+++  data.buf_ptr = (uintptr_t) &request;
+++  data.buf_len = sizeof (request);
+++  if (ioctl (tee->fd, TEE_IOC_OPEN_SESSION, &data) || request.arg.ret)
+++    { if (!errno) errno = EIO; goto fail; }
+++  tee->session = request.arg.session;
+++  shm_free (&name);
+++  return 0;
+++fail:
+++  saved = errno;
+++  shm_free (&name);
+++  if (tee->fd >= 0)
+++    close (tee->fd);
+++  tee->fd = -1;
+++  errno = saved;
+++  return -1;
+++}
+++
+++void
+++goodix_oplus_tee_close (struct goodix_oplus_tee *tee)
+++{
+++  if (tee->fd < 0)
+++    return;
+++  if (tee->session)
+++    {
+++      struct tee_ioctl_close_session_arg arg = { .session = tee->session };
+++      ioctl (tee->fd, TEE_IOC_CLOSE_SESSION, &arg);
+++    }
+++  close (tee->fd);
+++  tee->fd = -1;
+++  tee->session = 0;
+++}
+++
+++static uint64_t
+++ms_of_day (void)
+++{
+++  struct timespec now;
+++  struct tm local;
+++  time_t seconds;
+++
+++  if (clock_gettime (CLOCK_REALTIME, &now))
+++    return 0;
+++  seconds = now.tv_sec;
+++  if (!localtime_r (&seconds, &local))
+++    return 0;
+++  return ((uint64_t) local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec) * 1000 +
+++         now.tv_nsec / 1000000;
+++}
+++
+++int
+++goodix_oplus_tee_command (struct goodix_oplus_tee *tee, uint32_t target,
+++                          uint32_t command, void *payload, size_t size,
+++                          uint32_t *result)
+++{
+++  struct {
+++    struct tee_ioctl_invoke_arg arg;
+++    struct tee_ioctl_param params[4];
+++  } request = {0};
+++  struct tee_ioctl_buf_data data;
+++  struct shm req = {0}, rsp = {0}, body = {0};
+++  uint64_t ms = ms_of_day ();
+++  uint32_t value;
+++  int rc = -1, saved;
+++
+++  if (tee->fd < 0 || !payload || size < 0x10 || size > 0x100000)
+++    { errno = EINVAL; return -1; }
+++  if (shm_alloc (tee->fd, 64, &req) || shm_alloc (tee->fd, 64, &rsp) ||
+++      shm_alloc (tee->fd, size, &body))
+++    goto out;
+++  value = (uint32_t) size; memcpy (req.data + 0x08, &value, 4);
+++  value = 1; memcpy (req.data + 0x0c, &value, 4);
+++  memcpy (req.data + 0x10, &ms, 8);
+++  memcpy (body.data, payload, size);
+++  memcpy (body.data + 4, &target, 4);
+++  memcpy (body.data + 8, &command, 4);
+++
+++  request.arg.session = tee->session;
+++  request.arg.num_params = 4;
+++  request.params[0].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INPUT;
+++  request.params[0].b = 64; request.params[0].c = req.id;
+++  request.params[1].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_OUTPUT;
+++  request.params[1].b = 64; request.params[1].c = rsp.id;
+++  /* value param: patch the payload physical address (width 8) at req+0 */
+++  request.params[2].attr = TEE_IOCTL_PARAM_ATTR_TYPE_VALUE_INPUT;
+++  request.params[2].a = 0; request.params[2].b = 8;
+++  request.params[3].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INOUT;
+++  request.params[3].b = size; request.params[3].c = body.id;
+++  data.buf_ptr = (uintptr_t) &request;
+++  data.buf_len = sizeof (request);
+++  if (ioctl (tee->fd, TEE_IOC_INVOKE, &data) || request.arg.ret)
+++    { if (!errno) errno = EIO; goto out; }
+++  memcpy (&value, rsp.data + 0x1c, 4);
+++  if (value)
+++    { errno = EIO; goto out; }
+++  memcpy (payload, body.data, size);
+++  if (result)
+++    memcpy (result, body.data + 0xc, 4);
+++  rc = 0;
+++out:
+++  saved = errno;
+++  shm_free (&body);
+++  shm_free (&rsp);
+++  shm_free (&req);
+++  errno = saved;
+++  return rc;
+++}
+++
+++int
+++goodix_oplus_tee_raw (struct goodix_oplus_tee *tee, const void *request_buf,
+++                      size_t request_size, void *response, size_t response_size)
+++{
+++  struct {
+++    struct tee_ioctl_invoke_arg arg;
+++    struct tee_ioctl_param params[2];
+++  } request = {0};
+++  struct tee_ioctl_buf_data data;
+++  struct shm req = {0}, rsp = {0};
+++  int rc = -1, saved;
+++
+++  if (tee->fd < 0)
+++    { errno = EINVAL; return -1; }
+++  if (shm_alloc (tee->fd, request_size, &req) || shm_alloc (tee->fd, response_size, &rsp))
+++    goto out;
+++  memcpy (req.data, request_buf, request_size);
+++  request.arg.session = tee->session;
+++  request.arg.num_params = 2;
+++  request.params[0].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INPUT;
+++  request.params[0].b = request_size; request.params[0].c = req.id;
+++  request.params[1].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_OUTPUT;
+++  request.params[1].b = response_size; request.params[1].c = rsp.id;
+++  data.buf_ptr = (uintptr_t) &request;
+++  data.buf_len = sizeof (request);
+++  if (ioctl (tee->fd, TEE_IOC_INVOKE, &data) || request.arg.ret)
+++    { if (!errno) errno = EIO; goto out; }
+++  memcpy (response, rsp.data, response_size);
+++  rc = 0;
+++out:
+++  saved = errno;
+++  shm_free (&rsp);
+++  shm_free (&req);
+++  errno = saved;
+++  return rc;
+++}
+++
+++/* ---- keymaster64 / gatekeeper (QTI legacy format) ---- */
+++
+++#define KM_GET_VERSION 0x200u
+++#define KM_SET_VERSION 0x207u
+++#define KM_GET_AUTH_TOKEN_KEY 0x205u
+++#define GK_ENROLL 0x1001u
+++#define GK_VERIFY 0x1002u
+++
+++int
+++goodix_oplus_km_set_version (struct goodix_oplus_tee *km)
+++{
+++  uint32_t req[6] = { KM_SET_VERSION, 4, 5, 4, 5, 0 };
+++  int32_t rsp[4] = {0};
+++
+++  if (goodix_oplus_tee_raw (km, req, sizeof (req), rsp, sizeof (rsp)))
+++    return -1;
+++  if (rsp[0])
+++    { errno = EIO; return -1; }
+++  return 0;
+++}
+++
+++int
+++goodix_oplus_km_auth_key (struct goodix_oplus_tee *km, uint8_t blob[0xa0])
+++{
+++  uint32_t req[2] = { KM_GET_AUTH_TOKEN_KEY, 2 };
+++  uint8_t rsp[256] = {0};
+++  int32_t status;
+++
+++  if (goodix_oplus_tee_raw (km, req, sizeof (req), rsp, sizeof (rsp)))
+++    return -1;
+++  memcpy (&status, rsp, 4);
+++  if (status)
+++    { errno = EIO; return -1; }
+++  memcpy (blob, rsp + 4, 0xa0);
+++  return 0;
+++}
+++
+++static size_t
+++gk_build (uint8_t *buffer, uint32_t command, uint32_t uid, uint64_t word,
+++          const uint8_t *handle, size_t handle_size, uint32_t pw_slot,
+++          const uint8_t *password, size_t password_size)
+++{
+++  size_t off = 0x20;
+++  uint32_t value;
+++
+++  memset (buffer, 0, 0x20);
+++  memcpy (buffer, &command, 4);
+++  memcpy (buffer + 4, &uid, 4);
+++  if (word)
+++    memcpy (buffer + 8, &word, 8);
+++  if (handle && handle_size)
+++    {
+++      value = off; memcpy (buffer + 0x10, &value, 4);
+++      value = handle_size; memcpy (buffer + 0x14, &value, 4);
+++      memcpy (buffer + off, handle, handle_size);
+++      off += handle_size;
+++    }
+++  value = off; memcpy (buffer + pw_slot, &value, 4);
+++  value = password_size; memcpy (buffer + pw_slot + 4, &value, 4);
+++  memcpy (buffer + off, password, password_size);
+++  return off + password_size;
+++}
+++
+++static int
+++gk_call (struct goodix_oplus_tee *km, const uint8_t *request, size_t size,
+++         uint8_t *out, size_t *out_size)
+++{
+++  uint8_t rsp[0x1000];
+++  int32_t status;
+++  uint32_t off, len;
+++
+++  if (goodix_oplus_tee_raw (km, request, size, rsp, sizeof (rsp)))
+++    return -1;
+++  memcpy (&status, rsp, 4);
+++  memcpy (&off, rsp + 4, 4);
+++  memcpy (&len, rsp + 8, 4);
+++  if (status || off > sizeof (rsp) || len > sizeof (rsp) - off || len > *out_size)
+++    { errno = EIO; return -1; }
+++  memcpy (out, rsp + off, len);
+++  *out_size = len;
+++  return 0;
+++}
+++
+++int
+++goodix_oplus_gk_enroll (struct goodix_oplus_tee *km, uint32_t uid,
+++                        const uint8_t *password, size_t password_size,
+++                        uint8_t *handle, size_t *handle_size)
+++{
+++  uint8_t request[0x200];
+++  size_t size;
+++
+++  if (password_size > 0x100)
+++    { errno = EINVAL; return -1; }
+++  size = gk_build (request, GK_ENROLL, uid, 0, NULL, 0, 0x18, password, password_size);
+++  return gk_call (km, request, size, handle, handle_size);
+++}
+++
+++int
+++goodix_oplus_gk_verify (struct goodix_oplus_tee *km, uint32_t uid,
+++                        uint64_t challenge, const uint8_t *handle,
+++                        size_t handle_size, const uint8_t *password,
+++                        size_t password_size, uint8_t hat[GOODIX_OPLUS_HAT_SIZE])
+++{
+++  uint8_t request[0x400];
+++  size_t size, hat_size = GOODIX_OPLUS_HAT_SIZE;
+++
+++  if (password_size > 0x100 || handle_size > GOODIX_OPLUS_GK_HANDLE_MAX)
+++    { errno = EINVAL; return -1; }
+++  size = gk_build (request, GK_VERIFY, uid, challenge, handle, handle_size, 0x18,
+++                   password, password_size);
+++  if (gk_call (km, request, size, hat, &hat_size))
+++    return -1;
+++  if (hat_size != GOODIX_OPLUS_HAT_SIZE)
+++    { errno = EIO; return -1; }
+++  return 0;
+++}
++diff --git a/libfprint/drivers/goodixoplus/goodix-oplus-tee.h b/libfprint/drivers/goodixoplus/goodix-oplus-tee.h
++new file mode 100755
++index 0000000..0afab92
++--- /dev/null
+++++ b/libfprint/drivers/goodixoplus/goodix-oplus-tee.h
++@@ -0,0 +1,40 @@
+++/* SPDX-License-Identifier: LGPL-2.1-or-later */
+++#pragma once
+++
+++#include <stddef.h>
+++#include <stdint.h>
+++
+++/* One TEE session (QSEECOM TEE driver, impl id 5) to a named QSEE app. */
+++struct goodix_oplus_tee {
+++  int fd;
+++  uint32_t session;
+++};
+++
+++int goodix_oplus_tee_open (struct goodix_oplus_tee *tee, const char *app_name);
+++void goodix_oplus_tee_close (struct goodix_oplus_tee *tee);
+++
+++/* OnePlus/Goodix request: 64-byte header + payload (target at +4, command at
+++ * +8, result at +0xc of the payload, patched in by physical address). */
+++int goodix_oplus_tee_command (struct goodix_oplus_tee *tee, uint32_t target,
+++                              uint32_t command, void *payload, size_t size,
+++                              uint32_t *result);
+++
+++/* Plain QSEECom_send_cmd style request/response (keymaster64). */
+++int goodix_oplus_tee_raw (struct goodix_oplus_tee *tee, const void *request,
+++                          size_t request_size, void *response,
+++                          size_t response_size);
+++
+++#define GOODIX_OPLUS_HAT_SIZE 69
+++#define GOODIX_OPLUS_GK_HANDLE_MAX 256
+++
+++/* keymaster64 helpers */
+++int goodix_oplus_km_set_version (struct goodix_oplus_tee *km);
+++int goodix_oplus_km_auth_key (struct goodix_oplus_tee *km, uint8_t blob[0xa0]);
+++int goodix_oplus_gk_enroll (struct goodix_oplus_tee *km, uint32_t uid,
+++                            const uint8_t *password, size_t password_size,
+++                            uint8_t *handle, size_t *handle_size);
+++int goodix_oplus_gk_verify (struct goodix_oplus_tee *km, uint32_t uid,
+++                            uint64_t challenge, const uint8_t *handle,
+++                            size_t handle_size, const uint8_t *password,
+++                            size_t password_size,
+++                            uint8_t hat[GOODIX_OPLUS_HAT_SIZE]);
++diff --git a/libfprint/drivers/goodixoplus/goodix-oplus.c b/libfprint/drivers/goodixoplus/goodix-oplus.c
++new file mode 100755
++index 0000000..979ee03
++--- /dev/null
+++++ b/libfprint/drivers/goodixoplus/goodix-oplus.c
++@@ -0,0 +1,854 @@
+++/* SPDX-License-Identifier: LGPL-2.1-or-later */
+++/*
+++ * Goodix optical under-display sensor behind the OnePlus/Oplus QSEE TA
+++ * (OnePlus 8 Pro "instantnoodlep", G5 = gfp9608).  Match-on-chip: images and
+++ * templates stay inside TrustZone; templates are sealed by the TA and stored
+++ * through the machine-wide qsee-supplicant (FS/GPFS/RPMB listeners).
+++ *
+++ * Protocol recovered from the Android HAL (libgf_hal_G5_oplus.so) and traces.
+++ */
+++#define FP_COMPONENT "goodixoplus"
+++
+++#include "drivers_api.h"
+++#include "goodix-oplus-io.h"
+++#include "goodix-oplus-tee.h"
+++
+++#include <errno.h>
+++#include <fcntl.h>
+++#include <string.h>
+++#include <sys/random.h>
+++#include <sys/stat.h>
+++#include <unistd.h>
+++
+++/* targets */
+++#define T_CORE   1000u
+++#define T_ALGO   1001u
+++#define T_SENSOR 1002u
+++
+++#define GROUP_ID 0u
+++#define GROUP_PATH "/data/vendor_de/0/fpdata"
+++#define ENROLL_STAGES 30
+++#define AUTH_TRIES 4
+++#define GK_UID 1000u
+++#define STATE_DIR "/var/lib/goodix-oplus"
+++#define GK_FILE STATE_DIR "/gatekeeper"
+++#define GK_PASSWORD_SIZE 32
+++
+++/* TA result codes */
+++#define GF_OK 0u
+++#define GF_BAD_PARAMS 1004u
+++#define GF_NOT_MATCH 1008u
+++#define GF_ACQUIRED_PARTIAL 1013u
+++#define GF_ACQUIRED_DIRTY 1014u
+++#define GF_DUPLICATE_AREA 1047u
+++
+++struct _FpiDeviceGoodixOplus
+++{
+++  FpDevice parent;
+++  struct goodix_oplus_io io;
+++  struct goodix_oplus_tee ta;
+++  struct goodix_oplus_tee km;
+++  gchar *ta_name;
+++};
+++
+++G_DECLARE_FINAL_TYPE (FpiDeviceGoodixOplus, fpi_device_goodixoplus,
+++                      FPI, DEVICE_GOODIXOPLUS, FpDevice)
+++G_DEFINE_TYPE (FpiDeviceGoodixOplus, fpi_device_goodixoplus, FP_TYPE_DEVICE)
+++
+++static const FpIdEntry id_table[] = {
+++  { .udev_types = FPI_DEVICE_UDEV_SUBTYPE_MISC,
+++    .misc_name = "goodix_fp", .misc_compatible = "goodix,gf3626" },
+++  { .udev_types = 0 }
+++};
+++
+++enum work_op { WORK_OPEN, WORK_CLOSE, WORK_LIST, WORK_DELETE, WORK_ENROLL,
+++               WORK_IDENTIFY, WORK_CLEAR };
+++
+++struct work { enum work_op op; guint32 finger_id; };
+++
+++struct finger_list { guint count; guint32 ids[10]; };
+++
+++struct op_result { guint32 status; guint32 finger_id; };
+++
+++/* ------------------------------------------------------------------------ */
+++
+++static GError *
+++io_error (const char *what)
+++{
+++  return g_error_new (G_IO_ERROR, g_io_error_from_errno (errno), "%s: %s",
+++                      what, g_strerror (errno));
+++}
+++
+++static gboolean
+++cmd (FpiDeviceGoodixOplus *self, guint32 target, guint32 command, guint8 *payload,
+++     gsize size, guint32 *result, GError **error)
+++{
+++  guint32 r = 0;
+++
+++  if (goodix_oplus_tee_command (&self->ta, target, command, payload, size, &r))
+++    {
+++      g_propagate_error (error, io_error ("Goodix TA invoke"));
+++      return FALSE;
+++    }
+++  fp_dbg ("cmd %u/%u size %" G_GSIZE_FORMAT " -> %u", target, command, size, r);
+++  if (result)
+++    *result = r;
+++  else if (r)
+++    {
+++      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+++                   "Goodix command %u/%u failed with %u", target, command, r);
+++      return FALSE;
+++    }
+++  return TRUE;
+++}
+++
+++static gboolean
+++cmd_zero (FpiDeviceGoodixOplus *self, guint32 target, guint32 command, gsize size,
+++          guint32 *result, GError **error)
+++{
+++  g_autofree guint8 *payload = g_malloc0 (size);
+++  return cmd (self, target, command, payload, size, result, error);
+++}
+++
+++static void
+++put32 (guint8 *p, gsize off, guint32 v)
+++{
+++  memcpy (p + off, &v, 4);
+++}
+++
+++static guint32
+++get32 (const guint8 *p, gsize off)
+++{
+++  guint32 v;
+++  memcpy (&v, p + off, 4);
+++  return v;
+++}
+++
+++static gchar *
+++read_ta_name (FpDevice *device, GError **error)
+++{
+++  const gchar *sysfs = fpi_device_get_udev_sysfs_path (device, FPI_DEVICE_UDEV_SUBTYPE_MISC);
+++  g_autofree gchar *a = NULL, *b = NULL, *c = NULL;
+++  gchar *contents = NULL;
+++
+++  if (!sysfs)
+++    {
+++      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "no sysfs path");
+++      return NULL;
+++    }
+++  a = g_build_filename (sysfs, "firmware_name", NULL);
+++  b = g_build_filename (sysfs, "device", "firmware_name", NULL);
+++  c = g_canonicalize_filename ("../firmware_name", sysfs);
+++  if (!g_file_get_contents (a, &contents, NULL, NULL) &&
+++      !g_file_get_contents (b, &contents, NULL, NULL) &&
+++      !g_file_get_contents (c, &contents, NULL, error))
+++    return NULL;
+++  g_strstrip (contents);
+++  /* Only the Oplus Goodix optical TAs speak this protocol. */
+++  if (!g_str_has_prefix (contents, "gfp96"))
+++    {
+++      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_NOT_SUPPORTED,
+++                   "TA '%s' is not an Oplus Goodix optical TA", contents);
+++      g_free (contents);
+++      return NULL;
+++    }
+++  return contents;
+++}
+++
+++/* ---- gatekeeper credential (machine-local) ---- */
+++
+++static gboolean
+++gk_load_or_create (FpiDeviceGoodixOplus *self, guint8 *password, guint8 *handle,
+++                   gsize *handle_size, GError **error)
+++{
+++  g_autofree gchar *contents = NULL;
+++  gsize len = 0;
+++  guint32 hsize;
+++
+++  if (g_file_get_contents (GK_FILE, &contents, &len, NULL) &&
+++      len > GK_PASSWORD_SIZE + 4)
+++    {
+++      memcpy (password, contents, GK_PASSWORD_SIZE);
+++      memcpy (&hsize, contents + GK_PASSWORD_SIZE, 4);
+++      if (hsize && hsize <= GOODIX_OPLUS_GK_HANDLE_MAX &&
+++          len == GK_PASSWORD_SIZE + 4 + hsize)
+++        {
+++          memcpy (handle, contents + GK_PASSWORD_SIZE + 4, hsize);
+++          *handle_size = hsize;
+++          return TRUE;
+++        }
+++    }
+++
+++  /* First use: enroll a random machine secret with Gatekeeper. */
+++  if (getrandom (password, GK_PASSWORD_SIZE, 0) != GK_PASSWORD_SIZE)
+++    {
+++      g_propagate_error (error, io_error ("getrandom"));
+++      return FALSE;
+++    }
+++  *handle_size = GOODIX_OPLUS_GK_HANDLE_MAX;
+++  if (goodix_oplus_gk_enroll (&self->km, GK_UID, password, GK_PASSWORD_SIZE,
+++                              handle, handle_size))
+++    {
+++      g_propagate_error (error, io_error ("Gatekeeper enroll (RPMB listener running?)"));
+++      return FALSE;
+++    }
+++  {
+++    g_autofree guint8 *blob = g_malloc (GK_PASSWORD_SIZE + 4 + *handle_size);
+++    guint32 hs = *handle_size;
+++    memcpy (blob, password, GK_PASSWORD_SIZE);
+++    memcpy (blob + GK_PASSWORD_SIZE, &hs, 4);
+++    memcpy (blob + GK_PASSWORD_SIZE + 4, handle, hs);
+++    if (g_mkdir_with_parents (STATE_DIR, 0700) ||
+++        !g_file_set_contents_full (GK_FILE, (gchar *) blob, GK_PASSWORD_SIZE + 4 + hs,
+++                                   G_FILE_SET_CONTENTS_CONSISTENT, 0600, error))
+++      return FALSE;
+++  }
+++  return TRUE;
+++}
+++
+++static gboolean
+++hardware_auth_token (FpiDeviceGoodixOplus *self, guint64 challenge,
+++                     guint8 hat[GOODIX_OPLUS_HAT_SIZE], GError **error)
+++{
+++  guint8 password[GK_PASSWORD_SIZE], handle[GOODIX_OPLUS_GK_HANDLE_MAX];
+++  gsize handle_size = 0;
+++  gboolean ok = FALSE;
+++
+++  if (!gk_load_or_create (self, password, handle, &handle_size, error))
+++    goto out;
+++  if (goodix_oplus_gk_verify (&self->km, GK_UID, challenge, handle, handle_size,
+++                              password, GK_PASSWORD_SIZE, hat))
+++    {
+++      g_propagate_error (error, io_error ("Gatekeeper verify"));
+++      goto out;
+++    }
+++  ok = TRUE;
+++out:
+++  explicit_bzero (password, sizeof (password));
+++  return ok;
+++}
+++
+++/* ---- TA bring-up ---- */
+++
+++static gboolean
+++set_group (FpiDeviceGoodixOplus *self, GError **error)
+++{
+++  guint8 payload[288] = {0};
+++  put32 (payload, 0x1c, GROUP_ID);
+++  memcpy (payload + 0x20, GROUP_PATH, sizeof (GROUP_PATH));
+++  return cmd (self, T_CORE, 0, payload, sizeof (payload), NULL, error);
+++}
+++
+++static gboolean
+++bring_up (FpiDeviceGoodixOplus *self, GError **error)
+++{
+++  /* Same order as the Android HAL; 1002/9 + 1002/0 are required before the
+++   * TA's own SPI driver can talk to the sensor. */
+++  static const struct { guint32 t, c; gsize size; } chain[] = {
+++    { T_SENSOR, 9, 32 }, { T_SENSOR, 0, 28 }, { T_SENSOR, 1, 44 },
+++    { T_SENSOR, 2, 272 }, { T_SENSOR, 11, 32 }, { T_ALGO, 0, 40 },
+++    { T_ALGO, 20, 40 }, { T_SENSOR, 8, 28 }, { T_CORE, 13, 28 },
+++  };
+++  guint8 key_blob[0xa0];
+++  guint8 payload[284] = {0};
+++  guint i;
+++
+++  for (i = 0; i < G_N_ELEMENTS (chain); i++)
+++    if (!cmd_zero (self, chain[i].t, chain[i].c, chain[i].size, NULL, error))
+++      return FALSE;
+++
+++  /* HMAC key for hardware auth tokens, wrapped by keymaster for this TA. */
+++  if (goodix_oplus_tee_open (&self->km, "keymaster64") ||
+++      goodix_oplus_km_set_version (&self->km) ||
+++      goodix_oplus_km_auth_key (&self->km, key_blob))
+++    {
+++      g_propagate_error (error, io_error ("keymaster64"));
+++      return FALSE;
+++    }
+++  memcpy (payload + 0x20, key_blob, sizeof (key_blob));
+++  explicit_bzero (key_blob, sizeof (key_blob));
+++  if (!cmd (self, T_CORE, 10, payload, sizeof (payload), NULL, error))
+++    return FALSE;
+++  return set_group (self, error);
+++}
+++
+++/* ---- capture ---- */
+++
+++static void
+++report_finger (FpiDeviceGoodixOplus *self, FpFingerStatusFlags status);
+++static gboolean
+++enumerate (FpiDeviceGoodixOplus *self, struct finger_list *list, GError **error);
+++
+++static gboolean
+++capture (FpiDeviceGoodixOplus *self, gboolean enrolling, GError **error)
+++{
+++  guint8 p3[56] = {0}, p101[80] = {0};
+++  guint32 r;
+++
+++  if (enrolling)
+++    {
+++      put32 (p3, 0x1c, 1);
+++      put32 (p3, 0x20, 1);
+++    }
+++  else
+++    put32 (p3, 0x20, 2);
+++  put32 (p3, 0x28, 1);
+++  put32 (p101, 0x20, 1);
+++  put32 (p101, 0x2c, 0x092c);
+++  put32 (p101, 0x30, 0x0bbf);
+++  put32 (p101, 0x34, 0x21c);
+++  put32 (p101, 0x38, 0x776);
+++  put32 (p101, 0x3c, 0x42a80000);
+++  put32 (p101, 0x40, 0x7f);
+++  if (!cmd_zero (self, T_ALGO, 15, 48, &r, error) ||
+++      !cmd (self, T_SENSOR, 3, p3, sizeof (p3), NULL, error) ||
+++      !cmd (self, T_SENSOR, 101, p101, sizeof (p101), NULL, error))
+++    return FALSE;
+++  return TRUE;
+++}
+++
+++/* Wait for a finger on the sensor area, honouring cancellation. */
+++static gboolean
+++wait_finger (FpiDeviceGoodixOplus *self, GCancellable *cancellable, GError **error)
+++{
+++  goodix_oplus_io_guide (&self->io, TRUE);
+++  for (;;)
+++    {
+++      int r;
+++      if (g_cancellable_set_error_if_cancelled (cancellable, error))
+++        {
+++          goodix_oplus_io_guide (&self->io, FALSE);
+++          return FALSE;
+++        }
+++      r = goodix_oplus_io_wait_down (&self->io, 200);
+++      if (r < 0)
+++        {
+++          goodix_oplus_io_guide (&self->io, FALSE);
+++          g_propagate_error (error, io_error ("touchscreen"));
+++          return FALSE;
+++        }
+++      if (r > 0)
+++        {
+++          /* let the finger settle on the glass before capturing */
+++          g_usleep (120000);
+++          goodix_oplus_io_guide (&self->io, FALSE);
+++          return TRUE;
+++        }
+++    }
+++}
+++
+++static void
+++wait_lift (FpiDeviceGoodixOplus *self, GCancellable *cancellable)
+++{
+++  gint64 deadline = g_get_monotonic_time () + 5 * G_TIME_SPAN_SECOND;
+++  while (!g_cancellable_is_cancelled (cancellable) && g_get_monotonic_time () < deadline)
+++    if (goodix_oplus_io_wait_up (&self->io, 200) != 0)
+++      break;
+++}
+++
+++static GError *
+++retry_for (guint32 status)
+++{
+++  switch (status)
+++    {
+++    case GF_ACQUIRED_PARTIAL:
+++      return fpi_device_retry_new (FP_DEVICE_RETRY_CENTER_FINGER);
+++    case GF_ACQUIRED_DIRTY:
+++      return fpi_device_retry_new_msg (FP_DEVICE_RETRY_GENERAL, "Image quality too low");
+++    case GF_DUPLICATE_AREA:
+++      return fpi_device_retry_new_msg (FP_DEVICE_RETRY_REMOVE_FINGER,
+++                                       "Area already captured, move the finger a bit");
+++    default:
+++      return fpi_device_retry_new_msg (FP_DEVICE_RETRY_GENERAL, "Goodix status %u", status);
+++    }
+++}
+++
+++struct progress { FpiDeviceGoodixOplus *self; FpFingerStatusFlags finger; gint completed; GError *retry; };
+++
+++static gboolean
+++progress_main (gpointer data)
+++{
+++  struct progress *p = data;
+++  fpi_device_report_finger_status (FP_DEVICE (p->self), p->finger);
+++  if (p->completed >= 0 || p->retry)
+++    fpi_device_enroll_progress (FP_DEVICE (p->self), MAX (p->completed, 0), NULL,
+++                                g_steal_pointer (&p->retry));
+++  g_object_unref (p->self);
+++  g_free (p);
+++  return G_SOURCE_REMOVE;
+++}
+++
+++static void
+++queue_progress (FpiDeviceGoodixOplus *self, FpFingerStatusFlags finger, gint completed,
+++                GError *retry)
+++{
+++  struct progress *p = g_new0 (struct progress, 1);
+++  p->self = g_object_ref (self);
+++  p->finger = finger;
+++  p->completed = completed;
+++  p->retry = retry;
+++  g_main_context_invoke (NULL, progress_main, p);
+++}
+++
+++static void
+++report_finger (FpiDeviceGoodixOplus *self, FpFingerStatusFlags status)
+++{
+++  queue_progress (self, status, -1, NULL);
+++}
+++
+++static struct op_result *
+++do_enroll (FpiDeviceGoodixOplus *self, GCancellable *cancellable, GError **error)
+++{
+++  guint8 pre[40] = {0}, start[108] = {0}, hat[GOODIX_OPLUS_HAT_SIZE];
+++  guint64 challenge;
+++  guint32 finger_id = 0, remaining = ENROLL_STAGES;
+++  struct op_result *result = NULL;
+++
+++  if (!set_group (self, error) ||
+++      !cmd (self, T_CORE, 2, pre, sizeof (pre), NULL, error))
+++    return NULL;
+++  memcpy (&challenge, pre + 0x20, 8);
+++  if (!hardware_auth_token (self, challenge, hat, error))
+++    return NULL;
+++  memcpy (start + 0x21, hat, sizeof (hat));
+++  if (!cmd (self, T_CORE, 3, start, sizeof (start), NULL, error))
+++    return NULL;
+++
+++  while (remaining > 0)
+++    {
+++      guint8 p1[56] = {0};
+++      guint32 status;
+++
+++      if (!wait_finger (self, cancellable, error))
+++        goto out;
+++      report_finger (self, FP_FINGER_STATUS_PRESENT);
+++      goodix_oplus_io_light (&self->io, TRUE);
+++      g_usleep (80000);
+++      if (!cmd_zero (self, T_SENSOR, 9, 32, NULL, error) || !capture (self, TRUE, error))
+++        { goodix_oplus_io_light (&self->io, FALSE); goto out; }
+++      put32 (p1, 0x34, 0x1c);
+++      if (!cmd (self, T_ALGO, 1, p1, sizeof (p1), &status, error))
+++        { goodix_oplus_io_light (&self->io, FALSE); goto out; }
+++      cmd_zero (self, T_SENSOR, 8, 28, NULL, NULL);
+++      goodix_oplus_io_light (&self->io, FALSE);
+++      if (status == GF_OK)
+++        {
+++          finger_id = get32 (p1, 0x20) ? get32 (p1, 0x20) : finger_id;
+++          remaining = get32 (p1, 0x28);
+++          queue_progress (self, FP_FINGER_STATUS_PRESENT,
+++                          CLAMP (ENROLL_STAGES - (gint) remaining, 0, ENROLL_STAGES - 1),
+++                          NULL);
+++        }
+++      else
+++        queue_progress (self, FP_FINGER_STATUS_PRESENT, -1, retry_for (status));
+++      wait_lift (self, cancellable);
+++      report_finger (self, FP_FINGER_STATUS_NONE);
+++    }
+++
+++  {
+++    guint8 save[36] = {0};
+++    put32 (save, 0x20, finger_id);
+++    if (!finger_id || !cmd (self, T_CORE, 9, save, sizeof (save), NULL, error))
+++      {
+++        if (!*error)
+++          g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "no finger id");
+++        goto out;
+++      }
+++  }
+++  result = g_new0 (struct op_result, 1);
+++  result->finger_id = finger_id;
+++out:
+++  report_finger (self, FP_FINGER_STATUS_NONE);
+++  return result;
+++}
+++
+++static struct op_result *
+++do_identify (FpiDeviceGoodixOplus *self, GCancellable *cancellable, GError **error)
+++{
+++  struct op_result *result = NULL;
+++  guint32 status = GF_NOT_MATCH, finger_id = 0;
+++  guint i;
+++
+++  struct finger_list enrolled = {0};
+++
+++  /* With no templates the TA rejects authenticate (1004); still take the
+++   * touch so callers (e.g. fprintd's duplicate check) get a real no-match. */
+++  if (!enumerate (self, &enrolled, error))
+++    return NULL;
+++  if (!enrolled.count)
+++    {
+++      if (!wait_finger (self, cancellable, error))
+++        return NULL;
+++      report_finger (self, FP_FINGER_STATUS_PRESENT);
+++      wait_lift (self, cancellable);
+++      report_finger (self, FP_FINGER_STATUS_NONE);
+++      result = g_new0 (struct op_result, 1);
+++      result->status = GF_NOT_MATCH;
+++      return result;
+++    }
+++  if (!set_group (self, error) || !cmd_zero (self, T_CORE, 1, 40, NULL, error))
+++    return NULL;
+++  if (!wait_finger (self, cancellable, error))
+++    return NULL;
+++  report_finger (self, FP_FINGER_STATUS_PRESENT);
+++  goodix_oplus_io_light (&self->io, TRUE);
+++  g_usleep (80000);
+++  if (!cmd_zero (self, T_SENSOR, 9, 32, NULL, error))
+++    goto out;
+++  for (i = 0; i < AUTH_TRIES; i++)
+++    {
+++      guint8 p2[176] = {0};
+++      if (!capture (self, FALSE, error))
+++        goto out;
+++      put32 (p2, 0x24, 1);
+++      put32 (p2, 0x58, 2);
+++      put32 (p2, 0x88, 1);
+++      put32 (p2, 0x90, 1);
+++      put32 (p2, 0x94, 0x1c);
+++      if (!cmd (self, T_ALGO, 2, p2, sizeof (p2), &status, error))
+++        goto out;
+++      if (status == GF_OK)
+++        {
+++          finger_id = get32 (p2, 0x30);
+++          break;
+++        }
+++    }
+++  result = g_new0 (struct op_result, 1);
+++  result->status = status == GF_BAD_PARAMS ? GF_NOT_MATCH : status;
+++  result->finger_id = finger_id;
+++out:
+++  cmd_zero (self, T_SENSOR, 8, 28, NULL, NULL);
+++  goodix_oplus_io_light (&self->io, FALSE);
+++  wait_lift (self, cancellable);
+++  report_finger (self, FP_FINGER_STATUS_NONE);
+++  return result;
+++}
+++
+++static gboolean
+++enumerate (FpiDeviceGoodixOplus *self, struct finger_list *list, GError **error)
+++{
+++  guint8 p[112] = {0};
+++  guint i;
+++
+++  if (!set_group (self, error) || !cmd (self, T_CORE, 7, p, sizeof (p), NULL, error))
+++    return FALSE;
+++  list->count = MIN (get32 (p, 0x1c), G_N_ELEMENTS (list->ids));
+++  for (i = 0; i < list->count; i++)
+++    list->ids[i] = get32 (p, 0x48 + 4 * i);
+++  return TRUE;
+++}
+++
+++static gboolean
+++remove_finger (FpiDeviceGoodixOplus *self, guint32 finger_id, GError **error)
+++{
+++  guint8 p[120] = {0};
+++  put32 (p, 0x1c, GROUP_ID);
+++  put32 (p, 0x20, finger_id);
+++  return cmd (self, T_CORE, 6, p, sizeof (p), NULL, error);
+++}
+++
+++/* ---- worker ---- */
+++
+++static void
+++close_all (FpiDeviceGoodixOplus *self)
+++{
+++  goodix_oplus_tee_close (&self->km);
+++  goodix_oplus_tee_close (&self->ta);
+++  goodix_oplus_io_close (&self->io);
+++}
+++
+++static void
+++worker (GTask *task, gpointer object, gpointer task_data, GCancellable *cancellable)
+++{
+++  FpiDeviceGoodixOplus *self = object;
+++  struct work *w = task_data;
+++  g_autoptr(GError) error = NULL;
+++
+++  switch (w->op)
+++    {
+++    case WORK_OPEN:
+++      if (!self->ta_name && !(self->ta_name = read_ta_name (FP_DEVICE (self), &error)))
+++        break;
+++      if (goodix_oplus_io_open (&self->io, fpi_device_get_udev_data (FP_DEVICE (self),
+++                                                FPI_DEVICE_UDEV_SUBTYPE_MISC)))
+++        { error = io_error ("opening sensor/touchscreen"); break; }
+++      if (goodix_oplus_tee_open (&self->ta, self->ta_name))
+++        { error = io_error ("opening Goodix TA (qsee-app-loader running?)"); break; }
+++      if (!bring_up (self, &error))
+++        break;
+++      g_task_return_boolean (task, TRUE);
+++      return;
+++    case WORK_CLOSE:
+++      close_all (self);
+++      g_task_return_boolean (task, TRUE);
+++      return;
+++    case WORK_LIST:
+++      {
+++        struct finger_list *list = g_new0 (struct finger_list, 1);
+++        if (!enumerate (self, list, &error))
+++          { g_free (list); break; }
+++        g_task_return_pointer (task, list, g_free);
+++        return;
+++      }
+++    case WORK_DELETE:
+++      if (!set_group (self, &error) || !remove_finger (self, w->finger_id, &error))
+++        break;
+++      g_task_return_boolean (task, TRUE);
+++      return;
+++    case WORK_CLEAR:
+++      {
+++        struct finger_list list = {0};
+++        guint i;
+++        if (!enumerate (self, &list, &error))
+++          break;
+++        for (i = 0; i < list.count && !error; i++)
+++          remove_finger (self, list.ids[i], &error);
+++        if (error)
+++          break;
+++        g_task_return_boolean (task, TRUE);
+++        return;
+++      }
+++    case WORK_ENROLL:
+++    case WORK_IDENTIFY:
+++      {
+++        struct op_result *r = w->op == WORK_ENROLL ? do_enroll (self, cancellable, &error)
+++                                                   : do_identify (self, cancellable, &error);
+++        if (!r)
+++          break;
+++        g_task_return_pointer (task, r, g_free);
+++        return;
+++      }
+++    }
+++  if (w->op == WORK_OPEN)
+++    close_all (self);
+++  g_task_return_error (task, g_steal_pointer (&error));
+++}
+++
+++static void
+++start (FpiDeviceGoodixOplus *self, enum work_op op, guint32 finger_id,
+++       GAsyncReadyCallback cb)
+++{
+++  g_autoptr(GTask) task = g_task_new (self,
+++      (op == WORK_OPEN || op == WORK_CLOSE) ? NULL :
+++      fpi_device_get_cancellable (FP_DEVICE (self)), cb, NULL);
+++  struct work *w = g_new0 (struct work, 1);
+++  w->op = op;
+++  w->finger_id = finger_id;
+++  g_task_set_task_data (task, w, g_free);
+++  g_task_run_in_thread (task, worker);
+++}
+++
+++static FpPrint *
+++make_print (FpiDeviceGoodixOplus *self, FpPrint *print, guint32 finger_id)
+++{
+++  if (!print)
+++    print = fp_print_new (FP_DEVICE (self));
+++  fpi_print_set_type (print, FPI_PRINT_RAW);
+++  fpi_print_set_device_stored (print, TRUE);
+++  g_object_set (print, "fpi-data", g_variant_new ("(uu)", GROUP_ID, finger_id), NULL);
+++  return print;
+++}
+++
+++static gboolean
+++print_finger (FpPrint *print, guint32 *finger_id)
+++{
+++  g_autoptr(GVariant) data = NULL;
+++  guint32 group;
+++  g_object_get (print, "fpi-data", &data, NULL);
+++  if (!data || !g_variant_is_of_type (data, G_VARIANT_TYPE ("(uu)")))
+++    return FALSE;
+++  g_variant_get (data, "(uu)", &group, finger_id);
+++  return group == GROUP_ID;
+++}
+++
+++static void
+++open_done (GObject *o, GAsyncResult *r, gpointer u)
+++{
+++  GError *e = NULL;
+++  g_task_propagate_boolean (G_TASK (r), &e);
+++  fpi_device_open_complete (FP_DEVICE (o), e);
+++}
+++
+++static void
+++close_done (GObject *o, GAsyncResult *r, gpointer u)
+++{
+++  GError *e = NULL;
+++  g_task_propagate_boolean (G_TASK (r), &e);
+++  fpi_device_close_complete (FP_DEVICE (o), e);
+++}
+++
+++static void
+++delete_done (GObject *o, GAsyncResult *r, gpointer u)
+++{
+++  GError *e = NULL;
+++  g_task_propagate_boolean (G_TASK (r), &e);
+++  fpi_device_delete_complete (FP_DEVICE (o), e);
+++}
+++
+++static void
+++clear_done (GObject *o, GAsyncResult *r, gpointer u)
+++{
+++  GError *e = NULL;
+++  g_task_propagate_boolean (G_TASK (r), &e);
+++  fpi_device_clear_storage_complete (FP_DEVICE (o), e);
+++}
+++
+++static void
+++list_done (GObject *o, GAsyncResult *r, gpointer u)
+++{
+++  FpiDeviceGoodixOplus *self = FPI_DEVICE_GOODIXOPLUS (o);
+++  GError *e = NULL;
+++  g_autofree struct finger_list *list = g_task_propagate_pointer (G_TASK (r), &e);
+++  GPtrArray *prints;
+++  guint i;
+++
+++  if (!list)
+++    {
+++      fpi_device_list_complete (FP_DEVICE (o), NULL, e);
+++      return;
+++    }
+++  prints = g_ptr_array_new_with_free_func (g_object_unref);
+++  for (i = 0; i < list->count; i++)
+++    g_ptr_array_add (prints, g_object_ref_sink (make_print (self, NULL, list->ids[i])));
+++  fpi_device_list_complete (FP_DEVICE (o), prints, NULL);
+++}
+++
+++static void
+++enroll_done (GObject *o, GAsyncResult *r, gpointer u)
+++{
+++  FpiDeviceGoodixOplus *self = FPI_DEVICE_GOODIXOPLUS (o);
+++  GError *e = NULL;
+++  g_autofree struct op_result *res = g_task_propagate_pointer (G_TASK (r), &e);
+++  FpPrint *print = NULL;
+++
+++  if (!res)
+++    {
+++      fpi_device_enroll_complete (FP_DEVICE (o), NULL, e);
+++      return;
+++    }
+++  fpi_device_get_enroll_data (FP_DEVICE (o), &print);
+++  make_print (self, print, res->finger_id);
+++  fpi_device_enroll_complete (FP_DEVICE (o), g_object_ref (print), NULL);
+++}
+++
+++static void
+++identify_done (GObject *o, GAsyncResult *r, gpointer u)
+++{
+++  FpiDeviceGoodixOplus *self = FPI_DEVICE_GOODIXOPLUS (o);
+++  GError *e = NULL;
+++  g_autofree struct op_result *res = g_task_propagate_pointer (G_TASK (r), &e);
+++  GPtrArray *gallery = NULL;
+++  FpPrint *match = NULL;
+++  g_autoptr(FpPrint) scan = NULL;
+++  guint i;
+++
+++  if (!res)
+++    {
+++      fpi_device_identify_complete (FP_DEVICE (o), e);
+++      return;
+++    }
+++  if (res->status != GF_OK && res->status != GF_NOT_MATCH)
+++    {
+++      fpi_device_identify_report (FP_DEVICE (o), NULL, NULL, retry_for (res->status));
+++      fpi_device_identify_complete (FP_DEVICE (o), NULL);
+++      return;
+++    }
+++  if (res->status == GF_OK)
+++    {
+++      scan = g_object_ref_sink (make_print (self, NULL, res->finger_id));
+++      fpi_device_get_identify_data (FP_DEVICE (o), &gallery);
+++      for (i = 0; gallery && i < gallery->len; i++)
+++        {
+++          guint32 fid;
+++          if (print_finger (g_ptr_array_index (gallery, i), &fid) && fid == res->finger_id)
+++            {
+++              match = g_ptr_array_index (gallery, i);
+++              break;
+++            }
+++        }
+++    }
+++  fpi_device_identify_report (FP_DEVICE (o), match, scan, NULL);
+++  fpi_device_identify_complete (FP_DEVICE (o), NULL);
+++}
+++
+++static void dev_open (FpDevice *d) { start (FPI_DEVICE_GOODIXOPLUS (d), WORK_OPEN, 0, open_done); }
+++static void dev_close (FpDevice *d) { start (FPI_DEVICE_GOODIXOPLUS (d), WORK_CLOSE, 0, close_done); }
+++static void dev_list (FpDevice *d) { start (FPI_DEVICE_GOODIXOPLUS (d), WORK_LIST, 0, list_done); }
+++static void dev_enroll (FpDevice *d) { start (FPI_DEVICE_GOODIXOPLUS (d), WORK_ENROLL, 0, enroll_done); }
+++static void dev_identify (FpDevice *d) { start (FPI_DEVICE_GOODIXOPLUS (d), WORK_IDENTIFY, 0, identify_done); }
+++static void dev_clear (FpDevice *d) { start (FPI_DEVICE_GOODIXOPLUS (d), WORK_CLEAR, 0, clear_done); }
+++
+++static void
+++dev_delete (FpDevice *d)
+++{
+++  FpPrint *print = NULL;
+++  guint32 fid;
+++
+++  fpi_device_get_delete_data (d, &print);
+++  if (!print_finger (print, &fid))
+++    {
+++      fpi_device_delete_complete (d, fpi_device_error_new (FP_DEVICE_ERROR_DATA_INVALID));
+++      return;
+++    }
+++  start (FPI_DEVICE_GOODIXOPLUS (d), WORK_DELETE, fid, delete_done);
+++}
+++
+++static void
+++dev_cancel (FpDevice *d)
+++{
+++  /* the worker polls the action's cancellable */
+++}
+++
+++static void
+++dev_probe (FpDevice *d)
+++{
+++  FpiDeviceGoodixOplus *self = FPI_DEVICE_GOODIXOPLUS (d);
+++  GError *error = NULL;
+++  g_autofree gchar *id = NULL;
+++
+++  self->ta_name = read_ta_name (d, &error);
+++  if (self->ta_name)
+++    id = g_strdup_printf ("oplus:%s", self->ta_name);
+++  fpi_device_probe_complete (d, id, NULL, error);
+++}
+++
+++static void
+++fpi_device_goodixoplus_init (FpiDeviceGoodixOplus *self)
+++{
+++  self->io.sensor_fd = self->io.touch_fd = self->io.fb_fd = -1;
+++  self->ta.fd = self->km.fd = -1;
+++}
+++
+++static void
+++fpi_device_goodixoplus_finalize (GObject *object)
+++{
+++  FpiDeviceGoodixOplus *self = FPI_DEVICE_GOODIXOPLUS (object);
+++  g_clear_pointer (&self->ta_name, g_free);
+++  G_OBJECT_CLASS (fpi_device_goodixoplus_parent_class)->finalize (object);
+++}
+++
+++static void
+++fpi_device_goodixoplus_class_init (FpiDeviceGoodixOplusClass *klass)
+++{
+++  GObjectClass *object_class = G_OBJECT_CLASS (klass);
+++  FpDeviceClass *dc = FP_DEVICE_CLASS (klass);
+++
+++  object_class->finalize = fpi_device_goodixoplus_finalize;
+++  dc->id = FP_COMPONENT;
+++  dc->full_name = "Goodix optical under-display sensor (Oplus QSEE TA)";
+++  dc->type = FP_DEVICE_TYPE_UDEV;
+++  dc->id_table = id_table;
+++  dc->scan_type = FP_SCAN_TYPE_PRESS;
+++  dc->nr_enroll_stages = ENROLL_STAGES;
+++  dc->temp_hot_seconds = -1;
+++  dc->open = dev_open;
+++  dc->probe = dev_probe;
+++  dc->close = dev_close;
+++  dc->list = dev_list;
+++  dc->delete = dev_delete;
+++  dc->clear_storage = dev_clear;
+++  dc->enroll = dev_enroll;
+++  dc->identify = dev_identify;
+++  dc->cancel = dev_cancel;
+++  fpi_device_class_auto_initialize_features (dc);
+++}
++diff --git a/libfprint/meson.build b/libfprint/meson.build
++index a495aad..eab17c1 100644
++--- a/libfprint/meson.build
+++++ b/libfprint/meson.build
++@@ -141,6 +141,11 @@ driver_sources = {
++         'drivers/goodixqsee/goodix-qsee-transport.c',
++         'drivers/goodixqsee/goodix-qsee-token.c',
++     ),
+++    'goodixoplus' : files(
+++        'drivers/goodixoplus/goodix-oplus.c',
+++        'drivers/goodixoplus/goodix-oplus-io.c',
+++        'drivers/goodixoplus/goodix-oplus-tee.c',
+++    ),
++     'fpcmoc' : files('drivers/fpcmoc/fpc.c'),
++     'realtek' : files('drivers/realtek/realtek.c'),
++     'focaltech_moc' : files('drivers/focaltech_moc/focaltech_moc.c'),
++diff --git a/meson.build b/meson.build
++index 9cef4d7..6d0a56c 100644
++--- a/meson.build
+++++ b/meson.build
++@@ -142,6 +142,7 @@ drivers_info = {
++     'upekts': {},
++     'goodixmoc': {},
++     'goodixqsee': { 'helper': ['udev'] },
+++    'goodixoplus': { 'helper': ['udev'] },
++     'nb1010': {},
++     'fpcmoc': {},
++     'realtek': {},
+diff --git a/temp/libfprint/APKBUILD b/temp/libfprint/APKBUILD
+new file mode 100644
+index 0000000000..8d090609fc
+--- /dev/null
++++ b/temp/libfprint/APKBUILD
+@@ -0,0 +1,58 @@
++# Maintainer: Timo <1788603+darknagel@users.noreply.github.com>
++# Fork of community/libfprint: Dawid Wrobel's QSEE branch plus the
++# goodixoplus driver for the OnePlus 8 Pro in-display sensor.
++pkgname=libfprint
++pkgver=1.94.100_git20261116
++pkgrel=0
++_commit=430e24e538ba137b6edcfe2e1b3b8cc29c66fa6a
++pkgdesc="Library for fingerprint readers (with the Oplus Goodix QSEE driver)"
++url="https://github.com/wrobelda/libfprint"
++arch="aarch64"
++license="LGPL-2.1-or-later"
++makedepends="
++	eudev-dev
++	glib-dev
++	gobject-introspection-dev
++	libgudev-dev
++	libgusb-dev
++	meson
++	openssl-dev
++	pixman-dev
++	"
++options="!check"
++subpackages="$pkgname-dev $pkgname-udev"
++source="$pkgname-$_commit.tar.gz::https://github.com/wrobelda/libfprint/archive/$_commit.tar.gz
++	0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch
++	"
++builddir="$srcdir/libfprint-$_commit"
++
++build() {
++	# Only this driver: goodixqsee matches the same misc device (goodix,gf3626)
++	abuild-meson \
++		-Ddrivers=goodixoplus \
++		-Dgtk-examples=false \
++		-Ddoc=false \
++		-Dudev_hwdb=disabled \
++		-Dudev_rules=disabled \
++		-Dinstalled-tests=false \
++		output
++	meson compile -C output
++}
++
++package() {
++	DESTDIR="$pkgdir" meson install -C output --no-rebuild
++}
++
++udev() {
++	pkgdesc="$pkgdesc (udev rules)"
++	install_if="$pkgname=$pkgver-r$pkgrel udev"
++	# No USB readers in this build, so no autosuspend rules; the package
++	# exists to replace community/libfprint-udev, which pins libfprint=1.94.9.
++	mkdir -p "$subpkgdir"/usr/lib/udev/rules.d
++	echo "# goodixoplus: no USB autosuspend rules needed" \
++		> "$subpkgdir"/usr/lib/udev/rules.d/60-fprint-autosuspend.rules
++}
++sha512sums="
++173ac668d5e8e53e6b38cc083bf4a8256237fdd9ab9a4f8852b96e37be2f831ab04945718bd038b298c362c60f85c6333ed952f14bce6c521ce9b10e4079b1e2  libfprint-430e24e538ba137b6edcfe2e1b3b8cc29c66fa6a.tar.gz
++a5c33336155291da5daa25ac77fd29f6b24258dc1215bebecb3ab4e5fdd7b1c4ee36b5658262b7b0d9092cd81ddb33b419e14a5651c10903de2a32cf078ddb53  0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch
++"

@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Install the Goodix fingerprint trusted application from your own Android files.
+
+The trusted application (TA) is proprietary OnePlus/Goodix firmware and is not
+distributed with this image. Android keeps it on the odm partition, which the
+postmarketOS install replaced, so it has to come from a backup of your phone:
+
+    fingerprint-ta-install DIR
+
+DIR holds the split TA as Android ships it (<name>.mdt, <name>.b00 ...), e.g.
+odm/vendor/firmware from an extracted odm image or a copy of /odm/vendor/firmware
+taken under Android. A ready single file <name>.mbn in DIR works too.
+
+The name comes from the kernel (DT firmware-name, gfp9608 on the G5 sensor).
+The split image is joined into /lib/firmware/<name>.mbn (mainline's loader does
+not read 64-bit split images) and the TA loader is started.
+"""
+import os
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+
+FIRMWARE_DIR = '/lib/firmware'
+SYSFS_NAME = '/sys/class/misc/goodix_fp/device/firmware_name'
+
+
+def ta_name():
+    try:
+        with open(SYSFS_NAME) as f:
+            name = f.read().strip()
+            if name:
+                return name
+    except OSError:
+        pass
+    sys.exit('fingerprint-ta-install: no Goodix fingerprint device (%s)' % SYSFS_NAME)
+
+
+def find(directory, filename):
+    for entry in os.listdir(directory):
+        if entry.lower() == filename.lower():
+            return os.path.join(directory, entry)
+    return None
+
+
+def squash(mdt_path, out_path):
+    """Join <name>.mdt + <name>.bNN into one ELF; segment i goes to its p_offset."""
+    base = mdt_path[:-4]
+    with open(mdt_path, 'rb') as f:
+        mdt = f.read()
+    if mdt[:4] != b'\x7fELF':
+        sys.exit('%s is not an ELF file' % mdt_path)
+    if mdt[4] == 2:
+        phoff, = struct.unpack_from('<Q', mdt, 0x20)
+        phentsize, phnum = struct.unpack_from('<HH', mdt, 0x36)
+        fmt, pick = '<IIQQQQQQ', (lambda p: (p[2], p[5]))
+    else:
+        phoff, = struct.unpack_from('<I', mdt, 0x1c)
+        phentsize, phnum = struct.unpack_from('<HH', mdt, 0x2a)
+        fmt, pick = '<IIIIIIII', (lambda p: (p[1], p[4]))
+    segments = [pick(struct.unpack_from(fmt, mdt, phoff + i * phentsize)) for i in range(phnum)]
+    image = bytearray(max(off + size for off, size in segments))
+    image[:len(mdt)] = mdt
+    directory = os.path.dirname(mdt_path) or '.'
+    for i, (off, size) in enumerate(segments):
+        if not size:
+            continue
+        seg = find(directory, os.path.basename('%s.b%02d' % (base, i)))
+        if not seg:
+            if off + size <= len(mdt):
+                continue
+            sys.exit('missing segment %s.b%02d' % (base, i))
+        with open(seg, 'rb') as f:
+            data = f.read()
+        if len(data) != size:
+            sys.exit('%s: %d bytes, expected %d' % (seg, len(data), size))
+        image[off:off + size] = data
+    with open(out_path, 'wb') as f:
+        f.write(image)
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] in ('-h', '--help'):
+        print(__doc__.strip())
+        sys.exit(0 if len(sys.argv) == 2 else 2)
+    if os.geteuid():
+        sys.exit('fingerprint-ta-install: run as root')
+    directory = sys.argv[1]
+    if not os.path.isdir(directory):
+        sys.exit('fingerprint-ta-install: %s is not a directory' % directory)
+    name = ta_name()
+    target = os.path.join(FIRMWARE_DIR, name + '.mbn')
+    with tempfile.NamedTemporaryFile(dir=FIRMWARE_DIR, prefix='.' + name, delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        mbn = find(directory, name + '.mbn')
+        mdt = find(directory, name + '.mdt')
+        if mbn:
+            shutil.copyfile(mbn, tmp_path)
+        elif mdt:
+            squash(mdt, tmp_path)
+        else:
+            sys.exit('fingerprint-ta-install: no %s.mdt or %s.mbn in %s' % (name, name, directory))
+        os.chmod(tmp_path, 0o644)
+        os.replace(tmp_path, target)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+    print('installed %s (%d bytes)' % (target, os.path.getsize(target)))
+    subprocess.call(['systemctl', 'restart', 'qsee-app-loader@%s.service' % name])
+    subprocess.call(['systemctl', '--no-pager', 'is-active', 'qsee-app-loader@%s.service' % name])
+
+
+if __name__ == '__main__':
+    main()

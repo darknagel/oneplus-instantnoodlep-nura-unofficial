@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dawid=20Wr=C3=B3bel?= <me@dawidwrobel.com>
+Date: Mon, 2 Nov 2026 16:39:19 +0100
+Subject: [PATCH 216/222] firmware: qcom: scm: keep TZ memory below 4 GiB for
+ QSEE < 4.0
+
+Qualcomm's downstream qseecom driver passes the address of an
+application image or a listener shared buffer in a 32-bit field when
+the QSEE version is older than TZ.BF.4.0 (0x1000000), and in a 64-bit
+field from that version on.
+
+Follow the same version split: on QSEE older than TZ.BF.4.0, limit the
+SCM device's coherent DMA mask to 32 bits, so that TZ memory is
+allocated below 4 GiB. If the mask cannot be set, leave QSEECOM
+uninitialised.
+
+(cherry picked from commit add3bc9be5f28b64108f08e9af8c5e5d2db5b8b7)
+---
+ drivers/firmware/qcom/qcom_scm.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/drivers/firmware/qcom/qcom_scm.c b/drivers/firmware/qcom/qcom_scm.c
+index 2d3950435f..990d0a6c30 100644
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -135,6 +135,9 @@ enum qcom_scm_qseecom_tz_cmd_info {
+ 	QSEECOM_TZ_CMD_INFO_VERSION		= 3,
+ };
+ 
++/* QSEE versions from TZ.BF.4.0 on take addresses at full width. */
++#define QSEECOM_VERSION_4_0			0x1000000
++
+ #define RSCTABLE_BUFFER_NOT_SUFFICIENT		20
+ 
+ #define QSEECOM_MAX_APP_NAME_SIZE		64
+@@ -2756,6 +2759,20 @@ static int qcom_scm_qseecom_init(struct qcom_scm *scm)
+ 
+ 	dev_info(scm->dev, "qseecom: found qseecom with version 0x%x\n", version);
+ 
++	/*
++	 * QSEE older than TZ.BF.4.0 takes the address of an application image
++	 * or a listener shared buffer in a 32-bit field, so TZ memory has to
++	 * come from below 4 GiB.
++	 */
++	if (version < QSEECOM_VERSION_4_0) {
++		ret = dma_set_coherent_mask(scm->dev, DMA_BIT_MASK(32));
++		if (ret) {
++			dev_err(scm->dev, "qseecom: cannot limit TZ memory to 32 bits: %d\n",
++				ret);
++			return 0;
++		}
++	}
++
+ 	/*
+ 	 * Set up the TEE interface device, which is what lets user space reach
+ 	 * an application. This is deliberately not behind the allowlist below:
