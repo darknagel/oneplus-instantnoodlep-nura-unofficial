@@ -21,14 +21,15 @@ Questions and reports: [XDA thread](https://xdaforums.com/t/unofficial-mainline-
 
 Everything on the phone works, except what is listed below: display (1440×3168, 120 Hz),
 touch, GPU, sound, Wi-Fi, Bluetooth, USB networking, calls (VoLTE and 2G), SMS, mobile
-data, GPS, NFC, all five cameras, the sensors, hardware video decoding and encoding,
+data, GPS, NFC, all five cameras, the sensors, the fingerprint reader, hardware video
+decoding and encoding,
 charging, vibration, torch, and an external display over USB-C.
 
 Not working or limited:
 
 | Area | State |
 |---|---|
-| Fingerprint reader | not done |
+| Fingerprint reader | works with `fprintd`; the ring and light over the sensor show on the text console only, login/unlock (PAM) not set up |
 | Fast charging (Warp) and wireless charging | not done; charging is 5 V, up to 2 A into the battery |
 | Camera autofocus | phase detection on the main camera only, the other cameras use contrast |
 | Calls | no echo cancellation, see [`modem/`](modem/) |
@@ -68,7 +69,10 @@ screen may stay black, see [`docs/panel-log.md`](docs/panel-log.md). Patch-by-pa
 
 The image is console only. It contains no Wi-Fi networks, SSH keys or personal data. At first
 boot it grows the file system and copies the modem, DSP and video firmware and the proximity
-calibration from your phone's own partitions. It contains OnePlus' sensor configuration.
+calibration from your phone's own partitions. It contains no proprietary OnePlus files: once
+the phone has internet, `oneplus-ota-fetch` downloads the fingerprint firmware and the sensor
+configuration from OnePlus' official update (about 40 MB, checked against known hashes).
+Reboot once after that for the sensors.
 
 ## First login
 
@@ -150,9 +154,22 @@ cat /dev/gnss-sdx55         # NMEA, the first fix takes a few minutes outside
 
 For apps: `apk add gpsd && gpsd -n /dev/gnss-sdx55`
 
+### Fingerprint
+
+```sh
+fprintd-enroll -f right-thumb
+fprintd-verify
+```
+
+Place the finger on the blue ring at the bottom of the screen; the screen lights up under it
+while it captures. Move the finger a little between touches while enrolling. The sensor's
+firmware comes from `oneplus-ota-fetch` at first boot (`journalctl -u oneplus-ota-fetch`).
+How it works and its limits: [`fingerprint/image/README.md`](fingerprint/image/README.md).
+
 ### Sensors
 
-The sensors work right after flashing: `monitor-sensor` shows accelerometer, light and
+The sensors work after the first boot with internet and one reboot (see above):
+`monitor-sensor` shows accelerometer, light and
 proximity, `monitor-sensor --compass` the heading. The compass becomes accurate after the
 phone has been moved around in a figure eight. Details, the sensor DSP and how to set up
 older images: [`docs/sensors.md`](docs/sensors.md).
@@ -278,8 +295,7 @@ image has all of them. Repository layout and how to change the kernel:
 ## License
 
 Each patch keeps the license of the project it applies to. The image contains Nura/Alpine
-packages under their own licenses, the firmware Nura distributes and OnePlus' proprietary
-sensor files, which none of these licenses cover; the kernel source is the tag in
+packages under their own licenses, and the firmware Nura distributes; the kernel source is the tag in
 [`docs/patches.md`](docs/patches.md) plus `kernel-patches/`. README: CC0.
 
 No warranty. Flashing your phone is at your own risk.
