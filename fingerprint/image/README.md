@@ -12,11 +12,24 @@ the imaging, enrollment and matching. Linux reaches it through:
   TA loaded;
 - `fprintd` with a libfprint build that contains the `goodixoplus` driver.
 
-## Installing the trusted application
+## The trusted application
 
 The TA is proprietary OnePlus/Goodix firmware and is **not** part of the image.
-Android keeps it on the `odm` partition, which the installation replaced, so it
-has to come from your own phone, e.g. from a backup made under Android:
+
+**Automatic (default):** at boot, `fingerprint-ta-fetch.service` downloads it once
+the phone has internet. It takes only the `odm` partition (about 133 MB) from
+OnePlus' official OxygenOS 13 full OTA on Google's OTA server, with HTTP range
+requests. Every chunk is checked against the OTA manifest, and the image and the
+TA against fixed hashes. Then it installs `/lib/firmware/gfp9608.mbn` and starts
+the loader. If there is no network yet, it tries again every 10 minutes. Progress:
+
+```sh
+journalctl -u fingerprint-ta-fetch
+```
+
+**By hand (no internet, or your own Android files):** Android keeps the TA on the
+`odm` partition, which the installation replaced, so it has to come from your own
+phone, e.g. from a backup made under Android:
 
 ```sh
 # under Android (root): copy the files from the phone
