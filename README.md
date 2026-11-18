@@ -174,8 +174,14 @@ apk add --allow-untrusted goodix-fp-overlay-*.apk
 ```
 
 It draws the ring and the light over the desktop and the lock screen, and sets up the lock
-screen's fingerprint service. Add fingers in Settings → Users → Configure Fingerprint
-Authentication (asks for your password). On the lock screen, touch the ring, then swipe up.
+screen's fingerprint service. On the lock screen, put the finger on the ring: the phone
+unlocks right away.
+
+Add fingers in Settings → Users → Configure Fingerprint Authentication. After you pick a
+finger, a password dialog opens after a few seconds; tap the field to get the keyboard. If
+the settings then show "Did not receive a reply" (they wait only 25 s), close the message
+and pick the finger again: the password is remembered for a few minutes. Or as root:
+`fprintd-enroll -f right-index-finger USER`.
 
 ### Sensors
 

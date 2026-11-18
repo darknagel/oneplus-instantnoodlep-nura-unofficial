@@ -64,6 +64,8 @@ up under the finger while it captures.
 - The driver draws the ring and the light on the framebuffer, which only the
   text console shows. Under Plasma Mobile, `goodix-fp-overlay` (see below) draws
   them instead; Phosh has no such helper yet.
+- The TA keeps one set of templates for the phone: a finger already enrolled
+  for one user is refused for another (`enroll-duplicate`).
 - Enrollment uses a Gatekeeper token made from a random machine secret
   (`/var/lib/goodix-oplus/gatekeeper`), not from your password.
 - The factory calibration that Android wrote does not pass the TA's integrity
