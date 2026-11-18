@@ -1,0 +1,28 @@
+From: Roman Kuraev <naoru.desu@gmail.com>
+Subject: [PATCH] Export the versioned libva entry point from the QCOM backend
+
+libva probes the entry point for its current ABI before older versions. Mesa is
+linked into this backend and exports its own versioned entry point, so dlsym can
+resolve that symbol from Mesa instead of reaching the QCOM backend's 1.0 entry.
+Export an alias for the ABI used to build this backend to keep initialization here.
+
+This is a local compatibility fix for the separate qcom-va-driver project.
+The base project is MIT-licensed and credits the libva-v4l2 contributors.
+
+Based-on: radxa-pkg/qcom-va-driver 0980a1decf26d34c9aa71cd0a4a0d25703a7a17f
+Link: https://github.com/radxa-pkg/qcom-va-driver/tree/0980a1decf26d34c9aa71cd0a4a0d25703a7a17f
+
+diff --git a/src/backend.cpp b/src/backend.cpp
+index 56fc3e6..9d7881d 100644
+--- a/src/backend.cpp
++++ b/src/backend.cpp
+@@ -1308,3 +1308,9 @@ extern "C" VAStatus __vaDriverInit_1_0(VADriverContextP ctx) {
+         return VA_STATUS_ERROR_OPERATION_FAILED;
+     }
+ }
++
++// Look up this backend's entry point before any from the linked Mesa libraries.
++#define IRIS_VA_NAME_I(major, minor) __vaDriverInit_##major##_##minor
++#define IRIS_VA_NAME(major, minor) IRIS_VA_NAME_I(major, minor)
++extern "C" VAStatus IRIS_VA_NAME(VA_MAJOR_VERSION, VA_MINOR_VERSION)(VADriverContextP)
++    __attribute__((alias("__vaDriverInit_1_0")));

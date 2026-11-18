@@ -163,6 +163,28 @@ make your changes and export them again with `git format-patch` into the kernel 
 directory (`device/testing/linux-postmarketos-qcom-sm8250/`), add them to `source=` in the
 APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
 
+## Iris VP9 experiment
+
+Kernel patches 0174–0176 and package patch 0091 carry the SM8250 VP9 firmware fixes
+and zero-delay decoder controls, rebased onto main `4e04b52`; the package keeps
+Venus selected and leaves Iris disabled until fresh runtime validation.
+The November 14 r88 tests produced reference-exact 720p VP9 through Iris and the
+QCOM VA-API bridge, and direct V4L2 playback rendered all 240 frames at 2160p50;
+VA-API rendering dropped frames and screen-off decoding corrupted pixels.
+The separate `qcom-va-driver-patches/0001-export-the-versioned-libva-entry-point.patch`
+applies to bridge commit `0980a1d`, whose current master still lacks the fix;
+installing the bridge and rebuilding QtWebEngine with VA-API remain separate work.
+On November 16, the complete kernel patch stack replayed successfully and Iris
+compiled and linked against the fresh package configuration with Iris enabled for
+the build check; the rebased code has not been tested on the phone.
+
+Attribution for this experiment:
+
+- Kernel 0175: Xilin Wu's [upstream HFI Gen2 display-delay patch](https://lore.kernel.org/linux-media/20261029-iris-va-fixes-v1-1-44a2783f782b@radxa.com/), with the original author, commit message and sign-off retained; the backport changes surrounding context only.
+- Kernel 0176: Roman Kuraev's SM8250 HFI Gen1 adaptation of Xilin Wu's patch, with the borrowed capability definitions and control handling credited in its commit message.
+- Kernel 0174: Roman Kuraev's port-specific implementation, using the firmware protocol in the [Qualcomm driver published by OnePlus](https://github.com/OnePlusOSS/android_kernel_oneplus_sm8250/blob/cad09e061ef6cf689a4a1e54d27562e0f042236a/techpack/video/msm/vidc/msm_vdec.c), whose source credits The Linux Foundation.
+- The libva entry-point change: Roman Kuraev's local compatibility fix for the separate [qcom-va-driver project](https://github.com/radxa-pkg/qcom-va-driver/tree/0980a1decf26d34c9aa71cd0a4a0d25703a7a17f), whose MIT license credits the libva-v4l2 contributors as the base project's copyright holders.
+
 ## Patch numbers in use
 
 The next free numbers are kernel 0227 and package 0095. Kernel 0164 is kept for the

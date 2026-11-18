@@ -1,0 +1,230 @@
+From 29ab4cc5e908a51913249a6fc90683c00242acb3 Mon Sep 17 00:00:00 2001
+From: Roman Kuraev <naoru.desu@gmail.com>
+Date: Mon, 16 Nov 2026 16:30:12 +0000
+Subject: [PATCH 174/176] media: iris: fix SM8250 VP9 firmware session and
+ buffer handling
+
+Declare non-secure VP9 sessions before registering buffers, provide the stock
+firmware with output extradata storage, and initialize the compressed input packet.
+
+These changes returned reference-exact VP9 frames on the OnePlus 8 Pro r88 test
+kernel. Buffer counts are unchanged. Screen-off corruption remains unresolved.
+
+Protocol reference: Qualcomm video driver published by OnePlus, whose source
+credits The Linux Foundation (2012-2020). The secure-session property and output
+extradata handling were checked against that driver during this port investigation.
+
+Link: https://github.com/OnePlusOSS/android_kernel_oneplus_sm8250/blob/cad09e061ef6cf689a4a1e54d27562e0f042236a/techpack/video/msm/vidc/msm_vdec.c
+---
+ .../media/platform/qcom/iris/iris_buffer.c    | 12 ++++++++
+ .../media/platform/qcom/iris/iris_buffer.h    |  8 +++++
+ .../qcom/iris/iris_hfi_gen1_command.c         | 29 +++++++++++++++++--
+ .../qcom/iris/iris_hfi_gen1_defines.h         |  1 +
+ drivers/media/platform/qcom/iris/iris_vb2.c   |  7 +++++
+ drivers/media/platform/qcom/iris/iris_vb2.h   |  1 +
+ drivers/media/platform/qcom/iris/iris_vidc.c  |  1 +
+ 7 files changed, 56 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_buffer.c b/drivers/media/platform/qcom/iris/iris_buffer.c
+index 246ad0abb..4e2a312f5 100644
+--- a/drivers/media/platform/qcom/iris/iris_buffer.c
++++ b/drivers/media/platform/qcom/iris/iris_buffer.c
+@@ -680,11 +680,23 @@ int iris_queue_internal_buffers(struct iris_inst *inst, u32 plane)
+ 	return 0;
+ }
+ 
++void iris_free_output_extradata(struct iris_inst *inst, struct iris_buffer *buf)
++{
++	if (!buf->extra_vaddr)
++		return;
++
++	dma_free_coherent(inst->core->dev, IRIS_VP9_EXTRADATA_SIZE,
++			  buf->extra_vaddr, buf->extra_dma);
++	buf->extra_vaddr = NULL;
++	buf->extra_dma = 0;
++}
++
+ int iris_destroy_internal_buffer(struct iris_inst *inst, struct iris_buffer *buffer)
+ {
+ 	struct iris_core *core = inst->core;
+ 
+ 	list_del(&buffer->list);
++	iris_free_output_extradata(inst, buffer);
+ 	dma_free_attrs(core->dev, buffer->buffer_size, buffer->kvaddr,
+ 		       buffer->device_addr, buffer->dma_attrs);
+ 	kfree(buffer);
+diff --git a/drivers/media/platform/qcom/iris/iris_buffer.h b/drivers/media/platform/qcom/iris/iris_buffer.h
+index 75bb76776..ac7389880 100644
+--- a/drivers/media/platform/qcom/iris/iris_buffer.h
++++ b/drivers/media/platform/qcom/iris/iris_buffer.h
+@@ -6,8 +6,11 @@
+ #ifndef __IRIS_BUFFER_H__
+ #define __IRIS_BUFFER_H__
+ 
++#include <linux/sizes.h>
+ #include <media/videobuf2-v4l2.h>
+ 
++#define IRIS_VP9_EXTRADATA_SIZE SZ_16K
++
+ struct iris_inst;
+ 
+ #define to_iris_buffer(ptr)	container_of(ptr, struct iris_buffer, vb2)
+@@ -78,6 +81,8 @@ enum iris_buffer_attributes {
+  * @data_size: data size in bytes
+  * @device_addr: device address of the buffer
+  * @kvaddr: kernel virtual address of the buffer
++ * @extra_vaddr: optional output extradata allocation for Gen1 VP9
++ * @extra_dma: firmware address of the output extradata
+  * @dma_attrs: dma attributes
+  * @flags: buffer flags. It is represented as bit masks.
+  * @timestamp: timestamp of the buffer in nano seconds (ns)
+@@ -95,6 +100,8 @@ struct iris_buffer {
+ 	size_t				data_size;
+ 	dma_addr_t			device_addr;
+ 	void				*kvaddr;
++	void				*extra_vaddr;
++	dma_addr_t			extra_dma;
+ 	unsigned long			dma_attrs;
+ 	u32				flags; /* V4L2_BUF_FLAG_* */
+ 	u64				timestamp;
+@@ -112,6 +119,7 @@ void iris_get_internal_buffers(struct iris_inst *inst, u32 plane);
+ int iris_create_internal_buffers(struct iris_inst *inst, u32 plane);
+ int iris_queue_internal_buffers(struct iris_inst *inst, u32 plane);
+ int iris_queue_internal_deferred_buffers(struct iris_inst *inst, enum iris_buffer_type buffer_type);
++void iris_free_output_extradata(struct iris_inst *inst, struct iris_buffer *buf);
+ int iris_destroy_internal_buffer(struct iris_inst *inst, struct iris_buffer *buffer);
+ int iris_destroy_all_internal_buffers(struct iris_inst *inst, u32 plane);
+ int iris_destroy_dequeued_internal_buffers(struct iris_inst *inst, u32 plane);
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+index 7674b47ad..7807bfa7e 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+@@ -6,6 +6,7 @@
+ #include "iris_hfi_gen1.h"
+ #include "iris_hfi_gen1_defines.h"
+ #include "iris_instance.h"
++#include "iris_platform_common.h"
+ #include "iris_vpu_buffer.h"
+ 
+ static u32 iris_hfi_gen1_buf_type_from_driver(enum iris_buffer_type buffer_type)
+@@ -273,7 +274,7 @@ static int iris_hfi_gen1_session_continue(struct iris_inst *inst, u32 plane)
+ 
+ static int iris_hfi_gen1_queue_input_buffer(struct iris_inst *inst, struct iris_buffer *buf)
+ {
+-	struct hfi_session_empty_buffer_compressed_pkt com_ip_pkt;
++	struct hfi_session_empty_buffer_compressed_pkt com_ip_pkt = {};
+ 	struct hfi_session_empty_buffer_uncompressed_pkt uncom_ip_pkt;
+ 
+ 	if (inst->domain == DECODER) {
+@@ -317,16 +318,24 @@ static int iris_hfi_gen1_queue_output_buffer(struct iris_inst *inst, struct iris
+ {
+ 	struct hfi_session_fill_buffer_pkt op_pkt;
+ 
++	if (inst->domain == DECODER && inst->codec == V4L2_PIX_FMT_VP9 &&
++	    inst->core->iris_platform_data == &sm8250_data && !buf->extra_vaddr) {
++		buf->extra_vaddr = dma_alloc_coherent(inst->core->dev, IRIS_VP9_EXTRADATA_SIZE,
++						      &buf->extra_dma, GFP_KERNEL);
++		if (!buf->extra_vaddr)
++			return -ENOMEM;
++	}
++
+ 	op_pkt.shdr.hdr.size = sizeof(struct hfi_session_fill_buffer_pkt);
+ 	op_pkt.shdr.hdr.pkt_type = HFI_CMD_SESSION_FILL_BUFFER;
+ 	op_pkt.shdr.session_id = inst->session_id;
+ 	op_pkt.output_tag = buf->index;
+ 	op_pkt.packet_buffer = buf->device_addr;
+-	op_pkt.extradata_buffer = 0;
++	op_pkt.extradata_buffer = buf->extra_dma;
+ 	op_pkt.alloc_len = buf->buffer_size;
+ 	op_pkt.filled_len = buf->data_size;
+ 	op_pkt.offset = buf->data_offset;
+-	op_pkt.data = 0;
++	op_pkt.data = buf->extra_vaddr ? IRIS_VP9_EXTRADATA_SIZE : 0;
+ 
+ 	if (buf->type == BUF_OUTPUT && iris_split_mode_enabled(inst))
+ 		op_pkt.stream_id = 1;
+@@ -492,6 +501,10 @@ iris_hfi_gen1_packet_session_set_property(struct hfi_session_set_property_pkt *p
+ 	packet->data[0] = ptype;
+ 
+ 	switch (ptype) {
++	case HFI_PROPERTY_PARAM_SECURE_SESSION:
++		*(u32 *)prop_data = *(u32 *)pdata;
++		packet->shdr.hdr.size += sizeof(u32);
++		break;
+ 	case HFI_PROPERTY_PARAM_FRAME_SIZE: {
+ 		struct hfi_framesize *in = pdata, *fsize = prop_data;
+ 
+@@ -1090,6 +1103,16 @@ static int iris_hfi_gen1_session_set_config_params(struct iris_inst *inst, u32 p
+ 		config_params = core->iris_firmware_data->dec_input_config_params_default;
+ 		config_params_size = core->iris_firmware_data->dec_input_config_params_default_size;
+ 		if (V4L2_TYPE_IS_OUTPUT(plane)) {
++			if (inst->codec == V4L2_PIX_FMT_VP9 &&
++			    core->iris_platform_data == &sm8250_data) {
++				u32 secure = 0;
++
++				/* Declare an ordinary V4L2 session before registering its buffers. */
++				ret = hfi_gen1_set_property(inst, HFI_PROPERTY_PARAM_SECURE_SESSION,
++							    &secure, sizeof(secure));
++				if (ret)
++					return ret;
++			}
+ 			handler = vdec_prop_type_handle_inp_arr;
+ 			handler_size = ARRAY_SIZE(vdec_prop_type_handle_inp_arr);
+ 		} else if (V4L2_TYPE_IS_CAPTURE(plane)) {
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h b/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
+index 0e4dee192..4c55626eb 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
+@@ -87,6 +87,7 @@
+ #define HFI_PROPERTY_PARAM_UNCOMPRESSED_PLANE_ACTUAL_INFO	0x1002
+ #define HFI_PROPERTY_PARAM_UNCOMPRESSED_FORMAT_SELECT	0x1003
+ #define HFI_PROPERTY_PARAM_PROFILE_LEVEL_CURRENT	0x1005
++#define HFI_PROPERTY_PARAM_SECURE_SESSION		0x1011
+ #define HFI_PROPERTY_PARAM_WORK_MODE			0x1015
+ #define HFI_PROPERTY_PARAM_WORK_ROUTE			0x1017
+ #define HFI_PROPERTY_CONFIG_FRAME_RATE			0x2001
+diff --git a/drivers/media/platform/qcom/iris/iris_vb2.c b/drivers/media/platform/qcom/iris/iris_vb2.c
+index a2ea2d67f..d38c1799a 100644
+--- a/drivers/media/platform/qcom/iris/iris_vb2.c
++++ b/drivers/media/platform/qcom/iris/iris_vb2.c
+@@ -95,6 +95,13 @@ int iris_vb2_buf_init(struct vb2_buffer *vb2)
+ 	return 0;
+ }
+ 
++void iris_vb2_buf_cleanup(struct vb2_buffer *vb2)
++{
++	struct iris_inst *inst = vb2_get_drv_priv(vb2->vb2_queue);
++
++	iris_free_output_extradata(inst, to_iris_buffer(to_vb2_v4l2_buffer(vb2)));
++}
++
+ int iris_vb2_queue_setup(struct vb2_queue *q,
+ 			 unsigned int *num_buffers, unsigned int *num_planes,
+ 			 unsigned int sizes[], struct device *alloc_devs[])
+diff --git a/drivers/media/platform/qcom/iris/iris_vb2.h b/drivers/media/platform/qcom/iris/iris_vb2.h
+index a88565fdd..166aa842e 100644
+--- a/drivers/media/platform/qcom/iris/iris_vb2.h
++++ b/drivers/media/platform/qcom/iris/iris_vb2.h
+@@ -6,6 +6,7 @@
+ #ifndef __IRIS_VB2_H__
+ #define __IRIS_VB2_H__
+ 
++void iris_vb2_buf_cleanup(struct vb2_buffer *vb2);
+ int iris_vb2_buf_init(struct vb2_buffer *vb2);
+ int iris_vb2_queue_setup(struct vb2_queue *q,
+ 			 unsigned int *num_buffers, unsigned int *num_planes,
+diff --git a/drivers/media/platform/qcom/iris/iris_vidc.c b/drivers/media/platform/qcom/iris/iris_vidc.c
+index 14d63dc76..a69717eb6 100644
+--- a/drivers/media/platform/qcom/iris/iris_vidc.c
++++ b/drivers/media/platform/qcom/iris/iris_vidc.c
+@@ -642,6 +642,7 @@ static const struct v4l2_file_operations iris_v4l2_file_ops = {
+ 
+ static const struct vb2_ops iris_vb2_ops = {
+ 	.buf_init                       = iris_vb2_buf_init,
++	.buf_cleanup                    = iris_vb2_buf_cleanup,
+ 	.queue_setup                    = iris_vb2_queue_setup,
+ 	.start_streaming                = iris_vb2_start_streaming,
+ 	.stop_streaming                 = iris_vb2_stop_streaming,
+-- 
+2.56.0
+
