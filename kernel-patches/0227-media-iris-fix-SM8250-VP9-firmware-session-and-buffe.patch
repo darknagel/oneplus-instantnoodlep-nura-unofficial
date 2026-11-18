@@ -1,7 +1,7 @@
-From 29ab4cc5e908a51913249a6fc90683c00242acb3 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Roman Kuraev <naoru.desu@gmail.com>
 Date: Mon, 16 Nov 2026 16:30:12 +0000
-Subject: [PATCH 174/176] media: iris: fix SM8250 VP9 firmware session and
+Subject: [PATCH 227/229] media: iris: fix SM8250 VP9 firmware session and
  buffer handling
 
 Declare non-secure VP9 sessions before registering buffers, provide the stock
@@ -26,7 +26,7 @@ Link: https://github.com/OnePlusOSS/android_kernel_oneplus_sm8250/blob/cad09e061
  7 files changed, 56 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/media/platform/qcom/iris/iris_buffer.c b/drivers/media/platform/qcom/iris/iris_buffer.c
-index 246ad0abb..4e2a312f5 100644
+index 246ad0abba..4e2a312f50 100644
 --- a/drivers/media/platform/qcom/iris/iris_buffer.c
 +++ b/drivers/media/platform/qcom/iris/iris_buffer.c
 @@ -680,11 +680,23 @@ int iris_queue_internal_buffers(struct iris_inst *inst, u32 plane)
@@ -54,7 +54,7 @@ index 246ad0abb..4e2a312f5 100644
  		       buffer->device_addr, buffer->dma_attrs);
  	kfree(buffer);
 diff --git a/drivers/media/platform/qcom/iris/iris_buffer.h b/drivers/media/platform/qcom/iris/iris_buffer.h
-index 75bb76776..ac7389880 100644
+index 75bb767761..ac73898804 100644
 --- a/drivers/media/platform/qcom/iris/iris_buffer.h
 +++ b/drivers/media/platform/qcom/iris/iris_buffer.h
 @@ -6,8 +6,11 @@
@@ -96,7 +96,7 @@ index 75bb76776..ac7389880 100644
  int iris_destroy_all_internal_buffers(struct iris_inst *inst, u32 plane);
  int iris_destroy_dequeued_internal_buffers(struct iris_inst *inst, u32 plane);
 diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
-index 7674b47ad..7807bfa7e 100644
+index 5fa9f7a172..0c1d742f60 100644
 --- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
 +++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
 @@ -6,6 +6,7 @@
@@ -154,7 +154,7 @@ index 7674b47ad..7807bfa7e 100644
  	case HFI_PROPERTY_PARAM_FRAME_SIZE: {
  		struct hfi_framesize *in = pdata, *fsize = prop_data;
  
-@@ -1090,6 +1103,16 @@ static int iris_hfi_gen1_session_set_config_params(struct iris_inst *inst, u32 p
+@@ -1100,6 +1113,16 @@ static int iris_hfi_gen1_session_set_config_params(struct iris_inst *inst, u32 p
  		config_params = core->iris_firmware_data->dec_input_config_params_default;
  		config_params_size = core->iris_firmware_data->dec_input_config_params_default_size;
  		if (V4L2_TYPE_IS_OUTPUT(plane)) {
@@ -172,7 +172,7 @@ index 7674b47ad..7807bfa7e 100644
  			handler_size = ARRAY_SIZE(vdec_prop_type_handle_inp_arr);
  		} else if (V4L2_TYPE_IS_CAPTURE(plane)) {
 diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h b/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
-index 0e4dee192..4c55626eb 100644
+index 0e4dee1923..4c55626ebc 100644
 --- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
 +++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
 @@ -87,6 +87,7 @@
@@ -184,7 +184,7 @@ index 0e4dee192..4c55626eb 100644
  #define HFI_PROPERTY_PARAM_WORK_ROUTE			0x1017
  #define HFI_PROPERTY_CONFIG_FRAME_RATE			0x2001
 diff --git a/drivers/media/platform/qcom/iris/iris_vb2.c b/drivers/media/platform/qcom/iris/iris_vb2.c
-index a2ea2d67f..d38c1799a 100644
+index a2ea2d67f6..d38c1799af 100644
 --- a/drivers/media/platform/qcom/iris/iris_vb2.c
 +++ b/drivers/media/platform/qcom/iris/iris_vb2.c
 @@ -95,6 +95,13 @@ int iris_vb2_buf_init(struct vb2_buffer *vb2)
@@ -202,7 +202,7 @@ index a2ea2d67f..d38c1799a 100644
  			 unsigned int *num_buffers, unsigned int *num_planes,
  			 unsigned int sizes[], struct device *alloc_devs[])
 diff --git a/drivers/media/platform/qcom/iris/iris_vb2.h b/drivers/media/platform/qcom/iris/iris_vb2.h
-index a88565fdd..166aa842e 100644
+index a88565fdd3..166aa842e1 100644
 --- a/drivers/media/platform/qcom/iris/iris_vb2.h
 +++ b/drivers/media/platform/qcom/iris/iris_vb2.h
 @@ -6,6 +6,7 @@
@@ -214,7 +214,7 @@ index a88565fdd..166aa842e 100644
  int iris_vb2_queue_setup(struct vb2_queue *q,
  			 unsigned int *num_buffers, unsigned int *num_planes,
 diff --git a/drivers/media/platform/qcom/iris/iris_vidc.c b/drivers/media/platform/qcom/iris/iris_vidc.c
-index 14d63dc76..a69717eb6 100644
+index 14d63dc76c..a69717eb6f 100644
 --- a/drivers/media/platform/qcom/iris/iris_vidc.c
 +++ b/drivers/media/platform/qcom/iris/iris_vidc.c
 @@ -642,6 +642,7 @@ static const struct v4l2_file_operations iris_v4l2_file_ops = {
@@ -225,6 +225,3 @@ index 14d63dc76..a69717eb6 100644
  	.queue_setup                    = iris_vb2_queue_setup,
  	.start_streaming                = iris_vb2_start_streaming,
  	.stop_streaming                 = iris_vb2_stop_streaming,
--- 
-2.56.0
-

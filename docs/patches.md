@@ -165,29 +165,31 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
 
 ## Iris VP9 experiment
 
-Kernel patches 0174–0176 and package patch 0091 carry the SM8250 VP9 firmware fixes
-and zero-delay decoder controls, rebased onto main `4e04b52`; the package keeps
-Venus selected and leaves Iris disabled until fresh runtime validation.
+Kernel patches 0227–0229 and package patch 0095 carry the SM8250 VP9 firmware fixes
+and zero-delay decoder controls (renumbered on merge, they were 0174–0176 and 0091 in
+the pull request); the package keeps Venus selected and leaves Iris disabled.
 The November 14 r88 tests produced reference-exact 720p VP9 through Iris and the
 QCOM VA-API bridge, and direct V4L2 playback rendered all 240 frames at 2160p50;
-VA-API rendering dropped frames and screen-off decoding corrupted pixels.
+VA-API rendering dropped frames and screen-off decoding corrupted pixels. The
+screen-off corruption was the video core's clock and voltage, also with Venus; kernel
+0223–0225 fix it, see [Video codec clocks and voltage](#video-codec-clocks-and-voltage).
 The separate `qcom-va-driver-patches/0001-export-the-versioned-libva-entry-point.patch`
 applies to bridge commit `0980a1d`, whose current master still lacks the fix;
 installing the bridge and rebuilding QtWebEngine with VA-API remain separate work.
-On November 16, the complete kernel patch stack replayed successfully and Iris
-compiled and linked against the fresh package configuration with Iris enabled for
-the build check; the rebased code has not been tested on the phone.
+On November 18 the stack was tested on the phone with Iris enabled: VP9 720p30 and
+2160p50, H.264 and HEVC up to 2160p50 decoded frame-exact with the display on and off.
+VA-API was not tested again.
 
 Attribution for this experiment:
 
-- Kernel 0175: Xilin Wu's [upstream HFI Gen2 display-delay patch](https://lore.kernel.org/linux-media/20261029-iris-va-fixes-v1-1-44a2783f782b@radxa.com/), with the original author, commit message and sign-off retained; the backport changes surrounding context only.
-- Kernel 0176: Roman Kuraev's SM8250 HFI Gen1 adaptation of Xilin Wu's patch, with the borrowed capability definitions and control handling credited in its commit message.
-- Kernel 0174: Roman Kuraev's port-specific implementation, using the firmware protocol in the [Qualcomm driver published by OnePlus](https://github.com/OnePlusOSS/android_kernel_oneplus_sm8250/blob/cad09e061ef6cf689a4a1e54d27562e0f042236a/techpack/video/msm/vidc/msm_vdec.c), whose source credits The Linux Foundation.
+- Kernel 0228: Xilin Wu's [upstream HFI Gen2 display-delay patch](https://lore.kernel.org/linux-media/20261029-iris-va-fixes-v1-1-44a2783f782b@radxa.com/), with the original author, commit message and sign-off retained; the backport changes surrounding context only.
+- Kernel 0229: Roman Kuraev's SM8250 HFI Gen1 adaptation of Xilin Wu's patch, with the borrowed capability definitions and control handling credited in its commit message.
+- Kernel 0227: Roman Kuraev's port-specific implementation, using the firmware protocol in the [Qualcomm driver published by OnePlus](https://github.com/OnePlusOSS/android_kernel_oneplus_sm8250/blob/cad09e061ef6cf689a4a1e54d27562e0f042236a/techpack/video/msm/vidc/msm_vdec.c), whose source credits The Linux Foundation.
 - The libva entry-point change: Roman Kuraev's local compatibility fix for the separate [qcom-va-driver project](https://github.com/radxa-pkg/qcom-va-driver/tree/0980a1decf26d34c9aa71cd0a4a0d25703a7a17f), whose MIT license credits the libva-v4l2 contributors as the base project's copyright holders.
 
 ## Patch numbers in use
 
-The next free numbers are kernel 0227 and package 0095. Kernel 0164 is kept for the
+The next free numbers are kernel 0230 and package 0096. Kernel 0164 is kept for the
 DisplayPort DSC draft. Most package patches change the release and the checksums of the
 kernel package, so a new one has to be made on top of the last one; package numbers
 0070–0074 cannot be filled in later.
@@ -234,7 +236,8 @@ kernel package, so a new one has to be made on top of the last one; package numb
   enables `CONFIG_RMNET`, 0086 and 0087 change ModemManager and 81voltd (mobile data
   together with VoLTE). 0088 adds kernel 0171–0173 (modem over system sleep), 0089 and
   0090 change 81voltd and ModemManager for it. 0094 adds kernel 0223–0226 (video
-  codec clocks and voltage, Iris encoder size).
+  codec clocks and voltage, Iris encoder size), 0095 adds 0227–0229 (Iris VP9
+  experiment, Iris stays off).
   Package numbers 0050, 0051, 0053, 0062–0065 and 0070–0074 and kernel numbers 0105–0113,
   0151 and 0164 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
@@ -247,6 +250,8 @@ kernel package, so a new one has to be made on top of the last one; package numb
 - `usb-signaller-patches/` – against https://codeberg.org/DylanVanAssche/usb-signaller tag
   `v0.4.3`, carried in `temp/usb-signaller` by package patch 0080. Keeps the USB host role
   that the Type-C port controller picks when a hub or monitor is attached at boot.
+- `qcom-va-driver-patches/` – against https://github.com/radxa-pkg/qcom-va-driver commit
+  `0980a1d`, not in any package yet. Exports the versioned libva entry point.
 - `ffmpeg-patches/` – against FFmpeg 9.0.2, not in any package. Lets the V4L2 encoders
   take frames whose height is not a multiple of 32.
 - `libcamera-patches/` – against libcamera v0.8.0 plus the patches already carried in

@@ -1,31 +1,32 @@
-From 743d941d7bcfaa44d27ad3430103178d25fa19e0 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Roman Kuraev <naoru.desu@gmail.com>
-Date: Mon, 16 Nov 2026 15:47:56 +0000
-Subject: [PATCH] linux-postmarketos-qcom-sm8250: carry the Iris VP9 experiment
+Date: Wed, 18 Nov 2026 21:07:55 +0100
+Subject: [PATCH 95/95] linux-postmarketos-qcom-sm8250: carry the Iris VP9
+ experiment
 
 Add the SM8250 VP9 firmware-interface fixes and decoder display-delay controls.
 Keep the current Venus configuration until Iris has fresh runtime validation.
-Advance to release 104 without enabling Iris or changing driver selection.
+Advance to release 106 without enabling Iris or changing driver selection.
 ---
- ...M8250-VP9-firmware-session-and-buffe.patch | 230 ++++++++++++++++++
- ...port-decode-order-output-on-HFI-gen2.patch | 174 +++++++++++++
- ...rt-decoder-display-delay-controls-on.patch | 119 +++++++++
+ ...M8250-VP9-firmware-session-and-buffe.patch | 227 ++++++++++++++++++
+ ...port-decode-order-output-on-HFI-gen2.patch | 171 +++++++++++++
+ ...rt-decoder-display-delay-controls-on.patch | 116 +++++++++
  .../linux-postmarketos-qcom-sm8250/APKBUILD   |   8 +-
- 4 files changed, 530 insertions(+), 1 deletion(-)
- create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0174-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
- create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0175-media-iris-support-decode-order-output-on-HFI-gen2.patch
- create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0176-media-iris-support-decoder-display-delay-controls-on.patch
+ 4 files changed, 521 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0227-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0228-media-iris-support-decode-order-output-on-HFI-gen2.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0229-media-iris-support-decoder-display-delay-controls-on.patch
 
-diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0174-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch b/device/testing/linux-postmarketos-qcom-sm8250/0174-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0227-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch b/device/testing/linux-postmarketos-qcom-sm8250/0227-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
 new file mode 100644
-index 0000000..0240a21
+index 0000000000..baf1fb8128
 --- /dev/null
-+++ b/device/testing/linux-postmarketos-qcom-sm8250/0174-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
-@@ -0,0 +1,230 @@
-+From 29ab4cc5e908a51913249a6fc90683c00242acb3 Mon Sep 17 00:00:00 2001
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0227-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
+@@ -0,0 +1,227 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 +From: Roman Kuraev <naoru.desu@gmail.com>
 +Date: Mon, 16 Nov 2026 16:30:12 +0000
-+Subject: [PATCH 174/176] media: iris: fix SM8250 VP9 firmware session and
++Subject: [PATCH 227/229] media: iris: fix SM8250 VP9 firmware session and
 + buffer handling
 +
 +Declare non-secure VP9 sessions before registering buffers, provide the stock
@@ -50,7 +51,7 @@ index 0000000..0240a21
 + 7 files changed, 56 insertions(+), 3 deletions(-)
 +
 +diff --git a/drivers/media/platform/qcom/iris/iris_buffer.c b/drivers/media/platform/qcom/iris/iris_buffer.c
-+index 246ad0abb..4e2a312f5 100644
++index 246ad0abba..4e2a312f50 100644
 +--- a/drivers/media/platform/qcom/iris/iris_buffer.c
 ++++ b/drivers/media/platform/qcom/iris/iris_buffer.c
 +@@ -680,11 +680,23 @@ int iris_queue_internal_buffers(struct iris_inst *inst, u32 plane)
@@ -78,7 +79,7 @@ index 0000000..0240a21
 + 		       buffer->device_addr, buffer->dma_attrs);
 + 	kfree(buffer);
 +diff --git a/drivers/media/platform/qcom/iris/iris_buffer.h b/drivers/media/platform/qcom/iris/iris_buffer.h
-+index 75bb76776..ac7389880 100644
++index 75bb767761..ac73898804 100644
 +--- a/drivers/media/platform/qcom/iris/iris_buffer.h
 ++++ b/drivers/media/platform/qcom/iris/iris_buffer.h
 +@@ -6,8 +6,11 @@
@@ -120,7 +121,7 @@ index 0000000..0240a21
 + int iris_destroy_all_internal_buffers(struct iris_inst *inst, u32 plane);
 + int iris_destroy_dequeued_internal_buffers(struct iris_inst *inst, u32 plane);
 +diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
-+index 7674b47ad..7807bfa7e 100644
++index 5fa9f7a172..0c1d742f60 100644
 +--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
 ++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
 +@@ -6,6 +6,7 @@
@@ -178,7 +179,7 @@ index 0000000..0240a21
 + 	case HFI_PROPERTY_PARAM_FRAME_SIZE: {
 + 		struct hfi_framesize *in = pdata, *fsize = prop_data;
 + 
-+@@ -1090,6 +1103,16 @@ static int iris_hfi_gen1_session_set_config_params(struct iris_inst *inst, u32 p
++@@ -1100,6 +1113,16 @@ static int iris_hfi_gen1_session_set_config_params(struct iris_inst *inst, u32 p
 + 		config_params = core->iris_firmware_data->dec_input_config_params_default;
 + 		config_params_size = core->iris_firmware_data->dec_input_config_params_default_size;
 + 		if (V4L2_TYPE_IS_OUTPUT(plane)) {
@@ -196,7 +197,7 @@ index 0000000..0240a21
 + 			handler_size = ARRAY_SIZE(vdec_prop_type_handle_inp_arr);
 + 		} else if (V4L2_TYPE_IS_CAPTURE(plane)) {
 +diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h b/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
-+index 0e4dee192..4c55626eb 100644
++index 0e4dee1923..4c55626ebc 100644
 +--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
 ++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
 +@@ -87,6 +87,7 @@
@@ -208,7 +209,7 @@ index 0000000..0240a21
 + #define HFI_PROPERTY_PARAM_WORK_ROUTE			0x1017
 + #define HFI_PROPERTY_CONFIG_FRAME_RATE			0x2001
 +diff --git a/drivers/media/platform/qcom/iris/iris_vb2.c b/drivers/media/platform/qcom/iris/iris_vb2.c
-+index a2ea2d67f..d38c1799a 100644
++index a2ea2d67f6..d38c1799af 100644
 +--- a/drivers/media/platform/qcom/iris/iris_vb2.c
 ++++ b/drivers/media/platform/qcom/iris/iris_vb2.c
 +@@ -95,6 +95,13 @@ int iris_vb2_buf_init(struct vb2_buffer *vb2)
@@ -226,7 +227,7 @@ index 0000000..0240a21
 + 			 unsigned int *num_buffers, unsigned int *num_planes,
 + 			 unsigned int sizes[], struct device *alloc_devs[])
 +diff --git a/drivers/media/platform/qcom/iris/iris_vb2.h b/drivers/media/platform/qcom/iris/iris_vb2.h
-+index a88565fdd..166aa842e 100644
++index a88565fdd3..166aa842e1 100644
 +--- a/drivers/media/platform/qcom/iris/iris_vb2.h
 ++++ b/drivers/media/platform/qcom/iris/iris_vb2.h
 +@@ -6,6 +6,7 @@
@@ -238,7 +239,7 @@ index 0000000..0240a21
 + int iris_vb2_queue_setup(struct vb2_queue *q,
 + 			 unsigned int *num_buffers, unsigned int *num_planes,
 +diff --git a/drivers/media/platform/qcom/iris/iris_vidc.c b/drivers/media/platform/qcom/iris/iris_vidc.c
-+index 14d63dc76..a69717eb6 100644
++index 14d63dc76c..a69717eb6f 100644
 +--- a/drivers/media/platform/qcom/iris/iris_vidc.c
 ++++ b/drivers/media/platform/qcom/iris/iris_vidc.c
 +@@ -642,6 +642,7 @@ static const struct v4l2_file_operations iris_v4l2_file_ops = {
@@ -249,19 +250,16 @@ index 0000000..0240a21
 + 	.queue_setup                    = iris_vb2_queue_setup,
 + 	.start_streaming                = iris_vb2_start_streaming,
 + 	.stop_streaming                 = iris_vb2_stop_streaming,
-+-- 
-+2.56.0
-+
-diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0175-media-iris-support-decode-order-output-on-HFI-gen2.patch b/device/testing/linux-postmarketos-qcom-sm8250/0175-media-iris-support-decode-order-output-on-HFI-gen2.patch
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0228-media-iris-support-decode-order-output-on-HFI-gen2.patch b/device/testing/linux-postmarketos-qcom-sm8250/0228-media-iris-support-decode-order-output-on-HFI-gen2.patch
 new file mode 100644
-index 0000000..b1f3e3f
+index 0000000000..fda54a7142
 --- /dev/null
-+++ b/device/testing/linux-postmarketos-qcom-sm8250/0175-media-iris-support-decode-order-output-on-HFI-gen2.patch
-@@ -0,0 +1,174 @@
-+From fa8827614785283123f4b2fb6ceeaba30b65dc12 Mon Sep 17 00:00:00 2001
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0228-media-iris-support-decode-order-output-on-HFI-gen2.patch
+@@ -0,0 +1,171 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 +From: Xilin Wu <sophon@radxa.com>
 +Date: Thu, 29 Oct 2026 11:58:06 +0800
-+Subject: [PATCH 175/176] media: iris: support decode-order output on HFI gen2
++Subject: [PATCH 228/229] media: iris: support decode-order output on HFI gen2
 +
 +Synchronous per-picture clients such as VA-API can stall when firmware
 +holds decoded pictures for display reordering while the client waits for
@@ -284,7 +282,7 @@ index 0000000..b1f3e3f
 + 5 files changed, 49 insertions(+)
 +
 +diff --git a/drivers/media/platform/qcom/iris/iris_ctrls.c b/drivers/media/platform/qcom/iris/iris_ctrls.c
-+index 10e33b8a7..f0befbb48 100644
++index 10e33b8a73..f0befbb484 100644
 +--- a/drivers/media/platform/qcom/iris/iris_ctrls.c
 ++++ b/drivers/media/platform/qcom/iris/iris_ctrls.c
 +@@ -154,6 +154,10 @@ static enum platform_inst_fw_cap_type iris_get_cap_id(u32 id)
@@ -310,7 +308,7 @@ index 0000000..b1f3e3f
 + 		return 0;
 + 	}
 +diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2.c
-+index acc0ed8ad..7b7714d7f 100644
++index acc0ed8add..7b7714d7fd 100644
 +--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2.c
 ++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2.c
 +@@ -14,6 +14,22 @@
@@ -369,7 +367,7 @@ index 0000000..b1f3e3f
 + 	HFI_PROP_CROP_OFFSETS,
 + 	HFI_PROP_LUMA_CHROMA_BIT_DEPTH,
 +diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
-+index ca2954f8b..4570fd79c 100644
++index ca2954f8bd..4570fd79c3 100644
 +--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
 ++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
 +@@ -666,6 +666,23 @@ static int iris_hfi_gen2_set_super_block(struct iris_inst *inst, u32 plane)
@@ -405,7 +403,7 @@ index 0000000..b1f3e3f
 + 	};
 + 
 +diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_defines.h b/drivers/media/platform/qcom/iris/iris_hfi_gen2_defines.h
-+index 776b21cd1..0fcae6e69 100644
++index 776b21cd11..0fcae6e696 100644
 +--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_defines.h
 ++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_defines.h
 +@@ -120,6 +120,7 @@ enum hfi_flip {
@@ -417,7 +415,7 @@ index 0000000..b1f3e3f
 + #define HFI_PROP_DEC_DEFAULT_HEADER		0x03000168
 + #define HFI_PROP_DEC_START_FROM_RAP_FRAME	0x03000169
 +diff --git a/drivers/media/platform/qcom/iris/iris_platform_common.h b/drivers/media/platform/qcom/iris/iris_platform_common.h
-+index c9256f232..4e94f1d58 100644
++index c9256f2323..4e94f1d589 100644
 +--- a/drivers/media/platform/qcom/iris/iris_platform_common.h
 ++++ b/drivers/media/platform/qcom/iris/iris_platform_common.h
 +@@ -183,6 +183,8 @@ enum platform_inst_fw_cap_type {
@@ -429,19 +427,16 @@ index 0000000..b1f3e3f
 + 	INST_FW_CAP_MAX,
 + };
 + 
-+-- 
-+2.56.0
-+
-diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0176-media-iris-support-decoder-display-delay-controls-on.patch b/device/testing/linux-postmarketos-qcom-sm8250/0176-media-iris-support-decoder-display-delay-controls-on.patch
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0229-media-iris-support-decoder-display-delay-controls-on.patch b/device/testing/linux-postmarketos-qcom-sm8250/0229-media-iris-support-decoder-display-delay-controls-on.patch
 new file mode 100644
-index 0000000..6f82c58
+index 0000000000..4bb327a322
 --- /dev/null
-+++ b/device/testing/linux-postmarketos-qcom-sm8250/0176-media-iris-support-decoder-display-delay-controls-on.patch
-@@ -0,0 +1,119 @@
-+From 2d8c22a95fb5511813a1818ee1456634090b9a2c Mon Sep 17 00:00:00 2001
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0229-media-iris-support-decoder-display-delay-controls-on.patch
+@@ -0,0 +1,116 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 +From: Roman Kuraev <naoru.desu@gmail.com>
 +Date: Mon, 16 Nov 2026 16:30:13 +0000
-+Subject: [PATCH 176/176] media: iris: support decoder display-delay controls
++Subject: [PATCH 229/229] media: iris: support decoder display-delay controls
 + on HFI gen1
 +
 +Adapt Xilin Wu's "media: iris: support decode-order output on HFI gen2"
@@ -461,7 +456,7 @@ index 0000000..6f82c58
 + 3 files changed, 40 insertions(+)
 +
 +diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
-+index ca1545d28..5a361b76e 100644
++index ca1545d28b..5a361b76ef 100644
 +--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
 ++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
 +@@ -14,6 +14,22 @@
@@ -496,7 +491,7 @@ index 0000000..6f82c58
 + 	HFI_PROPERTY_PARAM_UNCOMPRESSED_FORMAT_SELECT,
 + 	HFI_PROPERTY_PARAM_UNCOMPRESSED_PLANE_ACTUAL_CONSTRAINTS_INFO,
 +diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
-+index 7807bfa7e..ebd470c30 100644
++index 0c1d742f60..27f5caf186 100644
 +--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
 ++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
 +@@ -514,6 +514,10 @@ iris_hfi_gen1_packet_session_set_property(struct hfi_session_set_property_pkt *p
@@ -510,7 +505,7 @@ index 0000000..6f82c58
 + 	case HFI_PROPERTY_CONFIG_VIDEOCORES_USAGE: {
 + 		struct hfi_videocores_usage_type *in = pdata, *cu = prop_data;
 + 
-+@@ -1045,6 +1049,19 @@ static int iris_hfi_gen1_set_stride(struct iris_inst *inst, u32 plane)
++@@ -1055,6 +1059,19 @@ static int iris_hfi_gen1_set_stride(struct iris_inst *inst, u32 plane)
 + 	return hfi_gen1_set_property(inst, ptype, &plane_actual_info, sizeof(plane_actual_info));
 + }
 + 
@@ -530,7 +525,7 @@ index 0000000..6f82c58
 + static int iris_hfi_gen1_session_set_config_params(struct iris_inst *inst, u32 plane)
 + {
 + 	struct iris_hfi_prop_type_handle const *handler = NULL;
-+@@ -1055,6 +1072,8 @@ static int iris_hfi_gen1_session_set_config_params(struct iris_inst *inst, u32 p
++@@ -1065,6 +1082,8 @@ static int iris_hfi_gen1_session_set_config_params(struct iris_inst *inst, u32 p
 + 	int ret;
 + 
 + 	static const struct iris_hfi_prop_type_handle vdec_prop_type_handle_inp_arr[] = {
@@ -540,7 +535,7 @@ index 0000000..6f82c58
 + 			iris_hfi_gen1_set_resolution},
 + 		{HFI_PROPERTY_CONFIG_VIDEOCORES_USAGE,
 +diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h b/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
-+index 4c55626eb..d96d96ccd 100644
++index 4c55626ebc..d96d96ccd1 100644
 +--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
 ++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
 +@@ -68,6 +68,10 @@
@@ -554,40 +549,34 @@ index 0000000..6f82c58
 + #define HFI_PROPERTY_PARAM_VDEC_DPB_COUNTS		0x120300e
 + #define HFI_PROPERTY_CONFIG_VDEC_ENTROPY		0x1204004
 + 
-+-- 
-+2.56.0
-+
 diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
-index f872c89..2cd245c 100644
+index dff709d89c..4d5a71ca4f 100644
 --- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
 +++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
 @@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
  _flavor="postmarketos-qcom-sm8250"
  pkgname=linux-$_flavor
  pkgver=7.2.0_git20261010
--pkgrel=103
-+pkgrel=104
+-pkgrel=105
++pkgrel=106
  pkgdesc="Mainline kernel fork for SM8250"
  arch="aarch64"
  _carch="arm64"
-@@ -201,6 +201,9 @@ source="
- 	0171-PCI-host-common-Let-only-the-endpoints-decide-about-.patch
- 	0172-bus-mhi-host-pci_generic-Make-the-flashless-SDX55-a-.patch
- 	0173-PCI-qcom-Wake-the-system-on-WAKE.patch
-+	0174-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
-+	0175-media-iris-support-decode-order-output-on-HFI-gen2.patch
-+	0176-media-iris-support-decoder-display-delay-controls-on.patch
+@@ -254,6 +254,9 @@ source="
+ 	0224-arm64-dts-qcom-sm8250-give-the-video-OPPs-in-core-cl.patch
+ 	0225-media-venus-scale-vcodec0_core-on-SM8250.patch
+ 	0226-media-iris-encode-the-requested-size-not-the-aligned.patch
++	0227-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
++	0228-media-iris-support-decode-order-output-on-HFI-gen2.patch
++	0229-media-iris-support-decoder-display-delay-controls-on.patch
  "
  builddir="$srcdir/linux-$_tag"
  
-@@ -409,4 +412,7 @@ a17ae9d6999ebd44bd602a7999a67216afa34d8258b0b3edfd16df3cfed808b77743b994ba2dbdde
- 29484dce40e54b8d184e79342bc0fa29e1a81756fa2690d25476ad78108ea3067d0a26d61b414d426a69d9a9cce3b1bb22ac2e4f4ecac70f6958b4bdb14804e9  0171-PCI-host-common-Let-only-the-endpoints-decide-about-.patch
- 19be441bdc367cc19edb435d63b02816b3e83e2c3fe1eabe621250658bfdaf9139c101cc8c10ae1965ade7bd7ed1639696e31835e3f64c92de282bb537ab0179  0172-bus-mhi-host-pci_generic-Make-the-flashless-SDX55-a-.patch
- d0ae61f124942d2cfff2d7c4599479149105c2ad9d282b8dd280e09baca4ffc5a36fb8b0974a15685ad9901dd196b7dea8937c099ce14d6b2566f4702f74568d  0173-PCI-qcom-Wake-the-system-on-WAKE.patch
-+b2f4105ad323f30e1dcfde62ac3a6e70afb70285af28283b9bb7e7391a2c255d4cd99340935e49c0004cd6b75cc966fb6b7b9ae02a696f1a9ee1efcebd15fa45  0174-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
-+ad380e0b8179ca062c40182453c5fd42bab79e3f9e9cac7fa7cb6e63af605e5b9ad80f6e775822d556138fea1ad5c41000adcec09de2531638cafa6070a5e435  0175-media-iris-support-decode-order-output-on-HFI-gen2.patch
-+a03197607df2a6b36edf959cafe699da67ce1e318e4df7ed9c90ad7f74c7117ddb6f828e59114b401372dbdcdbb3385732fdc289670e2bc823b69cc4b55a0d9f  0176-media-iris-support-decoder-display-delay-controls-on.patch
+@@ -515,4 +518,7 @@ b2089dc26f25254725954800255fa7d61557fe5007b946a39dbc8bb2804c73442b459ba2a0fa7c3a
+ d5f4470fa69bf0a7bfc700de10c208db9d0cdeedca8945b5b38f956c0e551a90f7f8c983ce9a0d5b1ab5d41d76b79af8125ebf2a7c7c3f0d3199f647cd39380e  0224-arm64-dts-qcom-sm8250-give-the-video-OPPs-in-core-cl.patch
+ 2202a20a713d8301893f1cb6706e341ca09dd834630b1cb246b577f2f71589e6031d9fa618af06c1fa2f73e9af6b9318e797f07e99e59cfdf0a5348b23b26631  0225-media-venus-scale-vcodec0_core-on-SM8250.patch
+ c7071f14e2815a32e96a975f9ec4d693dd851fbe7a4beedc32054f9a984ec477a406c4bbfd94b412453ce4e40ad702fe480006ce05552551ed5d6e316db78862  0226-media-iris-encode-the-requested-size-not-the-aligned.patch
++fa67018ad107918ecbcc9fa62107eb5d8582214af2ec4fe9045e7440b0460bc65eadb5ccb22c4f803a2efd974bcfb539f9ee1275c44565a4b9419a8571cbd60a  0227-media-iris-fix-SM8250-VP9-firmware-session-and-buffe.patch
++12049cac859375602a5e3f8dbd9e528d352d445fafc2861aaf615036d9a5c9a23dfdbb388f68946af66b757d2e123254eff120b4f1caf99142bad16c71c0a1b6  0228-media-iris-support-decode-order-output-on-HFI-gen2.patch
++dd7114f3037e900c8b437031976551ebb3472be644c74862498e8e65c57f3248177ce4cb3e64617db9229a61f1a2d174e9ff61c4316c66a19678e8d231b2b453  0229-media-iris-support-decoder-display-delay-controls-on.patch
  "
--- 
-2.54.0
-

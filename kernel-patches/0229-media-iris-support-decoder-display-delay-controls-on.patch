@@ -1,7 +1,7 @@
-From 2d8c22a95fb5511813a1818ee1456634090b9a2c Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Roman Kuraev <naoru.desu@gmail.com>
 Date: Mon, 16 Nov 2026 16:30:13 +0000
-Subject: [PATCH 176/176] media: iris: support decoder display-delay controls
+Subject: [PATCH 229/229] media: iris: support decoder display-delay controls
  on HFI gen1
 
 Adapt Xilin Wu's "media: iris: support decode-order output on HFI gen2"
@@ -21,7 +21,7 @@ Link: https://github.com/OnePlusOSS/android_kernel_oneplus_sm8250/blob/cad09e061
  3 files changed, 40 insertions(+)
 
 diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
-index ca1545d28..5a361b76e 100644
+index ca1545d28b..5a361b76ef 100644
 --- a/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
 +++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
 @@ -14,6 +14,22 @@
@@ -56,7 +56,7 @@ index ca1545d28..5a361b76e 100644
  	HFI_PROPERTY_PARAM_UNCOMPRESSED_FORMAT_SELECT,
  	HFI_PROPERTY_PARAM_UNCOMPRESSED_PLANE_ACTUAL_CONSTRAINTS_INFO,
 diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
-index 7807bfa7e..ebd470c30 100644
+index 0c1d742f60..27f5caf186 100644
 --- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
 +++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
 @@ -514,6 +514,10 @@ iris_hfi_gen1_packet_session_set_property(struct hfi_session_set_property_pkt *p
@@ -70,7 +70,7 @@ index 7807bfa7e..ebd470c30 100644
  	case HFI_PROPERTY_CONFIG_VIDEOCORES_USAGE: {
  		struct hfi_videocores_usage_type *in = pdata, *cu = prop_data;
  
-@@ -1045,6 +1049,19 @@ static int iris_hfi_gen1_set_stride(struct iris_inst *inst, u32 plane)
+@@ -1055,6 +1059,19 @@ static int iris_hfi_gen1_set_stride(struct iris_inst *inst, u32 plane)
  	return hfi_gen1_set_property(inst, ptype, &plane_actual_info, sizeof(plane_actual_info));
  }
  
@@ -90,7 +90,7 @@ index 7807bfa7e..ebd470c30 100644
  static int iris_hfi_gen1_session_set_config_params(struct iris_inst *inst, u32 plane)
  {
  	struct iris_hfi_prop_type_handle const *handler = NULL;
-@@ -1055,6 +1072,8 @@ static int iris_hfi_gen1_session_set_config_params(struct iris_inst *inst, u32 p
+@@ -1065,6 +1082,8 @@ static int iris_hfi_gen1_session_set_config_params(struct iris_inst *inst, u32 p
  	int ret;
  
  	static const struct iris_hfi_prop_type_handle vdec_prop_type_handle_inp_arr[] = {
@@ -100,7 +100,7 @@ index 7807bfa7e..ebd470c30 100644
  			iris_hfi_gen1_set_resolution},
  		{HFI_PROPERTY_CONFIG_VIDEOCORES_USAGE,
 diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h b/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
-index 4c55626eb..d96d96ccd 100644
+index 4c55626ebc..d96d96ccd1 100644
 --- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
 +++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
 @@ -68,6 +68,10 @@
@@ -114,6 +114,3 @@ index 4c55626eb..d96d96ccd 100644
  #define HFI_PROPERTY_PARAM_VDEC_DPB_COUNTS		0x120300e
  #define HFI_PROPERTY_CONFIG_VDEC_ENTROPY		0x1204004
  
--- 
-2.56.0
-
