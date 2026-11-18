@@ -47,6 +47,7 @@
 | Front camera missing at some boots: the telephoto actuator used the camera I2C bus without the 1.8 V pull-up supply (L7F), the CCI timed out and reset both masters during the front camera probe | works | kernel 0050–0051, pmaports 0027 |
 | Compass heading: rotv needs fmv, which needs mag_cal and gyro_cal, which need the software motion detector that OnePlus switches off on SM8250 (`kona_amd_sw_disabled.json`) | works | `sensors/setup-sensors.sh` |
 | SLPI, Venus and CDSP: firmware from the phone's active modem partition, joined with pil-squasher and stored as local overrides | works; CDSP compute workloads untested | `firmware/dsp-firmware.sh` |
+| Hardware video decoding and encoding: with the display off the video core ran at 1332 MHz on a LOW_SVS vote and decoded frames came out corrupted; Venus scaled the wrong clock; the Iris encoder squeezed the aligned buffer into the picture | fixed; H.264, HEVC and VP9 up to 2160p50 frame-exact with the display on and off | kernel 0223–0226, pmaports 0094; [notes](#video-codec-clocks-and-voltage) |
 | Automatic screen rotation: iio-sensor-proxy 3.9 opens the SSC sensors synchronously at startup; a claim in that window (KWin, Phosh) is stored but the sensor is never started | works | iio-sensor-proxy 0001 |
 | Reboot modes: `reboot bootloader` / `reboot recovery`; the unused PM8009 PON registered a second `qcom-pon` reboot mode (-EEXIST warning at boot) | works | kernel 0052, pmaports 0028 |
 | OIS of the main camera: onsemi LC898128 at 0x24, runs from its own firmware and reads the module gyroscope itself; new driver starts it whenever the sensor is powered, PM8009 L5 added for its supply | works | kernel 0053–0054, pmaports 0029 |
@@ -111,6 +112,41 @@ first step makes the image clearly less sharp. The final position is the top of 
 Gaussian through the sharpest position and its neighbours. In continuous mode it scans
 again when the sharpness changes for 0.4 s.
 
+## Video codec clocks and voltage
+
+The SM8250 device tree gave the video codec MX as its only performance domain and listed
+the OPPs in rates of the clock source `video_cc_mvs0_clk_src` (720–1332 MHz). The video
+core also runs from MMCX, and both drivers set the OPP rate on a clock behind a fixed
+divider: Iris on `vcodec0_core` (source / 3), Venus on `core` (source / 2). The RCG
+rounded every request to a 1332 MHz source while the voted corner followed the OPP down
+to LOW_SVS, and MMCX was not voted at all. With the display on, the display controller
+holds MMCX at NOM and hides this. With the display off, 4K decoding went wrong from a
+point in the stream onwards, also with Venus, and 720p VP9 through Iris often; 1080p
+H.264 and HEVC stayed clean in the tests.
+
+- Kernel 0223 adds MMCX to the codec's power domains, with the same corner as MX per OPP.
+- Kernel 0224 lists the core clock rates the stock firmware allows (240, 338, 366 and
+  444 MHz) with the corners of the stock `videocc-kona` table.
+- Kernel 0225 makes Venus scale `vcodec0_core`, the clock its frequency table is in.
+  Venus now picks the clock by load (240 MHz core for 4K50, still more than three times
+  real time) instead of running at the top rate on a low vote.
+- Kernel 0226: S_FMT on the encoder's raw side set the crop and the coded size to the
+  aligned buffer (720 lines to 736), and HFI gen1 passed the aligned size to the firmware
+  as the input frame size, so the firmware scaled the padding lines into the picture.
+  The encoder now codes the requested size.
+
+Tested with ffmpeg against libavcodec, every frame by MD5: VP9 720p30 and 2160p50, H.264
+and HEVC 1080p and 2160p50, 20 runs with the display off and more with it on. H.264 and
+HEVC with Iris and Venus, VP9 with Iris only.
+The encoder reaches 47–49 dB PSNR at 8 Mbit/s for 360p to 1080p in H.264 and HEVC.
+
+ffmpeg's V4L2 encoder copies every plane with the buffer's aligned height instead of the
+frame's height and reads past the end of a 720- or 1080-line frame (segfault).
+`ffmpeg-patches/0001-avcodec-v4l2-copy-frames-into-padded-buffers.patch` fixes that; until
+an ffmpeg with it is installed, encode with heights that are a multiple of 32. ffmpeg also
+waits forever when the V4L2 encoder feeds a Matroska file, which needs the stream headers
+before the first frame; write a raw `.h264` or `.hevc` stream and remux it.
+
 ## Other notes
 
 - `bootmac` sets the Bluetooth address at boot, the chip has none of its own. Without it,
@@ -129,7 +165,7 @@ APKBUILD and run `pmbootstrap checksum linux-postmarketos-qcom-sm8250`.
 
 ## Patch numbers in use
 
-The next free numbers are kernel 0174 and package 0091. Kernel 0164 is kept for the
+The next free numbers are kernel 0227 and package 0095. Kernel 0164 is kept for the
 DisplayPort DSC draft. Most package patches change the release and the checksums of the
 kernel package, so a new one has to be made on top of the last one; package numbers
 0070–0074 cannot be filled in later.
@@ -175,7 +211,8 @@ kernel package, so a new one has to be made on top of the last one; package numb
   in the mode with phase detection). 0085 adds kernel 0170 (CCI transfer retry) and
   enables `CONFIG_RMNET`, 0086 and 0087 change ModemManager and 81voltd (mobile data
   together with VoLTE). 0088 adds kernel 0171–0173 (modem over system sleep), 0089 and
-  0090 change 81voltd and ModemManager for it.
+  0090 change 81voltd and ModemManager for it. 0094 adds kernel 0223–0226 (video
+  codec clocks and voltage, Iris encoder size).
   Package numbers 0050, 0051, 0053, 0062–0065 and 0070–0074 and kernel numbers 0105–0113,
   0151 and 0164 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
@@ -188,6 +225,8 @@ kernel package, so a new one has to be made on top of the last one; package numb
 - `usb-signaller-patches/` – against https://codeberg.org/DylanVanAssche/usb-signaller tag
   `v0.4.3`, carried in `temp/usb-signaller` by package patch 0080. Keeps the USB host role
   that the Type-C port controller picks when a hub or monitor is attached at boot.
+- `ffmpeg-patches/` – against FFmpeg 9.0.2, not in any package. Lets the V4L2 encoders
+  take frames whose height is not a multiple of 32.
 - `libcamera-patches/` – against libcamera v0.8.0 plus the patches already carried in
   Nura `temp/libcamera`: sensor helpers for S5K3M5 (0001) and IMX586, IMX689 and GC5035
   (0002), the autofocus series (0003–0005), a shorter autofocus scan (0006), a noise

@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 21:07:10 +0100
+Subject: [PATCH 226/229] media: iris: encode the requested size, not the
+ aligned buffer size
+
+S_FMT on the encoder OUTPUT queue aligns the raw buffer (width to 128,
+height to 32 lines) and then set the crop rectangle and the CAPTURE size
+to that aligned size, and HFI gen1 sent the aligned buffer size to the
+firmware as the input frame size. A client asking for 1280x720 sets
+CAPTURE to 1280x720, and the firmware squeezed all 736 lines, including
+the 16 padding lines, into 720.
+
+The stateful encoder interface makes the requested size the default
+crop. Keep the alignment for the buffer only, default crop and CAPTURE
+to the requested size, treat CAPTURE as scaled only when it differs from
+the crop, and on HFI gen1 send the crop as the input frame size; the
+aligned layout already goes out as the plane stride and height.
+---
+ .../platform/qcom/iris/iris_hfi_gen1_command.c     | 14 ++++++++++++--
+ drivers/media/platform/qcom/iris/iris_venc.c       | 12 ++++++------
+ 2 files changed, 18 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+index 7674b47ad6..5fa9f7a172 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+@@ -791,8 +791,18 @@ static int iris_hfi_gen1_set_resolution(struct iris_inst *inst, u32 plane)
+ 
+ 	if (!iris_drc_pending(inst) && !(inst->sub_state & IRIS_INST_SUB_FIRST_IPSC)) {
+ 		fs.buffer_type = HFI_BUFFER_INPUT;
+-		fs.width = inst->fmt_src->fmt.pix_mp.width;
+-		fs.height = inst->fmt_src->fmt.pix_mp.height;
++		if (inst->domain == ENCODER) {
++			/*
++			 * The aligned buffer layout goes to the firmware as the
++			 * plane stride and height; the frame size is the visible
++			 * (crop) size, or the firmware scales the padding in.
++			 */
++			fs.width = inst->crop.width;
++			fs.height = inst->crop.height;
++		} else {
++			fs.width = inst->fmt_src->fmt.pix_mp.width;
++			fs.height = inst->fmt_src->fmt.pix_mp.height;
++		}
+ 
+ 		ret = hfi_gen1_set_property(inst, ptype, &fs, sizeof(fs));
+ 		if (ret)
+diff --git a/drivers/media/platform/qcom/iris/iris_venc.c b/drivers/media/platform/qcom/iris/iris_venc.c
+index a945992f63..d3d069af1f 100644
+--- a/drivers/media/platform/qcom/iris/iris_venc.c
++++ b/drivers/media/platform/qcom/iris/iris_venc.c
+@@ -224,8 +224,8 @@ static int iris_venc_s_fmt_output(struct iris_inst *inst, struct v4l2_format *f)
+ 	 * it is considered a scaling case,
+ 	 * and the scaled size needs to be saved.
+ 	 */
+-	if (f->fmt.pix_mp.width != inst->fmt_src->fmt.pix_mp.width ||
+-	    f->fmt.pix_mp.height != inst->fmt_src->fmt.pix_mp.height) {
++	if (f->fmt.pix_mp.width != inst->crop.width ||
++	    f->fmt.pix_mp.height != inst->crop.height) {
+ 		inst->enc_scale_width = f->fmt.pix_mp.width;
+ 		inst->enc_scale_height = f->fmt.pix_mp.height;
+ 		fmt->fmt.pix_mp.width = ALIGN(f->fmt.pix_mp.width, codec_align);
+@@ -276,8 +276,8 @@ static int iris_venc_s_fmt_input(struct iris_inst *inst, struct v4l2_format *f)
+ 	fmt->fmt.pix_mp.quantization = f->fmt.pix_mp.quantization;
+ 
+ 	output_fmt = inst->fmt_dst;
+-	output_fmt->fmt.pix_mp.width = fmt->fmt.pix_mp.width;
+-	output_fmt->fmt.pix_mp.height = fmt->fmt.pix_mp.height;
++	output_fmt->fmt.pix_mp.width = f->fmt.pix_mp.width;
++	output_fmt->fmt.pix_mp.height = f->fmt.pix_mp.height;
+ 	output_fmt->fmt.pix_mp.colorspace = fmt->fmt.pix_mp.colorspace;
+ 	output_fmt->fmt.pix_mp.xfer_func = fmt->fmt.pix_mp.xfer_func;
+ 	output_fmt->fmt.pix_mp.ycbcr_enc = fmt->fmt.pix_mp.ycbcr_enc;
+@@ -295,8 +295,8 @@ static int iris_venc_s_fmt_input(struct iris_inst *inst, struct v4l2_format *f)
+ 	    f->fmt.pix_mp.height != inst->crop.height) {
+ 		inst->crop.top = 0;
+ 		inst->crop.left = 0;
+-		inst->crop.width = fmt->fmt.pix_mp.width;
+-		inst->crop.height = fmt->fmt.pix_mp.height;
++		inst->crop.width = f->fmt.pix_mp.width;
++		inst->crop.height = f->fmt.pix_mp.height;
+ 
+ 		iris_venc_s_fmt_output(inst, output_fmt);
+ 	}

@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 21:07:10 +0100
+Subject: [PATCH 225/229] media: venus: scale vcodec0_core on SM8250
+
+The SM8250 frequency table (240 to 444 MHz) gives rates of vcodec0_core,
+video_cc_mvs0_clk, which runs at the source rate / 3. Venus set the OPP
+rate on "core" instead, video_cc_mvs0c_clk at source / 2, so the source
+ended up at a rate unrelated to the OPP and its corner: with the source
+rates in the OPP table it ran at 1332 MHz on a LOW_SVS vote, with core
+rates in the table it never left 720 MHz.
+
+Use vcodec0_core as the OPP clock on SM8250, so the OPP table, the
+driver's frequency table and the dividers agree. "core" follows the
+shared source.
+---
+ drivers/media/platform/qcom/venus/pm_helpers.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/qcom/venus/pm_helpers.c b/drivers/media/platform/qcom/venus/pm_helpers.c
+index be1cbd5cfe..bf8f5adbad 100644
+--- a/drivers/media/platform/qcom/venus/pm_helpers.c
++++ b/drivers/media/platform/qcom/venus/pm_helpers.c
+@@ -1131,7 +1131,16 @@ static int core_get_v4(struct venus_core *core)
+ 	if (legacy_binding)
+ 		return 0;
+ 
+-	ret = devm_pm_opp_set_clkname(dev, "core");
++	/*
++	 * On SM8250 the frequency table and the OPP table give the rates of
++	 * vcodec0_core (video_cc_mvs0_clk, source / 3). "core" sits behind a
++	 * different divider (/ 2), so scaling it would leave the source at a
++	 * rate that does not match the voted corner.
++	 */
++	if (of_device_is_compatible(dev->of_node, "qcom,sm8250-venus"))
++		ret = devm_pm_opp_set_clkname(dev, "vcodec0_core");
++	else
++		ret = devm_pm_opp_set_clkname(dev, "core");
+ 	if (ret)
+ 		return ret;
+ 

@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 21:07:10 +0100
+Subject: [PATCH 223/229] arm64: dts: qcom: sm8250: vote MMCX for the video
+ codec
+
+The video core clocks (video_cc_mvs0 and mvs0c) run from the MMCX rail,
+but the venus node lists only MX as a performance domain. Venus and Iris
+both fall back to MX alone for this incomplete binding, so nothing raises
+MMCX for the codec. While the display is on, the display controller holds
+MMCX at NOM. With the display off MMCX drops to LOW_SVS while the video
+core keeps running, and decoded frames come out corrupted.
+
+List MMCX as the fourth power domain and require the same corner on MX
+and MMCX for each OPP, as the downstream videocc-kona driver does for
+video_cc_mvs0_clk_src.
+---
+ arch/arm64/boot/dts/qcom/sm8250.dtsi | 17 +++++++++++------
+ 1 file changed, 11 insertions(+), 6 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250.dtsi b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+index 30c37adaa6..80ab71d800 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+@@ -4336,8 +4336,9 @@ venus: video-codec@aa00000 {
+ 			interrupts = <GIC_SPI 174 IRQ_TYPE_LEVEL_HIGH>;
+ 			power-domains = <&videocc MVS0C_GDSC>,
+ 					<&videocc MVS0_GDSC>,
+-					<&rpmhpd RPMHPD_MX>;
+-			power-domain-names = "venus", "vcodec0", "mx";
++					<&rpmhpd RPMHPD_MX>,
++					<&rpmhpd RPMHPD_MMCX>;
++			power-domain-names = "venus", "vcodec0", "mx", "mmcx";
+ 			operating-points-v2 = <&venus_opp_table>;
+ 
+ 			clocks = <&gcc GCC_VIDEO_AXI0_CLK>,
+@@ -4363,22 +4364,26 @@ venus_opp_table: opp-table {
+ 
+ 				opp-720000000 {
+ 					opp-hz = /bits/ 64 <720000000>;
+-					required-opps = <&rpmhpd_opp_low_svs>;
++					required-opps = <&rpmhpd_opp_low_svs>,
++						<&rpmhpd_opp_low_svs>;
+ 				};
+ 
+ 				opp-1014000000 {
+ 					opp-hz = /bits/ 64 <1014000000>;
+-					required-opps = <&rpmhpd_opp_svs>;
++					required-opps = <&rpmhpd_opp_svs>,
++						<&rpmhpd_opp_svs>;
+ 				};
+ 
+ 				opp-1098000000 {
+ 					opp-hz = /bits/ 64 <1098000000>;
+-					required-opps = <&rpmhpd_opp_svs_l1>;
++					required-opps = <&rpmhpd_opp_svs_l1>,
++						<&rpmhpd_opp_svs_l1>;
+ 				};
+ 
+ 				opp-1332000000 {
+ 					opp-hz = /bits/ 64 <1332000000>;
+-					required-opps = <&rpmhpd_opp_nom>;
++					required-opps = <&rpmhpd_opp_nom>,
++						<&rpmhpd_opp_nom>;
+ 				};
+ 			};
+ 		};

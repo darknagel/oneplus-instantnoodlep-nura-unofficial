@@ -1,0 +1,335 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <darknagel@proton.me>
+Date: Wed, 18 Nov 2026 21:07:50 +0100
+Subject: [PATCH 94/95] linux-postmarketos-qcom-sm8250: video codec voltage,
+ Venus clock, encoder size
+
+Kernel 0223-0224: the video codec votes MMCX, and its OPP table gives the
+core clock rates, so the video core no longer runs at 1332 MHz on a
+LOW_SVS vote when the display is off. Decoding with the display off
+corrupted frames before.
+Kernel 0225: Venus scales vcodec0_core on SM8250.
+Kernel 0226: the Iris encoder encodes the requested size instead of
+scaling the aligned buffer into it.
+---
+ ...sm8250-vote-MMCX-for-the-video-codec.patch | 67 +++++++++++++++
+ ...m8250-give-the-video-OPPs-in-core-cl.patch | 60 +++++++++++++
+ ...a-venus-scale-vcodec0_core-on-SM8250.patch | 41 +++++++++
+ ...e-the-requested-size-not-the-aligned.patch | 85 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   | 10 ++-
+ 5 files changed, 262 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0223-arm64-dts-qcom-sm8250-vote-MMCX-for-the-video-codec.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0224-arm64-dts-qcom-sm8250-give-the-video-OPPs-in-core-cl.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0225-media-venus-scale-vcodec0_core-on-SM8250.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0226-media-iris-encode-the-requested-size-not-the-aligned.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0223-arm64-dts-qcom-sm8250-vote-MMCX-for-the-video-codec.patch b/device/testing/linux-postmarketos-qcom-sm8250/0223-arm64-dts-qcom-sm8250-vote-MMCX-for-the-video-codec.patch
+new file mode 100644
+index 0000000000..2e850693c4
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0223-arm64-dts-qcom-sm8250-vote-MMCX-for-the-video-codec.patch
+@@ -0,0 +1,67 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Wed, 18 Nov 2026 21:07:10 +0100
++Subject: [PATCH 223/229] arm64: dts: qcom: sm8250: vote MMCX for the video
++ codec
++
++The video core clocks (video_cc_mvs0 and mvs0c) run from the MMCX rail,
++but the venus node lists only MX as a performance domain. Venus and Iris
++both fall back to MX alone for this incomplete binding, so nothing raises
++MMCX for the codec. While the display is on, the display controller holds
++MMCX at NOM. With the display off MMCX drops to LOW_SVS while the video
++core keeps running, and decoded frames come out corrupted.
++
++List MMCX as the fourth power domain and require the same corner on MX
++and MMCX for each OPP, as the downstream videocc-kona driver does for
++video_cc_mvs0_clk_src.
++---
++ arch/arm64/boot/dts/qcom/sm8250.dtsi | 17 +++++++++++------
++ 1 file changed, 11 insertions(+), 6 deletions(-)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250.dtsi b/arch/arm64/boot/dts/qcom/sm8250.dtsi
++index 30c37adaa6..80ab71d800 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250.dtsi
+++++ b/arch/arm64/boot/dts/qcom/sm8250.dtsi
++@@ -4336,8 +4336,9 @@ venus: video-codec@aa00000 {
++ 			interrupts = <GIC_SPI 174 IRQ_TYPE_LEVEL_HIGH>;
++ 			power-domains = <&videocc MVS0C_GDSC>,
++ 					<&videocc MVS0_GDSC>,
++-					<&rpmhpd RPMHPD_MX>;
++-			power-domain-names = "venus", "vcodec0", "mx";
+++					<&rpmhpd RPMHPD_MX>,
+++					<&rpmhpd RPMHPD_MMCX>;
+++			power-domain-names = "venus", "vcodec0", "mx", "mmcx";
++ 			operating-points-v2 = <&venus_opp_table>;
++ 
++ 			clocks = <&gcc GCC_VIDEO_AXI0_CLK>,
++@@ -4363,22 +4364,26 @@ venus_opp_table: opp-table {
++ 
++ 				opp-720000000 {
++ 					opp-hz = /bits/ 64 <720000000>;
++-					required-opps = <&rpmhpd_opp_low_svs>;
+++					required-opps = <&rpmhpd_opp_low_svs>,
+++						<&rpmhpd_opp_low_svs>;
++ 				};
++ 
++ 				opp-1014000000 {
++ 					opp-hz = /bits/ 64 <1014000000>;
++-					required-opps = <&rpmhpd_opp_svs>;
+++					required-opps = <&rpmhpd_opp_svs>,
+++						<&rpmhpd_opp_svs>;
++ 				};
++ 
++ 				opp-1098000000 {
++ 					opp-hz = /bits/ 64 <1098000000>;
++-					required-opps = <&rpmhpd_opp_svs_l1>;
+++					required-opps = <&rpmhpd_opp_svs_l1>,
+++						<&rpmhpd_opp_svs_l1>;
++ 				};
++ 
++ 				opp-1332000000 {
++ 					opp-hz = /bits/ 64 <1332000000>;
++-					required-opps = <&rpmhpd_opp_nom>;
+++					required-opps = <&rpmhpd_opp_nom>,
+++						<&rpmhpd_opp_nom>;
++ 				};
++ 			};
++ 		};
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0224-arm64-dts-qcom-sm8250-give-the-video-OPPs-in-core-cl.patch b/device/testing/linux-postmarketos-qcom-sm8250/0224-arm64-dts-qcom-sm8250-give-the-video-OPPs-in-core-cl.patch
+new file mode 100644
+index 0000000000..2107a0f075
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0224-arm64-dts-qcom-sm8250-give-the-video-OPPs-in-core-cl.patch
+@@ -0,0 +1,60 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Wed, 18 Nov 2026 21:07:10 +0100
++Subject: [PATCH 224/229] arm64: dts: qcom: sm8250: give the video OPPs in core
++ clock rates
++
++The OPP table lists the rates of video_cc_mvs0_clk_src (720 to 1332 MHz),
++but the drivers set the OPP rate on a branch behind a fixed divider:
++Iris on vcodec0_core (video_cc_mvs0_clk, source / 3). Asking for 720 MHz
++there needs a 2160 MHz source, so the RCG rounds and the source always
++runs at 1332 MHz, while the required-opps follow the selected OPP down to
++LOW_SVS. With the display off nothing else holds MMCX up, and decoded
++frames are corrupted.
++
++List the divided core rates the stock firmware allows (240, 338, 366 and
++444 MHz, the source rates / 3) with the same corners, so the clock follows
++the OPP and never runs above the voted corner.
++---
++ arch/arm64/boot/dts/qcom/sm8250.dtsi | 16 ++++++++--------
++ 1 file changed, 8 insertions(+), 8 deletions(-)
++
++diff --git a/arch/arm64/boot/dts/qcom/sm8250.dtsi b/arch/arm64/boot/dts/qcom/sm8250.dtsi
++index 80ab71d800..b8553650bf 100644
++--- a/arch/arm64/boot/dts/qcom/sm8250.dtsi
+++++ b/arch/arm64/boot/dts/qcom/sm8250.dtsi
++@@ -4362,26 +4362,26 @@ venus: video-codec@aa00000 {
++ 			venus_opp_table: opp-table {
++ 				compatible = "operating-points-v2";
++ 
++-				opp-720000000 {
++-					opp-hz = /bits/ 64 <720000000>;
+++				opp-240000000 {
+++					opp-hz = /bits/ 64 <240000000>;
++ 					required-opps = <&rpmhpd_opp_low_svs>,
++ 						<&rpmhpd_opp_low_svs>;
++ 				};
++ 
++-				opp-1014000000 {
++-					opp-hz = /bits/ 64 <1014000000>;
+++				opp-338000000 {
+++					opp-hz = /bits/ 64 <338000000>;
++ 					required-opps = <&rpmhpd_opp_svs>,
++ 						<&rpmhpd_opp_svs>;
++ 				};
++ 
++-				opp-1098000000 {
++-					opp-hz = /bits/ 64 <1098000000>;
+++				opp-366000000 {
+++					opp-hz = /bits/ 64 <366000000>;
++ 					required-opps = <&rpmhpd_opp_svs_l1>,
++ 						<&rpmhpd_opp_svs_l1>;
++ 				};
++ 
++-				opp-1332000000 {
++-					opp-hz = /bits/ 64 <1332000000>;
+++				opp-444000000 {
+++					opp-hz = /bits/ 64 <444000000>;
++ 					required-opps = <&rpmhpd_opp_nom>,
++ 						<&rpmhpd_opp_nom>;
++ 				};
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0225-media-venus-scale-vcodec0_core-on-SM8250.patch b/device/testing/linux-postmarketos-qcom-sm8250/0225-media-venus-scale-vcodec0_core-on-SM8250.patch
+new file mode 100644
+index 0000000000..925fdbacb5
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0225-media-venus-scale-vcodec0_core-on-SM8250.patch
+@@ -0,0 +1,41 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Wed, 18 Nov 2026 21:07:10 +0100
++Subject: [PATCH 225/229] media: venus: scale vcodec0_core on SM8250
++
++The SM8250 frequency table (240 to 444 MHz) gives rates of vcodec0_core,
++video_cc_mvs0_clk, which runs at the source rate / 3. Venus set the OPP
++rate on "core" instead, video_cc_mvs0c_clk at source / 2, so the source
++ended up at a rate unrelated to the OPP and its corner: with the source
++rates in the OPP table it ran at 1332 MHz on a LOW_SVS vote, with core
++rates in the table it never left 720 MHz.
++
++Use vcodec0_core as the OPP clock on SM8250, so the OPP table, the
++driver's frequency table and the dividers agree. "core" follows the
++shared source.
++---
++ drivers/media/platform/qcom/venus/pm_helpers.c | 11 ++++++++++-
++ 1 file changed, 10 insertions(+), 1 deletion(-)
++
++diff --git a/drivers/media/platform/qcom/venus/pm_helpers.c b/drivers/media/platform/qcom/venus/pm_helpers.c
++index be1cbd5cfe..bf8f5adbad 100644
++--- a/drivers/media/platform/qcom/venus/pm_helpers.c
+++++ b/drivers/media/platform/qcom/venus/pm_helpers.c
++@@ -1131,7 +1131,16 @@ static int core_get_v4(struct venus_core *core)
++ 	if (legacy_binding)
++ 		return 0;
++ 
++-	ret = devm_pm_opp_set_clkname(dev, "core");
+++	/*
+++	 * On SM8250 the frequency table and the OPP table give the rates of
+++	 * vcodec0_core (video_cc_mvs0_clk, source / 3). "core" sits behind a
+++	 * different divider (/ 2), so scaling it would leave the source at a
+++	 * rate that does not match the voted corner.
+++	 */
+++	if (of_device_is_compatible(dev->of_node, "qcom,sm8250-venus"))
+++		ret = devm_pm_opp_set_clkname(dev, "vcodec0_core");
+++	else
+++		ret = devm_pm_opp_set_clkname(dev, "core");
++ 	if (ret)
++ 		return ret;
++ 
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0226-media-iris-encode-the-requested-size-not-the-aligned.patch b/device/testing/linux-postmarketos-qcom-sm8250/0226-media-iris-encode-the-requested-size-not-the-aligned.patch
+new file mode 100644
+index 0000000000..91b0ecbcbb
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0226-media-iris-encode-the-requested-size-not-the-aligned.patch
+@@ -0,0 +1,85 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Wed, 18 Nov 2026 21:07:10 +0100
++Subject: [PATCH 226/229] media: iris: encode the requested size, not the
++ aligned buffer size
++
++S_FMT on the encoder OUTPUT queue aligns the raw buffer (width to 128,
++height to 32 lines) and then set the crop rectangle and the CAPTURE size
++to that aligned size, and HFI gen1 sent the aligned buffer size to the
++firmware as the input frame size. A client asking for 1280x720 sets
++CAPTURE to 1280x720, and the firmware squeezed all 736 lines, including
++the 16 padding lines, into 720.
++
++The stateful encoder interface makes the requested size the default
++crop. Keep the alignment for the buffer only, default crop and CAPTURE
++to the requested size, treat CAPTURE as scaled only when it differs from
++the crop, and on HFI gen1 send the crop as the input frame size; the
++aligned layout already goes out as the plane stride and height.
++---
++ .../platform/qcom/iris/iris_hfi_gen1_command.c     | 14 ++++++++++++--
++ drivers/media/platform/qcom/iris/iris_venc.c       | 12 ++++++------
++ 2 files changed, 18 insertions(+), 8 deletions(-)
++
++diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
++index 7674b47ad6..5fa9f7a172 100644
++--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
++@@ -791,8 +791,18 @@ static int iris_hfi_gen1_set_resolution(struct iris_inst *inst, u32 plane)
++ 
++ 	if (!iris_drc_pending(inst) && !(inst->sub_state & IRIS_INST_SUB_FIRST_IPSC)) {
++ 		fs.buffer_type = HFI_BUFFER_INPUT;
++-		fs.width = inst->fmt_src->fmt.pix_mp.width;
++-		fs.height = inst->fmt_src->fmt.pix_mp.height;
+++		if (inst->domain == ENCODER) {
+++			/*
+++			 * The aligned buffer layout goes to the firmware as the
+++			 * plane stride and height; the frame size is the visible
+++			 * (crop) size, or the firmware scales the padding in.
+++			 */
+++			fs.width = inst->crop.width;
+++			fs.height = inst->crop.height;
+++		} else {
+++			fs.width = inst->fmt_src->fmt.pix_mp.width;
+++			fs.height = inst->fmt_src->fmt.pix_mp.height;
+++		}
++ 
++ 		ret = hfi_gen1_set_property(inst, ptype, &fs, sizeof(fs));
++ 		if (ret)
++diff --git a/drivers/media/platform/qcom/iris/iris_venc.c b/drivers/media/platform/qcom/iris/iris_venc.c
++index a945992f63..d3d069af1f 100644
++--- a/drivers/media/platform/qcom/iris/iris_venc.c
+++++ b/drivers/media/platform/qcom/iris/iris_venc.c
++@@ -224,8 +224,8 @@ static int iris_venc_s_fmt_output(struct iris_inst *inst, struct v4l2_format *f)
++ 	 * it is considered a scaling case,
++ 	 * and the scaled size needs to be saved.
++ 	 */
++-	if (f->fmt.pix_mp.width != inst->fmt_src->fmt.pix_mp.width ||
++-	    f->fmt.pix_mp.height != inst->fmt_src->fmt.pix_mp.height) {
+++	if (f->fmt.pix_mp.width != inst->crop.width ||
+++	    f->fmt.pix_mp.height != inst->crop.height) {
++ 		inst->enc_scale_width = f->fmt.pix_mp.width;
++ 		inst->enc_scale_height = f->fmt.pix_mp.height;
++ 		fmt->fmt.pix_mp.width = ALIGN(f->fmt.pix_mp.width, codec_align);
++@@ -276,8 +276,8 @@ static int iris_venc_s_fmt_input(struct iris_inst *inst, struct v4l2_format *f)
++ 	fmt->fmt.pix_mp.quantization = f->fmt.pix_mp.quantization;
++ 
++ 	output_fmt = inst->fmt_dst;
++-	output_fmt->fmt.pix_mp.width = fmt->fmt.pix_mp.width;
++-	output_fmt->fmt.pix_mp.height = fmt->fmt.pix_mp.height;
+++	output_fmt->fmt.pix_mp.width = f->fmt.pix_mp.width;
+++	output_fmt->fmt.pix_mp.height = f->fmt.pix_mp.height;
++ 	output_fmt->fmt.pix_mp.colorspace = fmt->fmt.pix_mp.colorspace;
++ 	output_fmt->fmt.pix_mp.xfer_func = fmt->fmt.pix_mp.xfer_func;
++ 	output_fmt->fmt.pix_mp.ycbcr_enc = fmt->fmt.pix_mp.ycbcr_enc;
++@@ -295,8 +295,8 @@ static int iris_venc_s_fmt_input(struct iris_inst *inst, struct v4l2_format *f)
++ 	    f->fmt.pix_mp.height != inst->crop.height) {
++ 		inst->crop.top = 0;
++ 		inst->crop.left = 0;
++-		inst->crop.width = fmt->fmt.pix_mp.width;
++-		inst->crop.height = fmt->fmt.pix_mp.height;
+++		inst->crop.width = f->fmt.pix_mp.width;
+++		inst->crop.height = f->fmt.pix_mp.height;
++ 
++ 		iris_venc_s_fmt_output(inst, output_fmt);
++ 	}
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 27399c5ec5..dff709d89c 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=104
++pkgrel=105
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -250,6 +250,10 @@ source="
+ 	0220-input-misc-add-Goodix-SPI-fingerprint-sensor-driver.patch
+ 	0221-Documentation-input-document-the-Goodix-SPI-fingerpr.patch
+ 	0222-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
++	0223-arm64-dts-qcom-sm8250-vote-MMCX-for-the-video-codec.patch
++	0224-arm64-dts-qcom-sm8250-give-the-video-OPPs-in-core-cl.patch
++	0225-media-venus-scale-vcodec0_core-on-SM8250.patch
++	0226-media-iris-encode-the-requested-size-not-the-aligned.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -507,4 +511,8 @@ d36dc3b3f71b2668227cc70abcb68408d8c8a3b910a567303db13ff611e051f9eeddd1d8745a5926
+ 6ee1c52306375930f7f886147efc549235c73e1f10eacfeae14ceb4f3986553ee173cf0c274e26a3a3c90241f1315f1a427a21f0a69f7c8e21fa729c12ef1e32  0220-input-misc-add-Goodix-SPI-fingerprint-sensor-driver.patch
+ 8d49a2fc3fe281242a44c86571f3fc4a0e659e217d006a2aae8521b25eded6daa09300451cf46fabd7edd038ad5e38feb7969a522207ae298b77fa71764c1c3c  0221-Documentation-input-document-the-Goodix-SPI-fingerpr.patch
+ b2089dc26f25254725954800255fa7d61557fe5007b946a39dbc8bb2804c73442b459ba2a0fa7c3afe174b89828775f85733d24a56ef220f31838717b72247bf  0222-arm64-dts-qcom-sm8250-oneplus-instantnoodlep-Add-the.patch
++063f44d0bb8b8d21aa7030e2529f0bbcf31c69f48fc9d2f7a50acf121f8135bf738959bcc58cc267e43a551ccb0353177144b08a10b756c1f92ffc82c206edd2  0223-arm64-dts-qcom-sm8250-vote-MMCX-for-the-video-codec.patch
++d5f4470fa69bf0a7bfc700de10c208db9d0cdeedca8945b5b38f956c0e551a90f7f8c983ce9a0d5b1ab5d41d76b79af8125ebf2a7c7c3f0d3199f647cd39380e  0224-arm64-dts-qcom-sm8250-give-the-video-OPPs-in-core-cl.patch
++2202a20a713d8301893f1cb6706e341ca09dd834630b1cb246b577f2f71589e6031d9fa618af06c1fa2f73e9af6b9318e797f07e99e59cfdf0a5348b23b26631  0225-media-venus-scale-vcodec0_core-on-SM8250.patch
++c7071f14e2815a32e96a975f9ec4d693dd851fbe7a4beedc32054f9a984ec477a406c4bbfd94b412453ce4e40ad702fe480006ce05552551ed5d6e316db78862  0226-media-iris-encode-the-requested-size-not-the-aligned.patch
+ "

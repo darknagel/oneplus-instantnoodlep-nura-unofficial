@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 21:07:10 +0100
+Subject: [PATCH 224/229] arm64: dts: qcom: sm8250: give the video OPPs in core
+ clock rates
+
+The OPP table lists the rates of video_cc_mvs0_clk_src (720 to 1332 MHz),
+but the drivers set the OPP rate on a branch behind a fixed divider:
+Iris on vcodec0_core (video_cc_mvs0_clk, source / 3). Asking for 720 MHz
+there needs a 2160 MHz source, so the RCG rounds and the source always
+runs at 1332 MHz, while the required-opps follow the selected OPP down to
+LOW_SVS. With the display off nothing else holds MMCX up, and decoded
+frames are corrupted.
+
+List the divided core rates the stock firmware allows (240, 338, 366 and
+444 MHz, the source rates / 3) with the same corners, so the clock follows
+the OPP and never runs above the voted corner.
+---
+ arch/arm64/boot/dts/qcom/sm8250.dtsi | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250.dtsi b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+index 80ab71d800..b8553650bf 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+@@ -4362,26 +4362,26 @@ venus: video-codec@aa00000 {
+ 			venus_opp_table: opp-table {
+ 				compatible = "operating-points-v2";
+ 
+-				opp-720000000 {
+-					opp-hz = /bits/ 64 <720000000>;
++				opp-240000000 {
++					opp-hz = /bits/ 64 <240000000>;
+ 					required-opps = <&rpmhpd_opp_low_svs>,
+ 						<&rpmhpd_opp_low_svs>;
+ 				};
+ 
+-				opp-1014000000 {
+-					opp-hz = /bits/ 64 <1014000000>;
++				opp-338000000 {
++					opp-hz = /bits/ 64 <338000000>;
+ 					required-opps = <&rpmhpd_opp_svs>,
+ 						<&rpmhpd_opp_svs>;
+ 				};
+ 
+-				opp-1098000000 {
+-					opp-hz = /bits/ 64 <1098000000>;
++				opp-366000000 {
++					opp-hz = /bits/ 64 <366000000>;
+ 					required-opps = <&rpmhpd_opp_svs_l1>,
+ 						<&rpmhpd_opp_svs_l1>;
+ 				};
+ 
+-				opp-1332000000 {
+-					opp-hz = /bits/ 64 <1332000000>;
++				opp-444000000 {
++					opp-hz = /bits/ 64 <444000000>;
+ 					required-opps = <&rpmhpd_opp_nom>,
+ 						<&rpmhpd_opp_nom>;
+ 				};
