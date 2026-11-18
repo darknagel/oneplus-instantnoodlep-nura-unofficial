@@ -1,0 +1,116 @@
+From 97b76edbeb4b3e90a2e6d0c2c7170e4049c1f00c Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 21:51:58 +0100
+Subject: [PATCH 96/97] temp/libfprint: report finger-needed for the sensor
+ light
+
+fprintd publishes the finger status as finger-needed/finger-present. The
+goodixoplus driver now reports FP_FINGER_STATUS_NEEDED while it waits for a
+finger, so that goodix-fp-overlay can light the sensor under a compositor,
+and waits 150 ms for the light before the capture.
+---
+ ...a-driver-for-the-Oplus-Goodix-optica.patch |  4 +-
+ ...rt-finger-needed-wait-longer-for-the.patch | 46 +++++++++++++++++++
+ temp/libfprint/APKBUILD                       |  6 ++-
+ 3 files changed, 52 insertions(+), 4 deletions(-)
+ create mode 100644 temp/libfprint/0002-goodixoplus-report-finger-needed-wait-longer-for-the.patch
+
+diff --git a/temp/libfprint/0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch b/temp/libfprint/0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch
+index 8e3f6fef0b..60df9157c4 100644
+--- a/temp/libfprint/0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch
++++ b/temp/libfprint/0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch
+@@ -1,8 +1,8 @@
+ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+ From: Timo <1788603+darknagel@users.noreply.github.com>
+ Date: Mon, 16 Nov 2026 23:41:47 +0100
+-Subject: [PATCH] goodixoplus: add a driver for the Oplus Goodix optical QSEE
+- sensor
++Subject: [PATCH 1/2] goodixoplus: add a driver for the Oplus Goodix optical
++ QSEE sensor
+ 
+ Optical in-display Goodix sensor of the OnePlus 8 Pro (G5, TA gfp9608),
+ match-on-chip through the Oplus/Goodix trusted application in QSEE.
+diff --git a/temp/libfprint/0002-goodixoplus-report-finger-needed-wait-longer-for-the.patch b/temp/libfprint/0002-goodixoplus-report-finger-needed-wait-longer-for-the.patch
+new file mode 100644
+index 0000000000..592c7fed91
+--- /dev/null
++++ b/temp/libfprint/0002-goodixoplus-report-finger-needed-wait-longer-for-the.patch
+@@ -0,0 +1,46 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Wed, 18 Nov 2026 00:00:31 +0100
++Subject: [PATCH 2/2] goodixoplus: report finger-needed, wait longer for the
++ light
++
++fprintd publishes the finger status as the finger-needed and finger-present
++properties. Report FP_FINGER_STATUS_NEEDED while waiting, so that a session
++helper can draw the ring and the light under a compositor, where the
++framebuffer is not shown, and give it 150 ms before the capture.
++---
++ libfprint/drivers/goodixoplus/goodix-oplus.c | 7 +++++--
++ 1 file changed, 5 insertions(+), 2 deletions(-)
++
++diff --git a/libfprint/drivers/goodixoplus/goodix-oplus.c b/libfprint/drivers/goodixoplus/goodix-oplus.c
++index 979ee03..1c34e4f 100755
++--- a/libfprint/drivers/goodixoplus/goodix-oplus.c
+++++ b/libfprint/drivers/goodixoplus/goodix-oplus.c
++@@ -311,6 +311,9 @@ capture (FpiDeviceGoodixOplus *self, gboolean enrolling, GError **error)
++ static gboolean
++ wait_finger (FpiDeviceGoodixOplus *self, GCancellable *cancellable, GError **error)
++ {
+++  /* fprintd publishes this as "finger-needed"; under a compositor the
+++   * goodix-fp-overlay session helper draws the ring and the light from it */
+++  report_finger (self, FP_FINGER_STATUS_NEEDED);
++   goodix_oplus_io_guide (&self->io, TRUE);
++   for (;;)
++     {
++@@ -423,7 +426,7 @@ do_enroll (FpiDeviceGoodixOplus *self, GCancellable *cancellable, GError **error
++         goto out;
++       report_finger (self, FP_FINGER_STATUS_PRESENT);
++       goodix_oplus_io_light (&self->io, TRUE);
++-      g_usleep (80000);
+++      g_usleep (150000); /* light on: framebuffer, or overlay via D-Bus + compositor */
++       if (!cmd_zero (self, T_SENSOR, 9, 32, NULL, error) || !capture (self, TRUE, error))
++         { goodix_oplus_io_light (&self->io, FALSE); goto out; }
++       put32 (p1, 0x34, 0x1c);
++@@ -492,7 +495,7 @@ do_identify (FpiDeviceGoodixOplus *self, GCancellable *cancellable, GError **err
++     return NULL;
++   report_finger (self, FP_FINGER_STATUS_PRESENT);
++   goodix_oplus_io_light (&self->io, TRUE);
++-  g_usleep (80000);
+++  g_usleep (150000); /* light on: framebuffer, or overlay via D-Bus + compositor */
++   if (!cmd_zero (self, T_SENSOR, 9, 32, NULL, error))
++     goto out;
++   for (i = 0; i < AUTH_TRIES; i++)
+diff --git a/temp/libfprint/APKBUILD b/temp/libfprint/APKBUILD
+index 8d090609fc..0d71947eed 100644
+--- a/temp/libfprint/APKBUILD
++++ b/temp/libfprint/APKBUILD
+@@ -3,7 +3,7 @@
+ # goodixoplus driver for the OnePlus 8 Pro in-display sensor.
+ pkgname=libfprint
+ pkgver=1.94.100_git20261116
+-pkgrel=0
++pkgrel=1
+ _commit=430e24e538ba137b6edcfe2e1b3b8cc29c66fa6a
+ pkgdesc="Library for fingerprint readers (with the Oplus Goodix QSEE driver)"
+ url="https://github.com/wrobelda/libfprint"
+@@ -23,6 +23,7 @@ options="!check"
+ subpackages="$pkgname-dev $pkgname-udev"
+ source="$pkgname-$_commit.tar.gz::https://github.com/wrobelda/libfprint/archive/$_commit.tar.gz
+ 	0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch
++	0002-goodixoplus-report-finger-needed-wait-longer-for-the.patch
+ 	"
+ builddir="$srcdir/libfprint-$_commit"
+ 
+@@ -54,5 +55,6 @@ udev() {
+ }
+ sha512sums="
+ 173ac668d5e8e53e6b38cc083bf4a8256237fdd9ab9a4f8852b96e37be2f831ab04945718bd038b298c362c60f85c6333ed952f14bce6c521ce9b10e4079b1e2  libfprint-430e24e538ba137b6edcfe2e1b3b8cc29c66fa6a.tar.gz
+-a5c33336155291da5daa25ac77fd29f6b24258dc1215bebecb3ab4e5fdd7b1c4ee36b5658262b7b0d9092cd81ddb33b419e14a5651c10903de2a32cf078ddb53  0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch
++86c5c636481f087c488e6addc713add4476f724d36c49180fe7d1e61680e0f1db5290d12518695bb6f27da7b821d6f20c447f9c105fcf736ffc78c88102592cf  0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch
++f25092a2d71345517f25ee3f27eb30350fb7c6f363ecafd66d76ac980b756c9ce95389d70ca083448cc85f407ca97853b5026acd6283774bc08aa1b4dc0278cd  0002-goodixoplus-report-finger-needed-wait-longer-for-the.patch
+ "
+-- 
+2.43.0
+

@@ -1,0 +1,4 @@
+# Empty Fedora-style "postlogin" include for kscreenlocker's kde-fingerprint and
+# kde-smartcard services (Alpine provides no such file).
+auth       optional    pam_permit.so
+session    optional    pam_permit.so

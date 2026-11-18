@@ -1,0 +1,330 @@
+From ef3261fc8ceb63e4e3a4029da60816a20fd7ebf9 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 22:21:13 +0100
+Subject: [PATCH 97/97] goodix-fp-overlay: sensor light and lock screen for
+ Plasma Mobile
+
+The OnePlus 8 Pro's optical fingerprint sensor only sees a finger that the
+display lights up. Under KWin the driver's framebuffer drawing is not shown,
+so this session helper draws the ring and the white disk from fprintd's
+finger-needed/finger-present properties on a layer-shell overlay surface,
+marked with kde_lockscreen_overlay_v1 so it also shows over the lock screen.
+
+It also adds /etc/pam.d/fingerprint-auth and /etc/pam.d/postlogin, which
+kscreenlocker's kde-fingerprint service includes but nothing provides.
+---
+ device/testing/goodix-fp-overlay/APKBUILD     |  59 +++++++
+ .../testing/goodix-fp-overlay/CMakeLists.txt  |  21 +++
+ .../goodix-fp-overlay/fingerprint-auth        |   8 +
+ .../goodix-fp-overlay/goodix-fp-overlay.cpp   | 162 ++++++++++++++++++
+ .../goodix-fp-overlay.desktop                 |   8 +
+ device/testing/goodix-fp-overlay/postlogin    |   4 +
+ 6 files changed, 262 insertions(+)
+ create mode 100644 device/testing/goodix-fp-overlay/APKBUILD
+ create mode 100644 device/testing/goodix-fp-overlay/CMakeLists.txt
+ create mode 100644 device/testing/goodix-fp-overlay/fingerprint-auth
+ create mode 100644 device/testing/goodix-fp-overlay/goodix-fp-overlay.cpp
+ create mode 100644 device/testing/goodix-fp-overlay/goodix-fp-overlay.desktop
+ create mode 100644 device/testing/goodix-fp-overlay/postlogin
+
+diff --git a/device/testing/goodix-fp-overlay/APKBUILD b/device/testing/goodix-fp-overlay/APKBUILD
+new file mode 100644
+index 0000000000..4a52b12d4e
+--- /dev/null
++++ b/device/testing/goodix-fp-overlay/APKBUILD
+@@ -0,0 +1,59 @@
++# Maintainer: Timo <1788603+darknagel@users.noreply.github.com>
++# Graphical side of the OnePlus 8 Pro in-display fingerprint sensor: lights the
++# sensor while fprintd waits for a finger (also over the Plasma lock screen) and
++# adds the PAM stacks kscreenlocker's kde-fingerprint service includes.
++pkgname=goodix-fp-overlay
++pkgver=1.0
++pkgrel=0
++pkgdesc="Sensor light and lock screen setup for the OnePlus 8 Pro fingerprint reader"
++url="https://github.com/darknagel/oneplus-instantnoodlep-nura-unofficial"
++arch="aarch64"
++license="LGPL-2.1-or-later"
++depends="fprintd fprintd-pam"
++makedepends="
++	cmake
++	layer-shell-qt-dev
++	plasma-wayland-protocols
++	qt6-qtbase-dev
++	qt6-qtwayland-dev
++	samurai
++	"
++options="!check" # no tests
++source="CMakeLists.txt
++	goodix-fp-overlay.cpp
++	goodix-fp-overlay.desktop
++	fingerprint-auth
++	postlogin
++	"
++builddir="$srcdir/src"
++
++prepare() {
++	default_prepare
++	# abuild links the local sources; cmake would install the .desktop
++	# files as those links
++	mkdir -p "$builddir"
++	local f
++	for f in $source; do
++		cp -L "$srcdir/$f" "$builddir"/
++	done
++}
++
++build() {
++	cmake -B build -G Ninja \
++		-DCMAKE_BUILD_TYPE=None \
++		-DCMAKE_INSTALL_PREFIX=/usr
++	cmake --build build
++}
++
++package() {
++	DESTDIR="$pkgdir" cmake --install build
++	# kscreenlocker's /etc/pam.d/kde-fingerprint includes these two
++	install -Dm644 fingerprint-auth postlogin -t "$pkgdir"/etc/pam.d/
++}
++sha512sums="
++f91182e439034e5f7d8a687c9f9a3e758f43f884be377a954b31fa068537a09e8851a23540a0b1b23695aafe42528c40a79e18269a1bb8528efa82072006daed  CMakeLists.txt
++3ed855b2a0018815a005ea58b8bbb13a767501d70572668d4205133d9967a9982754180e616432de9cfcd67246425d8b351cbe16f2df559197fcf216565ae7a4  goodix-fp-overlay.cpp
++699ff5f29b400e281f39c797c03e1c5a9049e9c5ce393f3386a006750e086449638907ac7f5edc72de39ab173badaa9a48bf6422ff0766ad9d6f51f394345e1e  goodix-fp-overlay.desktop
++4ce2237f26ceea24eceb8eeb4e697bc21ae575446ce686f93b8aaf49b9c652f7ce184a9520b716896f760e4cd670f2880e1b437a26c270fe796af548b05e4ca1  fingerprint-auth
++3da23b857943f73a8ee99f193692a52b20dca160177261ee5b79229e9d31c73dd0224e8116bf03556e0cb0767df66bd558f9e9a88d7a802382978f3f0213b932  postlogin
++"
+diff --git a/device/testing/goodix-fp-overlay/CMakeLists.txt b/device/testing/goodix-fp-overlay/CMakeLists.txt
+new file mode 100644
+index 0000000000..a49b61756e
+--- /dev/null
++++ b/device/testing/goodix-fp-overlay/CMakeLists.txt
+@@ -0,0 +1,21 @@
++cmake_minimum_required(VERSION 3.16)
++project(goodix-fp-overlay LANGUAGES C CXX)
++set(CMAKE_CXX_STANDARD 17)
++set(CMAKE_AUTOMOC ON)
++find_package(Qt6 REQUIRED COMPONENTS Gui DBus WaylandClient)
++find_package(Qt6 COMPONENTS WaylandClientPrivate)
++find_package(LayerShellQt REQUIRED)
++find_package(PlasmaWaylandProtocols REQUIRED)
++
++add_executable(goodix-fp-overlay goodix-fp-overlay.cpp)
++set(LOCKSCREEN_XML ${PLASMA_WAYLAND_PROTOCOLS_DIR}/kde-lockscreen-overlay-v1.xml)
++# needs C enabled: Qt also generates the wayland-scanner interface code (.c)
++qt6_generate_wayland_protocol_client_sources(goodix-fp-overlay FILES ${LOCKSCREEN_XML})
++target_link_libraries(goodix-fp-overlay Qt6::Gui Qt6::DBus Qt6::WaylandClient
++    Qt6::WaylandClientPrivate LayerShellQt::Interface)
++
++install(TARGETS goodix-fp-overlay DESTINATION bin)
++# KWin reads X-KDE-Wayland-Interfaces from the application entry whose Exec
++# matches the executable; the autostart entry only starts it
++install(FILES goodix-fp-overlay.desktop DESTINATION share/applications)
++install(FILES goodix-fp-overlay.desktop DESTINATION /etc/xdg/autostart)
+diff --git a/device/testing/goodix-fp-overlay/fingerprint-auth b/device/testing/goodix-fp-overlay/fingerprint-auth
+new file mode 100644
+index 0000000000..42a38415e5
+--- /dev/null
++++ b/device/testing/goodix-fp-overlay/fingerprint-auth
+@@ -0,0 +1,8 @@
++# Fingerprint-only stack, included by kscreenlocker's /etc/pam.d/kde-fingerprint
++# (Plasma lock screen). Alpine's kscreenlocker ships that file with the Fedora
++# includes "fingerprint-auth" and "postlogin" but provides neither, which
++# leaves fingerprint unlock permanently failing.
++auth       required    pam_fprintd.so
++account    include     base-account
++password   required    pam_deny.so
++session    optional    pam_permit.so
+diff --git a/device/testing/goodix-fp-overlay/goodix-fp-overlay.cpp b/device/testing/goodix-fp-overlay/goodix-fp-overlay.cpp
+new file mode 100644
+index 0000000000..2a34e2ddcf
+--- /dev/null
++++ b/device/testing/goodix-fp-overlay/goodix-fp-overlay.cpp
+@@ -0,0 +1,162 @@
++// SPDX-License-Identifier: LGPL-2.1-or-later
++// Light the in-display fingerprint sensor of the OnePlus 8 Pro under a Wayland
++// compositor. The optical sensor only sees a finger that the screen lights up.
++// fprintd announces "finger-needed" and "finger-present" on the system bus;
++// while a finger is needed this draws a ring over the sensor, while one is
++// present a white disk under it. The window sits on the layer-shell overlay
++// layer, takes no input (touches go to the apps; the libfprint driver reads
++// the touchscreen itself) and stays mapped but fully transparent while fprintd
++// needs nothing (a re-shown window would be a new surface). The surface is
++// marked with kde_lockscreen_overlay_v1, so KWin also shows it over the lock
++// screen, where fingerprint unlock happens.
++#include <QDBusConnection>
++#include <QGuiApplication>
++#include <QPainter>
++#include <QRasterWindow>
++#include <QScreen>
++#include <QSurfaceFormat>
++#include <LayerShellQt/Window>
++#include <QWaylandClientExtensionTemplate>
++#include <QtWaylandClient/private/qwaylandwindow_p.h>
++
++#include "qwayland-kde-lockscreen-overlay-v1.h"
++
++static bool debugEnabled()
++{
++    static const bool on = qEnvironmentVariableIsSet("GOODIX_FP_OVERLAY_DEBUG");
++    return on;
++}
++
++class LockscreenOverlay : public QWaylandClientExtensionTemplate<LockscreenOverlay>,
++                          public QtWayland::kde_lockscreen_overlay_v1
++{
++public:
++    LockscreenOverlay()
++        : QWaylandClientExtensionTemplate<LockscreenOverlay>(1)
++    {
++        initialize();
++    }
++    ~LockscreenOverlay() override
++    {
++        if (isActive())
++            destroy();
++    }
++};
++
++// OnePlus 8 Pro (1440x3168): sensor centre and radii as fractions of the width
++static constexpr double kCenterX = 720.0 / 1440.0;
++static constexpr double kCenterY = 2547.0 / 3168.0;
++static constexpr double kDiskR = 190.0 / 1440.0;
++static constexpr double kRingR = 202.0 / 1440.0;
++static constexpr double kRingW = 14.0 / 1440.0;
++
++static const char *kDeviceIface = "net.reactivated.Fprint.Device";
++
++class Overlay : public QRasterWindow
++{
++    Q_OBJECT
++public:
++    Overlay()
++    {
++        QSurfaceFormat fmt = format();
++        fmt.setAlphaBufferSize(8);
++        setFormat(fmt);
++        setFlag(Qt::WindowTransparentForInput);
++        setFlag(Qt::FramelessWindowHint);
++        if (auto *ls = LayerShellQt::Window::get(this)) {
++            ls->setLayer(LayerShellQt::Window::LayerOverlay);
++            ls->setAnchors(LayerShellQt::Window::Anchors(LayerShellQt::Window::AnchorTop |
++                LayerShellQt::Window::AnchorBottom | LayerShellQt::Window::AnchorLeft |
++                LayerShellQt::Window::AnchorRight));
++            ls->setExclusiveZone(-1);
++            ls->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityNone);
++            ls->setScope(QStringLiteral("goodix-fp-overlay"));
++        }
++        if (QScreen *s = QGuiApplication::primaryScreen())
++            resize(s->size());
++    }
++
++    // KWin applies allow() only to a surface that already has a window (the
++    // layer surface exists) and is not mapped yet (no buffer); right after
++    // show() is exactly that, the first buffer follows the configure event
++    void allowOverLockscreen()
++    {
++        auto *ww = dynamic_cast<QtWaylandClient::QWaylandWindow *>(handle());
++        const bool active = m_lockscreen.isActive();
++        if (active && ww && ww->wlSurface())
++            m_lockscreen.allow(ww->wlSurface());
++        if (debugEnabled())
++            qInfo("lockscreen overlay: %s", active ? "allowed" : "interface not offered");
++    }
++
++    void watch(const QString &path)
++    {
++        QDBusConnection bus = QDBusConnection::systemBus();
++        // fprintd is D-Bus activated and exits when idle, so match on the
++        // well-known name's object path from any sender
++        const bool ok = bus.connect(QString(), path,
++                    QStringLiteral("org.freedesktop.DBus.Properties"),
++                    QStringLiteral("PropertiesChanged"), this,
++                    SLOT(propertiesChanged(QString, QVariantMap, QStringList)));
++        if (debugEnabled())
++            qInfo("system bus %s, watching %s: %s", bus.isConnected() ? "up" : "DOWN",
++                  qPrintable(path), ok ? "ok" : "FAILED");
++    }
++
++public Q_SLOTS:
++    void propertiesChanged(const QString &iface, const QVariantMap &changed, const QStringList &)
++    {
++        if (iface != QLatin1String(kDeviceIface))
++            return;
++        if (changed.contains(QStringLiteral("finger-needed")))
++            m_needed = changed.value(QStringLiteral("finger-needed")).toBool();
++        if (changed.contains(QStringLiteral("finger-present")))
++            m_present = changed.value(QStringLiteral("finger-present")).toBool();
++        if (debugEnabled())
++            qInfo("finger-needed=%d finger-present=%d", m_needed, m_present);
++        update();
++    }
++
++protected:
++    void paintEvent(QPaintEvent *) override
++    {
++        QPainter p(this);
++        p.setCompositionMode(QPainter::CompositionMode_Source);
++        p.fillRect(QRect(0, 0, width(), height()), Qt::transparent);
++        p.setCompositionMode(QPainter::CompositionMode_SourceOver);
++        p.setRenderHint(QPainter::Antialiasing);
++        const double w = width();
++        const QPointF c(kCenterX * w, kCenterY * height());
++        if (m_present) {
++            p.setPen(Qt::NoPen);
++            p.setBrush(Qt::white);
++            p.drawEllipse(c, kDiskR * w, kDiskR * w);
++        } else if (m_needed) {
++            QPen pen(QColor(0x00, 0xa0, 0xff));
++            pen.setWidthF(kRingW * w);
++            p.setPen(pen);
++            p.setBrush(Qt::NoBrush);
++            p.drawEllipse(c, kRingR * w, kRingR * w);
++        }
++    }
++
++private:
++    LockscreenOverlay m_lockscreen;
++    bool m_needed = false;
++    bool m_present = false;
++};
++
++int main(int argc, char **argv)
++{
++    QGuiApplication app(argc, argv);
++    app.setApplicationName(QStringLiteral("goodix-fp-overlay"));
++    app.setDesktopFileName(QStringLiteral("goodix-fp-overlay"));
++    Overlay overlay;
++    // fprintd numbers its devices from 0; this phone has one reader
++    overlay.watch(QStringLiteral("/net/reactivated/Fprint/Device/0"));
++    overlay.show();
++    overlay.allowOverLockscreen();
++    return app.exec();
++}
++
++#include "goodix-fp-overlay.moc"
+diff --git a/device/testing/goodix-fp-overlay/goodix-fp-overlay.desktop b/device/testing/goodix-fp-overlay/goodix-fp-overlay.desktop
+new file mode 100644
+index 0000000000..e8b964941a
+--- /dev/null
++++ b/device/testing/goodix-fp-overlay/goodix-fp-overlay.desktop
+@@ -0,0 +1,8 @@
++[Desktop Entry]
++Type=Application
++Name=Fingerprint sensor light
++Comment=Lights the in-display fingerprint sensor while fprintd waits for a finger
++Exec=/usr/bin/goodix-fp-overlay
++NoDisplay=true
++X-KDE-autostart-phase=1
++X-KDE-Wayland-Interfaces=kde_lockscreen_overlay_v1
+diff --git a/device/testing/goodix-fp-overlay/postlogin b/device/testing/goodix-fp-overlay/postlogin
+new file mode 100644
+index 0000000000..4fd6264337
+--- /dev/null
++++ b/device/testing/goodix-fp-overlay/postlogin
+@@ -0,0 +1,4 @@
++# Empty Fedora-style "postlogin" include for kscreenlocker's kde-fingerprint and
++# kde-smartcard services (Alpine provides no such file).
++auth       optional    pam_permit.so
++session    optional    pam_permit.so
+-- 
+2.43.0
+

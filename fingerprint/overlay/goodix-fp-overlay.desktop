@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Fingerprint sensor light
+Comment=Lights the in-display fingerprint sensor while fprintd waits for a finger
+Exec=/usr/bin/goodix-fp-overlay
+NoDisplay=true
+X-KDE-autostart-phase=1
+X-KDE-Wayland-Interfaces=kde_lockscreen_overlay_v1

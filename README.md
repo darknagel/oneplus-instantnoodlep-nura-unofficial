@@ -29,7 +29,7 @@ Not working or limited:
 
 | Area | State |
 |---|---|
-| Fingerprint reader | works with `fprintd`; the ring and light over the sensor show on the text console only, login/unlock (PAM) not set up |
+| Fingerprint reader | works with `fprintd`; in Plasma Mobile also screen unlock and setup in the settings (`goodix-fp-overlay`); not in Phosh, no login with a finger |
 | Fast charging (Warp) and wireless charging | not done; charging is 5 V, up to 2 A into the battery |
 | Camera autofocus | phase detection on the main camera only, the other cameras use contrast |
 | Calls | no echo cancellation, see [`modem/`](modem/) |
@@ -165,6 +165,17 @@ Place the finger on the blue ring at the bottom of the screen; the screen lights
 while it captures. Move the finger a little between touches while enrolling. The sensor's
 firmware comes from `oneplus-ota-fetch` at first boot (`journalctl -u oneplus-ota-fetch`).
 How it works and its limits: [`fingerprint/image/README.md`](fingerprint/image/README.md).
+
+In Plasma Mobile, install `goodix-fp-overlay` from the release as root (with the
+`libfprint` of the same release), then log out and in again:
+
+```sh
+apk add --allow-untrusted goodix-fp-overlay-*.apk
+```
+
+It draws the ring and the light over the desktop and the lock screen, and sets up the lock
+screen's fingerprint service. Add fingers in Settings → Users → Configure Fingerprint
+Authentication (asks for your password). On the lock screen, touch the ring, then swipe up.
 
 ### Sensors
 

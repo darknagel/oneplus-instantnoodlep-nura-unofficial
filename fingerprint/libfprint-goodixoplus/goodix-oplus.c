@@ -311,6 +311,9 @@ capture (FpiDeviceGoodixOplus *self, gboolean enrolling, GError **error)
 static gboolean
 wait_finger (FpiDeviceGoodixOplus *self, GCancellable *cancellable, GError **error)
 {
+  /* fprintd publishes this as "finger-needed"; under a compositor the
+   * goodix-fp-overlay session helper draws the ring and the light from it */
+  report_finger (self, FP_FINGER_STATUS_NEEDED);
   goodix_oplus_io_guide (&self->io, TRUE);
   for (;;)
     {
@@ -423,7 +426,7 @@ do_enroll (FpiDeviceGoodixOplus *self, GCancellable *cancellable, GError **error
         goto out;
       report_finger (self, FP_FINGER_STATUS_PRESENT);
       goodix_oplus_io_light (&self->io, TRUE);
-      g_usleep (80000);
+      g_usleep (150000); /* light on: framebuffer, or overlay via D-Bus + compositor */
       if (!cmd_zero (self, T_SENSOR, 9, 32, NULL, error) || !capture (self, TRUE, error))
         { goodix_oplus_io_light (&self->io, FALSE); goto out; }
       put32 (p1, 0x34, 0x1c);
@@ -492,7 +495,7 @@ do_identify (FpiDeviceGoodixOplus *self, GCancellable *cancellable, GError **err
     return NULL;
   report_finger (self, FP_FINGER_STATUS_PRESENT);
   goodix_oplus_io_light (&self->io, TRUE);
-  g_usleep (80000);
+  g_usleep (150000); /* light on: framebuffer, or overlay via D-Bus + compositor */
   if (!cmd_zero (self, T_SENSOR, 9, 32, NULL, error))
     goto out;
   for (i = 0; i < AUTH_TRIES; i++)

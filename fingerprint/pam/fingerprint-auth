@@ -1,0 +1,8 @@
+# Fingerprint-only stack, included by kscreenlocker's /etc/pam.d/kde-fingerprint
+# (Plasma lock screen). Alpine's kscreenlocker ships that file with the Fedora
+# includes "fingerprint-auth" and "postlogin" but provides neither, which
+# leaves fingerprint unlock permanently failing.
+auth       required    pam_fprintd.so
+account    include     base-account
+password   required    pam_deny.so
+session    optional    pam_permit.so
