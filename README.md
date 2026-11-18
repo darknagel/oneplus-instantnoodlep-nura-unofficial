@@ -177,7 +177,8 @@ While a finger is needed it shows a round Breeze-style plate with a ring in your
 colour and the fingerprint icon over the sensor, on the desktop and on the lock screen, in
 every screen rotation. Under the finger it lights the sensor white at full brightness. It
 also sets up the lock screen's fingerprint service. On the lock screen, put the finger on
-the ring: the phone unlocks right away.
+the ring: the phone unlocks right away, also after it slept. After five wrong fingers the
+lock screen wants the PIN until it locks again.
 
 Add fingers in Settings → Users → Configure Fingerprint Authentication. After you pick a
 finger, a password dialog opens after a few seconds; tap the field to get the keyboard. If

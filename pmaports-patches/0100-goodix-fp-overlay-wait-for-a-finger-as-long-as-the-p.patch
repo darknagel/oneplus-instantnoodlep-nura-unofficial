@@ -1,0 +1,56 @@
+From 77af525b5154983209d0753c9ebb1ef8d489c3c5 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 23:48:34 +0100
+Subject: [PATCH] goodix-fp-overlay: wait for a finger as long as the phone is
+ locked
+
+pam_fprintd gives up after 30 s by default and kscreenlocker does not start
+it again, so a phone locked for longer took no finger. timeout=86400 and
+max-tries=5 (as on Android; then the PIN until the next lock). Tested on
+the phone: unlock after 87 s, after 4.5 min with a real s2idle suspend in
+between, and the PIN after failed tries. pkgrel 7.
+---
+ device/testing/goodix-fp-overlay/APKBUILD         | 4 ++--
+ device/testing/goodix-fp-overlay/fingerprint-auth | 5 ++++-
+ 2 files changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/device/testing/goodix-fp-overlay/APKBUILD b/device/testing/goodix-fp-overlay/APKBUILD
+index a855c828f1..db0dd73440 100644
+--- a/device/testing/goodix-fp-overlay/APKBUILD
++++ b/device/testing/goodix-fp-overlay/APKBUILD
+@@ -4,7 +4,7 @@
+ # adds the PAM stacks kscreenlocker's kde-fingerprint service includes.
+ pkgname=goodix-fp-overlay
+ pkgver=1.0
+-pkgrel=6
++pkgrel=7
+ pkgdesc="Sensor light, Breeze-style guide and lock screen setup for the OnePlus 8 Pro fingerprint reader"
+ url="https://github.com/darknagel/oneplus-instantnoodlep-nura-unofficial"
+ arch="aarch64"
+@@ -59,6 +59,6 @@ sha512sums="
+ 80bf458d271d9d65f43182676070f1d98d13527b8309ea7ad4b23871fbaa170dece60c6a9f479544e64b7aac46b22d2e3b79ee5b2dccb6a1738807ddf6b6e7e2  goodix-fp-overlay.cpp
+ 699ff5f29b400e281f39c797c03e1c5a9049e9c5ce393f3386a006750e086449638907ac7f5edc72de39ab173badaa9a48bf6422ff0766ad9d6f51f394345e1e  goodix-fp-overlay.desktop
+ c134103522407620b06a0746a1b7f9f66fafca4eebbebd42e51f33e6097124e2fcbcaacd01edb9a7cd8654c508195d32de8c62af7a95b907f5d237c0d7f642d3  restart.conf
+-4ce2237f26ceea24eceb8eeb4e697bc21ae575446ce686f93b8aaf49b9c652f7ce184a9520b716896f760e4cd670f2880e1b437a26c270fe796af548b05e4ca1  fingerprint-auth
++cc2cd28c8a062b59235e23e9926a059534ce905b64fc6b1c95111792557a3f6f79ca3f5eb3deb17e233385d7d0c9c0038e7439a543f71d678781ea4f3f08077e  fingerprint-auth
+ 3da23b857943f73a8ee99f193692a52b20dca160177261ee5b79229e9d31c73dd0224e8116bf03556e0cb0767df66bd558f9e9a88d7a802382978f3f0213b932  postlogin
+ "
+diff --git a/device/testing/goodix-fp-overlay/fingerprint-auth b/device/testing/goodix-fp-overlay/fingerprint-auth
+index 42a38415e5..48f4663551 100644
+--- a/device/testing/goodix-fp-overlay/fingerprint-auth
++++ b/device/testing/goodix-fp-overlay/fingerprint-auth
+@@ -2,7 +2,10 @@
+ # (Plasma lock screen). Alpine's kscreenlocker ships that file with the Fedora
+ # includes "fingerprint-auth" and "postlogin" but provides neither, which
+ # leaves fingerprint unlock permanently failing.
+-auth       required    pam_fprintd.so
++# A locked phone waits for a finger for hours (pam_fprintd stops after 30 s by
++# default, and the lock screen does not restart it); five tries as on Android,
++# then the PIN until the next lock.
++auth       required    pam_fprintd.so timeout=86400 max-tries=5
+ account    include     base-account
+ password   required    pam_deny.so
+ session    optional    pam_permit.so
+-- 
+2.43.0
+

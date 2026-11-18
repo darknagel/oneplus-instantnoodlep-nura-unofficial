@@ -2,7 +2,10 @@
 # (Plasma lock screen). Alpine's kscreenlocker ships that file with the Fedora
 # includes "fingerprint-auth" and "postlogin" but provides neither, which
 # leaves fingerprint unlock permanently failing.
-auth       required    pam_fprintd.so
+# A locked phone waits for a finger for hours (pam_fprintd stops after 30 s by
+# default, and the lock screen does not restart it); five tries as on Android,
+# then the PIN until the next lock.
+auth       required    pam_fprintd.so timeout=86400 max-tries=5
 account    include     base-account
 password   required    pam_deny.so
 session    optional    pam_permit.so
