@@ -1,0 +1,130 @@
+From 9293f06311e4578fe82991c8088f08d50c4fa9ce Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 23:25:29 +0100
+Subject: [PATCH 98/99] temp/libfprint: keep a running verify over system sleep
+
+goodixoplus had no suspend/resume callbacks, so libfprint cancelled the lock
+screen's verify at every suspend (verify-unknown-error). The worker now
+pauses over sleep. pkgrel 2.
+---
+ ...p-a-running-verify-over-system-sleep.patch | 80 +++++++++++++++++++
+ temp/libfprint/APKBUILD                       |  4 +-
+ 2 files changed, 83 insertions(+), 1 deletion(-)
+ create mode 100644 temp/libfprint/0003-goodixoplus-keep-a-running-verify-over-system-sleep.patch
+
+diff --git a/temp/libfprint/0003-goodixoplus-keep-a-running-verify-over-system-sleep.patch b/temp/libfprint/0003-goodixoplus-keep-a-running-verify-over-system-sleep.patch
+new file mode 100644
+index 0000000000..0d7485f17b
+--- /dev/null
++++ b/temp/libfprint/0003-goodixoplus-keep-a-running-verify-over-system-sleep.patch
+@@ -0,0 +1,80 @@
++From 2837db662512e5e7ddceff73c0db85dc2cacff23 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Wed, 18 Nov 2026 22:55:59 +0100
++Subject: [PATCH] goodixoplus: keep a running verify over system sleep
++
++Without suspend/resume callbacks libfprint cancels the running action when
++fprintd prepares for sleep, so the lock screen's fingerprint prompt ended
++with verify-unknown-error at every suspend. The TA and the sensor keep their
++state over s2idle: pause the waiting worker instead and drop the touch that
++woke the phone.
++---
++ libfprint/drivers/goodixoplus/goodix-oplus.c | 29 ++++++++++++++++++++
++ 1 file changed, 29 insertions(+)
++ mode change 100755 => 100644 libfprint/drivers/goodixoplus/goodix-oplus.c
++
++diff --git a/libfprint/drivers/goodixoplus/goodix-oplus.c b/libfprint/drivers/goodixoplus/goodix-oplus.c
++old mode 100755
++new mode 100644
++index 1c34e4f..b631c85
++--- a/libfprint/drivers/goodixoplus/goodix-oplus.c
+++++ b/libfprint/drivers/goodixoplus/goodix-oplus.c
++@@ -49,6 +49,8 @@ struct _FpiDeviceGoodixOplus
++   struct goodix_oplus_tee ta;
++   struct goodix_oplus_tee km;
++   gchar *ta_name;
+++  /* set between suspend and resume; the worker pauses instead of failing */
+++  gint suspended;
++ };
++ 
++ G_DECLARE_FINAL_TYPE (FpiDeviceGoodixOplus, fpi_device_goodixoplus,
++@@ -323,6 +325,13 @@ wait_finger (FpiDeviceGoodixOplus *self, GCancellable *cancellable, GError **err
++           goodix_oplus_io_guide (&self->io, FALSE);
++           return FALSE;
++         }
+++      if (g_atomic_int_get (&self->suspended))
+++        {
+++          /* the system sleeps: no capture, and drop the touch that woke it */
+++          g_usleep (200000);
+++          goodix_oplus_io_wait_up (&self->io, 0);
+++          continue;
+++        }
++       r = goodix_oplus_io_wait_down (&self->io, 200);
++       if (r < 0)
++         {
++@@ -802,6 +811,24 @@ dev_cancel (FpDevice *d)
++   /* the worker polls the action's cancellable */
++ }
++ 
+++/* Without these, libfprint cancels a running verify when the system goes to
+++ * sleep (fprintd's logind sleep handling), so the lock screen's fingerprint
+++ * prompt is gone after a resume. The TA and the sensor keep their state over
+++ * s2idle; the waiting worker only pauses. */
+++static void
+++dev_suspend (FpDevice *d)
+++{
+++  g_atomic_int_set (&FPI_DEVICE_GOODIXOPLUS (d)->suspended, 1);
+++  fpi_device_suspend_complete (d, NULL);
+++}
+++
+++static void
+++dev_resume (FpDevice *d)
+++{
+++  g_atomic_int_set (&FPI_DEVICE_GOODIXOPLUS (d)->suspended, 0);
+++  fpi_device_resume_complete (d, NULL);
+++}
+++
++ static void
++ dev_probe (FpDevice *d)
++ {
++@@ -853,5 +880,7 @@ fpi_device_goodixoplus_class_init (FpiDeviceGoodixOplusClass *klass)
++   dc->enroll = dev_enroll;
++   dc->identify = dev_identify;
++   dc->cancel = dev_cancel;
+++  dc->suspend = dev_suspend;
+++  dc->resume = dev_resume;
++   fpi_device_class_auto_initialize_features (dc);
++ }
++-- 
++2.43.0
++
+diff --git a/temp/libfprint/APKBUILD b/temp/libfprint/APKBUILD
+index 0d71947eed..30860d8612 100644
+--- a/temp/libfprint/APKBUILD
++++ b/temp/libfprint/APKBUILD
+@@ -3,7 +3,7 @@
+ # goodixoplus driver for the OnePlus 8 Pro in-display sensor.
+ pkgname=libfprint
+ pkgver=1.94.100_git20261116
+-pkgrel=1
++pkgrel=2
+ _commit=430e24e538ba137b6edcfe2e1b3b8cc29c66fa6a
+ pkgdesc="Library for fingerprint readers (with the Oplus Goodix QSEE driver)"
+ url="https://github.com/wrobelda/libfprint"
+@@ -24,6 +24,7 @@ subpackages="$pkgname-dev $pkgname-udev"
+ source="$pkgname-$_commit.tar.gz::https://github.com/wrobelda/libfprint/archive/$_commit.tar.gz
+ 	0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch
+ 	0002-goodixoplus-report-finger-needed-wait-longer-for-the.patch
++	0003-goodixoplus-keep-a-running-verify-over-system-sleep.patch
+ 	"
+ builddir="$srcdir/libfprint-$_commit"
+ 
+@@ -57,4 +58,5 @@ sha512sums="
+ 173ac668d5e8e53e6b38cc083bf4a8256237fdd9ab9a4f8852b96e37be2f831ab04945718bd038b298c362c60f85c6333ed952f14bce6c521ce9b10e4079b1e2  libfprint-430e24e538ba137b6edcfe2e1b3b8cc29c66fa6a.tar.gz
+ 86c5c636481f087c488e6addc713add4476f724d36c49180fe7d1e61680e0f1db5290d12518695bb6f27da7b821d6f20c447f9c105fcf736ffc78c88102592cf  0001-goodixoplus-add-a-driver-for-the-Oplus-Goodix-optica.patch
+ f25092a2d71345517f25ee3f27eb30350fb7c6f363ecafd66d76ac980b756c9ce95389d70ca083448cc85f407ca97853b5026acd6283774bc08aa1b4dc0278cd  0002-goodixoplus-report-finger-needed-wait-longer-for-the.patch
++28936f3f890b8f5e1e58860e6f5834bd3f715724af8ff6b1101161d5bf9a022741453ad0499bd54a1f5bc65fa91e55cd379ae2794be75dc9f01ecc5d8d389725  0003-goodixoplus-keep-a-running-verify-over-system-sleep.patch
+ "
+-- 
+2.43.0
+

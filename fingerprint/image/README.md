@@ -76,13 +76,18 @@ up under the finger while it captures.
 Package `goodix-fp-overlay` (source in [`../overlay`](../overlay) and
 [`../pam`](../pam)) adds:
 
-- `goodix-fp-overlay`, started with the session: a transparent, input-transparent
-  window on the layer-shell overlay layer. It follows fprintd's `finger-needed`
-  and `finger-present` properties and draws the blue ring, then the white disk
-  under the finger. It stays mapped and marks its surface with KWin's
-  `kde_lockscreen_overlay_v1`, so it also shows over the lock screen. KWin only
-  accepts that mark for a surface that has a window but no buffer yet, i.e.
-  right after `show()`.
+- `goodix-fp-overlay`, started with the session: a small, input-transparent
+  window on the layer-shell overlay layer, placed over the sensor by its
+  margins for every output rotation. It follows fprintd's `finger-needed` and
+  `finger-present` properties (and reads them at start): a Breeze-style plate
+  with an accent-coloured ring and the theme's fingerprint icon while a finger
+  is needed, a plain white disk at full backlight (logind `SetBrightness`)
+  while one is on the sensor. Static, so it costs no CPU while waiting.
+- It stays mapped and marks its surface with KWin's `kde_lockscreen_overlay_v1`,
+  so it also shows over the lock screen. KWin only accepts that mark for a
+  surface that has a window but no buffer yet, i.e. right after `show()`. For
+  the same reason it does not use Qt's Wayland reconnect: after a KWin crash it
+  exits and systemd starts it again (`restart.conf`).
 - `/etc/pam.d/fingerprint-auth` and `/etc/pam.d/postlogin`. Alpine's
   `kscreenlocker` installs `/etc/pam.d/kde-fingerprint`, which includes these
   two Fedora files, but nothing provides them, so fingerprint unlock always
@@ -90,3 +95,7 @@ Package `goodix-fp-overlay` (source in [`../overlay`](../overlay) and
 
 Adding fingers in Settings → Users needs the user's password (fprintd's polkit
 rule `auth_self_keep`), the same as on Android.
+
+The `goodixoplus` driver implements libfprint's suspend/resume: without them,
+libfprint cancels a running verify when fprintd prepares for sleep, and the lock
+screen would no longer take a finger after the phone slept.

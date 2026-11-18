@@ -173,9 +173,11 @@ In Plasma Mobile, install `goodix-fp-overlay` from the release as root (with the
 apk add --allow-untrusted goodix-fp-overlay-*.apk
 ```
 
-It draws the ring and the light over the desktop and the lock screen, and sets up the lock
-screen's fingerprint service. On the lock screen, put the finger on the ring: the phone
-unlocks right away.
+While a finger is needed it shows a round Breeze-style plate with a ring in your accent
+colour and the fingerprint icon over the sensor, on the desktop and on the lock screen, in
+every screen rotation. Under the finger it lights the sensor white at full brightness. It
+also sets up the lock screen's fingerprint service. On the lock screen, put the finger on
+the ring: the phone unlocks right away.
 
 Add fingers in Settings → Users → Configure Fingerprint Authentication. After you pick a
 finger, a password dialog opens after a few seconds; tap the field to get the keyboard. If

@@ -19,3 +19,6 @@ install(TARGETS goodix-fp-overlay DESTINATION bin)
 # matches the executable; the autostart entry only starts it
 install(FILES goodix-fp-overlay.desktop DESTINATION share/applications)
 install(FILES goodix-fp-overlay.desktop DESTINATION /etc/xdg/autostart)
+# restart.conf (restart after a KWin crash) belongs in
+# lib/systemd/user/app-goodix\x2dfp\x2doverlay@autostart.service.d/; cmake turns
+# those backslashes into path separators, so the package installs it itself

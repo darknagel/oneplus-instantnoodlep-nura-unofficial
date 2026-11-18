@@ -49,6 +49,8 @@ struct _FpiDeviceGoodixOplus
   struct goodix_oplus_tee ta;
   struct goodix_oplus_tee km;
   gchar *ta_name;
+  /* set between suspend and resume; the worker pauses instead of failing */
+  gint suspended;
 };
 
 G_DECLARE_FINAL_TYPE (FpiDeviceGoodixOplus, fpi_device_goodixoplus,
@@ -322,6 +324,13 @@ wait_finger (FpiDeviceGoodixOplus *self, GCancellable *cancellable, GError **err
         {
           goodix_oplus_io_guide (&self->io, FALSE);
           return FALSE;
+        }
+      if (g_atomic_int_get (&self->suspended))
+        {
+          /* the system sleeps: no capture, and drop the touch that woke it */
+          g_usleep (200000);
+          goodix_oplus_io_wait_up (&self->io, 0);
+          continue;
         }
       r = goodix_oplus_io_wait_down (&self->io, 200);
       if (r < 0)
@@ -802,6 +811,24 @@ dev_cancel (FpDevice *d)
   /* the worker polls the action's cancellable */
 }
 
+/* Without these, libfprint cancels a running verify when the system goes to
+ * sleep (fprintd's logind sleep handling), so the lock screen's fingerprint
+ * prompt is gone after a resume. The TA and the sensor keep their state over
+ * s2idle; the waiting worker only pauses. */
+static void
+dev_suspend (FpDevice *d)
+{
+  g_atomic_int_set (&FPI_DEVICE_GOODIXOPLUS (d)->suspended, 1);
+  fpi_device_suspend_complete (d, NULL);
+}
+
+static void
+dev_resume (FpDevice *d)
+{
+  g_atomic_int_set (&FPI_DEVICE_GOODIXOPLUS (d)->suspended, 0);
+  fpi_device_resume_complete (d, NULL);
+}
+
 static void
 dev_probe (FpDevice *d)
 {
@@ -853,5 +880,7 @@ fpi_device_goodixoplus_class_init (FpiDeviceGoodixOplusClass *klass)
   dc->enroll = dev_enroll;
   dc->identify = dev_identify;
   dc->cancel = dev_cancel;
+  dc->suspend = dev_suspend;
+  dc->resume = dev_resume;
   fpi_device_class_auto_initialize_features (dc);
 }
