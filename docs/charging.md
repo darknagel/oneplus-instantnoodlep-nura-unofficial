@@ -4,7 +4,9 @@ The charger takes its input limit from the USB-C port: the PD contract or the
 Type-C current where there is one, otherwise USB-A detection (500 mA from a
 computer port, 1.5 A from a charger). The input stays at 5 V; from a PD source
 the phone requests up to 3 A. If the USB-C stack loses track of a source that
-still supplies power, the input stays at 500 mA instead of being cut off.
+still supplies power, the input stays at 500 mA instead of being cut off. If
+USB-C does not attach at all while a charger supplies power, for example with a
+USB-A cable that pulls up both CC pins, USB-A detection runs after two seconds.
 
 The battery is charged the way the stock firmware does it, with the limits of
 the stock device tree. The bq27411 fuel gauge at the cell decides, the PM8150B

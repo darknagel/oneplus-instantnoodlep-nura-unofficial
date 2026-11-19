@@ -60,6 +60,7 @@
 | Proximity calibration from the Android `persist` partition, at first boot | works | `firmware/dsp-firmware.sh`, `sensors/setup-sensors.sh` |
 | Charging: the PM8150B float voltage register counts from 3.6 V in 10 mV steps, as in the vendor driver; the old encoding selected 4.76 V for the 4.35 V battery. Found by naorunaoru | works | kernel 0068, pmaports 0036 |
 | Charging: at least 500 mA of USB input while VBUS is present and the phone is not the source; before, the input was cut off when TCPM reported the source offline and the phone ran from the battery with the charger attached | works | kernel 0165, pmaports 0075 |
+| Charging: USB-A detection also when USB-C does not attach. A USB-A to USB-C cable that pulls up both CC pins looks like a debug accessory to the PMIC, TCPM never attaches, and the input stayed at 500 mA; after two seconds of VBUS without an attach the charger now runs BC1.2 detection, so a USB-A charger gets 1.5 A. Reported by gavin8112-web in issue #17 | fixed, the normal USB-C path tested on the phone; the cable case not yet | kernel 0230, pmaports 0101 |
 | Charging: charge by the bq27411 fuel gauge with the temperature zones and limits of the stock firmware; the battery stopped at about 88 % because the PM8150B ends each charge cycle early without its own fuel gauge. See [charging.md](charging.md) | works | kernel 0166–0167, pmaports 0075 |
 | Haptics: AW8697 on I2C11 with the stock LRA0619 tuning (170 Hz, drive level 54) | works | kernel 0074, pmaports 0038 |
 | Flash LEDs: both PM8150L channels, first with conservative limits, raised to the stock ones by 0079 | works | kernel 0075, pmaports 0038 |
@@ -189,7 +190,7 @@ Attribution for this experiment:
 
 ## Patch numbers in use
 
-The next free numbers are kernel 0230 and package 0096. Kernel 0164 is kept for the
+The next free numbers are kernel 0231 and package 0102. Kernel 0164 is kept for the
 DisplayPort DSC draft. Most package patches change the release and the checksums of the
 kernel package, so a new one has to be made on top of the last one; package numbers
 0070–0074 cannot be filled in later.
@@ -237,7 +238,8 @@ kernel package, so a new one has to be made on top of the last one; package numb
   together with VoLTE). 0088 adds kernel 0171–0173 (modem over system sleep), 0089 and
   0090 change 81voltd and ModemManager for it. 0094 adds kernel 0223–0226 (video
   codec clocks and voltage, Iris encoder size), 0095 adds 0227–0229 (Iris VP9
-  experiment, Iris stays off).
+  experiment, Iris stays off). 0101 adds kernel 0230 (charger detection without a
+  USB-C attach).
   Package numbers 0050, 0051, 0053, 0062–0065 and 0070–0074 and kernel numbers 0105–0113,
   0151 and 0164 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.

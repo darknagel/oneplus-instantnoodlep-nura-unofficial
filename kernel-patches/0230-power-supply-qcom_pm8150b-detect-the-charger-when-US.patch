@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Thu, 19 Nov 2026 16:28:01 +0100
+Subject: [PATCH] power: supply: qcom_pm8150b: detect the charger when USB-C
+ does not attach
+
+Some USB-A to USB-C cables pull up both CC pins. The PMIC then sees a
+debug accessory (TYPE_C_SNK_STATUS 0x40, legacy cable status set) and
+never reports an attach, so TCPM keeps toggling with both CC lines open
+and its power supply stays offline while the charger supplies VBUS. The
+driver took offline as "no source" and skipped BC1.2 detection; only the
+pSnkStdby fallback kept the input at 500 mA, also from a DCP that can
+deliver 1.5 A or more.
+
+When TCPM is offline but external VBUS has been present for two seconds,
+which is longer than an attach debounce, detect the charger on the data
+lines as for a legacy cable with default Rp.
+---
+ drivers/power/supply/qcom_pm8150b_charger.c | 27 +++++++++++++++++++--
+ 1 file changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
+index 904f9db2db..ff745d0c04 100644
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -275,6 +275,8 @@
+ #define CURRENT_MAX_UA			3000000
+ #define FAST_CHARGE_CURRENT_MAX_UA		8000000
+ #define APSD_MAX_RETRIES			3
++/* Seconds of external VBUS without a USB-C attach before BC1.2 detection. */
++#define TCPM_OFFLINE_POLLS		2
+ 
+ /* PM8150B current registers use 50 mA steps. */
+ #define CURRENT_SCALE_FACTOR		50000
+@@ -393,6 +395,7 @@ struct smb5_chip {
+ 	bool has_tcpm;
+ 	bool apsd_started;
+ 	unsigned int apsd_retries;
++	unsigned int offline_polls;
+ 	unsigned int user_current_limit;
+ 	unsigned int source_current_limit;
+ 	enum power_supply_usb_type usb_type;
+@@ -713,9 +716,27 @@ static void smb5_status_change_work(struct work_struct *work)
+ 		if (ret)
+ 			goto fail;
+ 		if (!online) {
+-			chip->apsd_retries = 0;
+-			goto apply;
++			if (!smb5_sink_vbus_present(chip)) {
++				chip->apsd_retries = 0;
++				chip->offline_polls = 0;
++				goto apply;
++			}
++			/* Give TCPM time to finish an attach debounce first. */
++			if (chip->offline_polls < TCPM_OFFLINE_POLLS) {
++				chip->offline_polls++;
++				retry = true;
++				goto apply;
++			}
++			/*
++			 * External VBUS but no USB-C partner: the Type-C block
++			 * did not attach, for example because a USB-A cable
++			 * pulls up both CC pins (debug accessory to the PMIC).
++			 * Detect the charger on the data lines like a legacy
++			 * cable instead of staying at pSnkStdby.
++			 */
++			goto legacy;
+ 		}
++		chip->offline_polls = 0;
+ 		ret = smb5_supplier_property(chip, POWER_SUPPLY_PROP_CURRENT_NOW,
+ 					     &current_ua);
+ 		if (ret)
+@@ -754,6 +775,7 @@ static void smb5_status_change_work(struct work_struct *work)
+ 		}
+ 	}
+ 
++legacy:
+ 	/* Default Rp or a legacy cable: start with a conservative BC1.2 limit. */
+ 	apsd = true;
+ 	current_ua = SDP_CURRENT_UA;
+@@ -820,6 +842,7 @@ static void smb5_status_change_work(struct work_struct *work)
+ fail:
+ 	chip->apsd_started = false;
+ 	chip->apsd_retries = 0;
++	chip->offline_polls = 0;
+ 	chip->usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
+ 	if (smb5_sink_vbus_present(chip)) {
+ 		/* Keep pSnkStdby so a flat battery is not left to carry the system. */
