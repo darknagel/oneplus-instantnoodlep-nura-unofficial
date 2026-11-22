@@ -104,7 +104,9 @@ restarts (`systemctl restart 81voltd`).
   NetworkManager took the IMS bearer down together with mobile data (pmaports 0090 leaves
   it up), ModemManager asked for WDS event reports (0090 drops them), and the GNSS session
   runs at 1 Hz (`sdx55-gnss-sleep.service` stops it for the sleep).
-- NetworkManager still disconnects mobile data for suspend and reconnects after resume.
+- Mobile data stays connected over suspend (pmaports 0103). The address stays the same,
+  and data that arrives for the phone wakes it. An open SSH session keeps the phone from
+  sleeping.
 
 ## Facts
 

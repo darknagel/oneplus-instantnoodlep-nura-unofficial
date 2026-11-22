@@ -34,6 +34,7 @@
 | Modem over system sleep, wakeup by an incoming call: the PCIe links stayed in L1.2 over suspend because the root ports stay in D0, and when the modem had to leave L1.2 for a call the link went down and the modem was gone until a reboot. Only the endpoints now decide whether the host takes the link down for suspend; the modem is a wakeup device, and the controller takes WAKE# (GPIO 87) as wakeup interrupt while a wakeup device sits below it. The link goes off for suspend and comes back on resume with the modem still registered | works | kernel 0171–0173, pmaports 0088 |
 | VoLTE after the SIM unlock and after resume: a bearer that 81voltd connected right after the SIM unlock derailed ModemManager (modem enabled but never registered, no mobile data), and ModemManager cancels a connection attempt that runs while it enables or resynchronises the modem, which left VoLTE off (calls on 2G, no data during a call). 81voltd waits until the modem is registered and repeats a cancelled attempt | works | pmaports 0089 |
 | IMS connection over system sleep: NetworkManager disconnects all bearers when it brings mobile data down, also before suspend; the modem lost its IMS connection, asked for it again and woke the phone within seconds. A disconnect of all bearers now only covers the ones the Simple interface connected. ModemManager also no longer asks for WDS event reports, which it only logged: the dormancy report woke the phone ten seconds after it went to sleep | works | pmaports 0090 |
+| Mobile data over system sleep: NetworkManager took mobile data down before every suspend and brought it back after the resume with a new address. It now leaves modem devices connected, and data that arrives for the phone wakes it | works | pmaports 0103 |
 | GNSS over system sleep: the 1 Hz tracking session kept the modem talking, which woke the phone at once; `sdx55-gnss-sleep.service` stops `sdx55-gnss` before suspend and starts it after resume | works | `modem/sdx55-gnss-sleep.service` |
 | NFC (NXP chip, reading tags with `neard`; PCIe 1 is disabled because it took the enable pin) | works | kernel 0032, pmaports 0021 |
 | C-PHY on SM8250 CAMSS (posted series, see below) | works | kernel 0033–0041, pmaports 0022 |
@@ -191,7 +192,7 @@ Attribution for this experiment:
 
 ## Patch numbers in use
 
-The next free numbers are kernel 0232 and package 0103. Kernel 0164 is kept for the
+The next free numbers are kernel 0232 and package 0104. Kernel 0164 is kept for the
 DisplayPort DSC draft. Most package patches change the release and the checksums of the
 kernel package, so a new one has to be made on top of the last one; package numbers
 0070–0074 cannot be filled in later.
@@ -241,6 +242,7 @@ kernel package, so a new one has to be made on top of the last one; package numb
   codec clocks and voltage, Iris encoder size), 0095 adds 0227–0229 (Iris VP9
   experiment, Iris stays off). 0101 adds kernel 0230 (charger detection without a
   USB-C attach), 0102 adds 0231 (charge termination on the analog current sense).
+  0103 changes NetworkManager (mobile data over system sleep).
   Package numbers 0050, 0051, 0053, 0062–0065 and 0070–0074 and kernel numbers 0105–0113,
   0151 and 0164 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.
