@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <darknagel@proton.me>
+Date: Sun, 22 Nov 2026 17:58:26 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: terminate charging on the
+ analog current sense
+
+Kernel 0231: the ADC termination needs the battery current of the PMIC
+fuel gauge, which mainline does not run, so the charger ended each
+cycle a few seconds into constant voltage. It now terminates on its own
+analog current sense and stays in taper until the policy stops it.
+---
+ ...m_pm8150b-terminate-on-the-analog-cu.patch | 60 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  4 +-
+ 2 files changed, 63 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0231-power-supply-qcom_pm8150b-terminate-on-the-analog-cu.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0231-power-supply-qcom_pm8150b-terminate-on-the-analog-cu.patch b/device/testing/linux-postmarketos-qcom-sm8250/0231-power-supply-qcom_pm8150b-terminate-on-the-analog-cu.patch
+new file mode 100644
+index 0000000000..72fe56e206
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0231-power-supply-qcom_pm8150b-terminate-on-the-analog-cu.patch
+@@ -0,0 +1,60 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Sun, 22 Nov 2026 16:06:49 +0100
++Subject: [PATCH] power: supply: qcom_pm8150b: terminate on the analog current
++ sense
++
++The PM8150B ends a charge cycle by default when the ADC termination
++comparator sees the battery current fall below its threshold. That
++current comes from the PMIC fuel gauge (FG Gen4), which mainline does
++not run, so the comparator sees no current and the charger terminates
++a few seconds after it enters constant voltage, with more than 1 A
++still flowing. The charging policy restarted each cycle, and the last
++ten percent took about 50 minutes.
++
++Set CHGR_ITERM_USE_ANALOG so that the charger terminates on its own
++analog current sense, against the threshold the policy already writes
++to TCCC_CHARGE_CURRENT_TERMINATION_CFG. The policy still
++decides when the battery is full; the charger now stays in taper until
++then.
++
++Tested on a OnePlus 8 Pro from a computer port, 95 % to full: the
++charger stayed in taper for 39 minutes without ending a cycle early,
++the current fell steadily from 0.93 A to 0.30 A, and the policy
++stopped at 4.42 V with the cell resting at 4.38 V afterwards.
++---
++ drivers/power/supply/qcom_pm8150b_charger.c | 14 ++++++++++++++
++ 1 file changed, 14 insertions(+)
++
++diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
++index ff745d0c04..61910ba5e6 100644
++--- a/drivers/power/supply/qcom_pm8150b_charger.c
+++++ b/drivers/power/supply/qcom_pm8150b_charger.c
++@@ -83,6 +83,9 @@
++ #define TCCC_CHARGE_CURRENT_TERMINATION_CFG	0x63
++ #define TCCC_CHARGE_CURRENT_TERMINATION_MASK	GENMASK(3, 0)
++ 
+++#define CHGR_ENG_CHARGING_CFG			0xc0
+++#define CHGR_ITERM_USE_ANALOG_BIT		BIT(3)
+++
++ #define FLOAT_VOLTAGE_CFG			0x70
++ #define FLOAT_VOLTAGE_SETTING_MASK		GENMASK(7, 0)
++ #define FLOAT_VOLTAGE_MIN_UV			3600000
++@@ -1626,6 +1629,17 @@ static int smb5_probe(struct platform_device *pdev)
++ 					chip->base + TCCC_CHARGE_CURRENT_TERMINATION_CFG,
++ 					TCCC_CHARGE_CURRENT_TERMINATION_MASK,
++ 					POLICY_ITERM_UA / CURRENT_SCALE_FACTOR);
+++		/*
+++		 * The ADC termination compares the battery current measured by
+++		 * the PMIC fuel gauge, which mainline does not run: it sees no
+++		 * current and ends each cycle soon after constant voltage is
+++		 * reached. Terminate on the charger's own analog current sense.
+++		 */
+++		if (!rc)
+++			rc = regmap_update_bits(chip->regmap,
+++						chip->base + CHGR_ENG_CHARGING_CFG,
+++						CHGR_ITERM_USE_ANALOG_BIT,
+++						CHGR_ITERM_USE_ANALOG_BIT);
++ 		if (!rc)
++ 			rc = regmap_write(chip->regmap, chip->base + BARK_BITE_WDOG_PET,
++ 					  BARK_BITE_WDOG_PET_BIT);
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index eb4ad0bf27..94a1fce7a8 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=107
++pkgrel=108
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -258,6 +258,7 @@ source="
+ 	0228-media-iris-support-decode-order-output-on-HFI-gen2.patch
+ 	0229-media-iris-support-decoder-display-delay-controls-on.patch
+ 	0230-power-supply-qcom_pm8150b-detect-the-charger-when-US.patch
++	0231-power-supply-qcom_pm8150b-terminate-on-the-analog-cu.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -523,4 +524,5 @@ fa67018ad107918ecbcc9fa62107eb5d8582214af2ec4fe9045e7440b0460bc65eadb5ccb22c4f80
+ 12049cac859375602a5e3f8dbd9e528d352d445fafc2861aaf615036d9a5c9a23dfdbb388f68946af66b757d2e123254eff120b4f1caf99142bad16c71c0a1b6  0228-media-iris-support-decode-order-output-on-HFI-gen2.patch
+ dd7114f3037e900c8b437031976551ebb3472be644c74862498e8e65c57f3248177ce4cb3e64617db9229a61f1a2d174e9ff61c4316c66a19678e8d231b2b453  0229-media-iris-support-decoder-display-delay-controls-on.patch
+ 7926622e16ec92abb445fac1fb0290dd6123ce72f2ad3dd2d7c800f1cebd70c77631fd04c5845baf80b6bc1ed0170519fe1ccf7891a91d0e01735ff0a6acde4a  0230-power-supply-qcom_pm8150b-detect-the-charger-when-US.patch
++c8d7afefd821fc55e7d3c1b4d191ae074c7dc6bfa00fbede859fb3d4f71ede23543f3d4a46a9bc71cd8b46361fdaeb3c53f09909341129c484252ac38aa0a51e  0231-power-supply-qcom_pm8150b-terminate-on-the-analog-cu.patch
+ "

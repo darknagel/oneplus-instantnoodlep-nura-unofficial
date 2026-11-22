@@ -43,11 +43,13 @@ Limits that do not depend on the above:
   attempt fails and the kernel logs `battery is charging, not suspending`.
   Once the battery is full it sleeps as usual.
 
-The last ten percent take longer than on Android, about 50 minutes from 88 %
-in the test. Mainline has no driver for the PM8150B's own fuel gauge, which the
-charger needs to see the battery current. Without it the charger ends every
-charge cycle after a few seconds at constant voltage and the driver starts the
-next one.
+The PM8150B ends a charge cycle on its own analog current sense. Its default,
+the ADC comparison, needs the battery current from the PM8150B's own fuel gauge,
+which mainline does not drive; with it the charger ended every cycle a few
+seconds into constant voltage and the last ten percent took about 50 minutes.
+Now the charger stays in constant voltage until the driver decides the battery
+is full: from a computer port it charged from 95 % to full in 54 minutes, 39 of
+them at constant voltage without a break.
 
 ```sh
 cat /sys/class/power_supply/pm8150b-charger/status   # Charging / Full / Not charging

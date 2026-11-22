@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 16:06:49 +0100
+Subject: [PATCH] power: supply: qcom_pm8150b: terminate on the analog current
+ sense
+
+The PM8150B ends a charge cycle by default when the ADC termination
+comparator sees the battery current fall below its threshold. That
+current comes from the PMIC fuel gauge (FG Gen4), which mainline does
+not run, so the comparator sees no current and the charger terminates
+a few seconds after it enters constant voltage, with more than 1 A
+still flowing. The charging policy restarted each cycle, and the last
+ten percent took about 50 minutes.
+
+Set CHGR_ITERM_USE_ANALOG so that the charger terminates on its own
+analog current sense, against the threshold the policy already writes
+to TCCC_CHARGE_CURRENT_TERMINATION_CFG. The policy still
+decides when the battery is full; the charger now stays in taper until
+then.
+
+Tested on a OnePlus 8 Pro from a computer port, 95 % to full: the
+charger stayed in taper for 39 minutes without ending a cycle early,
+the current fell steadily from 0.93 A to 0.30 A, and the policy
+stopped at 4.42 V with the cell resting at 4.38 V afterwards.
+---
+ drivers/power/supply/qcom_pm8150b_charger.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/drivers/power/supply/qcom_pm8150b_charger.c b/drivers/power/supply/qcom_pm8150b_charger.c
+index ff745d0c04..61910ba5e6 100644
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -83,6 +83,9 @@
+ #define TCCC_CHARGE_CURRENT_TERMINATION_CFG	0x63
+ #define TCCC_CHARGE_CURRENT_TERMINATION_MASK	GENMASK(3, 0)
+ 
++#define CHGR_ENG_CHARGING_CFG			0xc0
++#define CHGR_ITERM_USE_ANALOG_BIT		BIT(3)
++
+ #define FLOAT_VOLTAGE_CFG			0x70
+ #define FLOAT_VOLTAGE_SETTING_MASK		GENMASK(7, 0)
+ #define FLOAT_VOLTAGE_MIN_UV			3600000
+@@ -1626,6 +1629,17 @@ static int smb5_probe(struct platform_device *pdev)
+ 					chip->base + TCCC_CHARGE_CURRENT_TERMINATION_CFG,
+ 					TCCC_CHARGE_CURRENT_TERMINATION_MASK,
+ 					POLICY_ITERM_UA / CURRENT_SCALE_FACTOR);
++		/*
++		 * The ADC termination compares the battery current measured by
++		 * the PMIC fuel gauge, which mainline does not run: it sees no
++		 * current and ends each cycle soon after constant voltage is
++		 * reached. Terminate on the charger's own analog current sense.
++		 */
++		if (!rc)
++			rc = regmap_update_bits(chip->regmap,
++						chip->base + CHGR_ENG_CHARGING_CFG,
++						CHGR_ITERM_USE_ANALOG_BIT,
++						CHGR_ITERM_USE_ANALOG_BIT);
+ 		if (!rc)
+ 			rc = regmap_write(chip->regmap, chip->base + BARK_BITE_WDOG_PET,
+ 					  BARK_BITE_WDOG_PET_BIT);

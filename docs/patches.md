@@ -60,8 +60,9 @@
 | Proximity calibration from the Android `persist` partition, at first boot | works | `firmware/dsp-firmware.sh`, `sensors/setup-sensors.sh` |
 | Charging: the PM8150B float voltage register counts from 3.6 V in 10 mV steps, as in the vendor driver; the old encoding selected 4.76 V for the 4.35 V battery. Found by naorunaoru | works | kernel 0068, pmaports 0036 |
 | Charging: at least 500 mA of USB input while VBUS is present and the phone is not the source; before, the input was cut off when TCPM reported the source offline and the phone ran from the battery with the charger attached | works | kernel 0165, pmaports 0075 |
-| Charging: USB-A detection also when USB-C does not attach. A USB-A to USB-C cable that pulls up both CC pins looks like a debug accessory to the PMIC, TCPM never attaches, and the input stayed at 500 mA; after two seconds of VBUS without an attach the charger now runs BC1.2 detection, so a USB-A charger gets 1.5 A. Reported by gavin8112-web in issue #17 | fixed, the normal USB-C path tested on the phone; the cable case not yet | kernel 0230, pmaports 0101 |
+| Charging: USB-A detection also when USB-C does not attach. A USB-A to USB-C cable that pulls up both CC pins looks like a debug accessory to the PMIC, TCPM never attaches, and the input stayed at 500 mA; after two seconds of VBUS without an attach the charger now runs BC1.2 detection, so a USB-A charger gets 1.5 A. Reported by gavin8112-web in issue #17 | works, confirmed by the reporter | kernel 0230, pmaports 0101 |
 | Charging: charge by the bq27411 fuel gauge with the temperature zones and limits of the stock firmware; the battery stopped at about 88 % because the PM8150B ends each charge cycle early without its own fuel gauge. See [charging.md](charging.md) | works | kernel 0166–0167, pmaports 0075 |
+| Charging: the PM8150B terminates on its analog current sense. The ADC termination needs the battery current of the PMIC fuel gauge, which mainline does not run, so the charger ended each cycle a few seconds into constant voltage and the last ten percent took about 50 minutes | works, tested from a computer port | kernel 0231, pmaports 0102 |
 | Haptics: AW8697 on I2C11 with the stock LRA0619 tuning (170 Hz, drive level 54) | works | kernel 0074, pmaports 0038 |
 | Flash LEDs: both PM8150L channels, first with conservative limits, raised to the stock ones by 0079 | works | kernel 0075, pmaports 0038 |
 | Wireless charge pump: the stock part is a BQ2597x, not a BQ25980; the node is corrected and stays disabled until wireless charging is integrated | disabled | kernel 0076, pmaports 0038 |
@@ -190,7 +191,7 @@ Attribution for this experiment:
 
 ## Patch numbers in use
 
-The next free numbers are kernel 0231 and package 0102. Kernel 0164 is kept for the
+The next free numbers are kernel 0232 and package 0103. Kernel 0164 is kept for the
 DisplayPort DSC draft. Most package patches change the release and the checksums of the
 kernel package, so a new one has to be made on top of the last one; package numbers
 0070–0074 cannot be filled in later.
@@ -239,7 +240,7 @@ kernel package, so a new one has to be made on top of the last one; package numb
   0090 change 81voltd and ModemManager for it. 0094 adds kernel 0223–0226 (video
   codec clocks and voltage, Iris encoder size), 0095 adds 0227–0229 (Iris VP9
   experiment, Iris stays off). 0101 adds kernel 0230 (charger detection without a
-  USB-C attach).
+  USB-C attach), 0102 adds 0231 (charge termination on the analog current sense).
   Package numbers 0050, 0051, 0053, 0062–0065 and 0070–0074 and kernel numbers 0105–0113,
   0151 and 0164 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.

@@ -34,7 +34,7 @@ Not working or limited:
 | Camera autofocus | phase detection on the main camera only, the other cameras use contrast |
 | Calls | no echo cancellation, see [`modem/`](modem/) |
 | NFC | reading tags only; writing and card emulation are untested |
-| Charging | the last ten percent are slow, and the phone does not sleep while charging, see [`docs/charging.md`](docs/charging.md) |
+| Charging | the phone does not sleep while charging, see [`docs/charging.md`](docs/charging.md) |
 | External display | sound over the monitor breaks after system sleep, see [`docs/displayport.md`](docs/displayport.md) |
 
 Tested on IN2023 phones (EU) with the Samsung AMS678UW01 panel. With another panel the
@@ -280,8 +280,8 @@ For the compass and sensor setup on old images see [`docs/sensors.md`](docs/sens
   detection pixels; it focuses in about 0.5–1 second (`LIBCAMERA_SIMPLE_PDAF=0` gives a
   60 fps preview with the slower contrast autofocus). The ultrawide previews at 2000×1500
   and 60 fps; its autofocus takes about 1 second.
-- The last ten percent of a charge take about 50 minutes, longer than on Android, and the
-  phone does not sleep while the battery is charging: see [`docs/charging.md`](docs/charging.md).
+- The phone does not sleep while the battery is charging, like on Android: see
+  [`docs/charging.md`](docs/charging.md).
 - Under Plasma Mobile the keyboard did not always open in the SIM PIN popup. Enter the PIN in
   the settings or with `mmcli`.
 - Your phone's modem data (`/lib/firmware/postmarketos/qcom/sdx55m`, calibration and IDs)
