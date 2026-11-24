@@ -204,6 +204,17 @@ which saves a lot of CPU and battery. Players use it through V4L2, for example
 The firmware is signed for this phone and comes from its own `modem` partition at first boot;
 on images before v2026.11.10 see [Update an older image](#update-an-older-image).
 
+### Wake-on-WLAN
+
+A magic packet wakes the sleeping phone, and Wi-Fi stays connected through the sleep. Switch
+it on for your Wi-Fi connection, with its name from `nmcli con show`; it stays on after a reboot:
+
+```sh
+nmcli con modify "YOUR WIFI" 802-11-wireless.wake-on-wlan magic
+nmcli con up "YOUR WIFI"
+ip link show wlan0          # the MAC address to send the magic packet to
+```
+
 ### NFC
 
 ```sh
