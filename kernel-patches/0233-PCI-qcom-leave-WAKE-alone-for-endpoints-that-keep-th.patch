@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 07:45:53 +0100
+Subject: [PATCH] PCI: qcom: leave WAKE# alone for endpoints that keep their
+ link
+
+Patch 0173 arms WAKE# as a wakeup interrupt while a wakeup device sits
+below the controller. A Wi-Fi chip that keeps its link for
+Wake-on-WLAN (D3cold off, see 0232) goes to D3hot and signals a wake
+with a PME message over the link. It also moves WAKE# while it enters
+D3hot, so with WAKE# armed every suspend ended at once.
+
+Do not count an endpoint with D3cold turned off when deciding whether
+to arm WAKE#. The modem below PCIe 2 is not affected: its link still
+goes down for suspend, and it still wakes the system with WAKE# on
+GPIO 87.
+---
+ drivers/pci/controller/dwc/pcie-qcom.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
+index f8d8ddc371..d2d89edfd9 100644
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -343,7 +343,14 @@ static int qcom_pcie_wakeup_endpoint(struct pci_dev *pdev, void *data)
+ {
+ 	bool *wakeup = data;
+ 
+-	if (!pci_is_bridge(pdev) && device_may_wakeup(&pdev->dev))
++	/*
++	 * An endpoint that keeps its power over system sleep, such as a Wi-Fi
++	 * chip in Wake-on-WLAN with D3cold turned off, keeps its link and wakes
++	 * the system with a PME message. It moves WAKE# while it enters D3hot,
++	 * which would end the suspend at once, so WAKE# is not for it.
++	 */
++	if (!pci_is_bridge(pdev) && device_may_wakeup(&pdev->dev) &&
++	    !pdev->no_d3cold && pdev->d3cold_allowed)
+ 		*wakeup = true;
+ 
+ 	return 0;

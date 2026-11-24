@@ -1,0 +1,230 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <darknagel@proton.me>
+Date: Tue, 24 Nov 2026 08:39:21 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: keep Wake-on-WLAN from
+ crashing
+
+Kernel 0232-0234: with Wake-on-WLAN enabled the phone crashed on the
+first suspend, because the host took the Wi-Fi link down under the
+running firmware. The chip now keeps its power and link while it is to
+wake the system, and WAKE# is not armed for it, since it moves WAKE#
+while entering D3hot.
+---
+ ...keep-D3cold-off-for-devices-that-hav.patch | 39 +++++++++
+ ...AKE-alone-for-endpoints-that-keep-th.patch | 40 +++++++++
+ ...k-keep-the-power-on-for-Wake-on-WLAN.patch | 81 +++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  8 +-
+ 4 files changed, 167 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0232-PCI-host-common-keep-D3cold-off-for-devices-that-hav.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0233-PCI-qcom-leave-WAKE-alone-for-endpoints-that-keep-th.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0234-wifi-ath11k-keep-the-power-on-for-Wake-on-WLAN.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0232-PCI-host-common-keep-D3cold-off-for-devices-that-hav.patch b/device/testing/linux-postmarketos-qcom-sm8250/0232-PCI-host-common-keep-D3cold-off-for-devices-that-hav.patch
+new file mode 100644
+index 0000000000..b62ea80089
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0232-PCI-host-common-keep-D3cold-off-for-devices-that-hav.patch
+@@ -0,0 +1,39 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 23 Nov 2026 21:42:44 +0100
++Subject: [PATCH] PCI: host-common: keep D3cold off for devices that have it
++ disabled
++
++Patch 0171 lets the endpoints decide whether the host takes the link
++down for system sleep: when every endpoint is in D3hot and can signal
++PME from D3cold, the link goes down and PERST# is asserted. A Wi-Fi
++chip with Wake-on-WLAN has to stay powered and associated, but the
++QCA6390 reports PME from D3cold, so the link went down under it. On
++resume MHI found its rings gone, qrtr_mhi failed to prepare its
++channels with -22, and the next transfer faulted in mhi_gen_tre: with
++Wake-on-WLAN enabled the phone crashed on the first suspend.
++
++Leave the link up for a device that has D3cold turned off, through
++pci_dev.no_d3cold or d3cold_allowed in sysfs.
++---
++ drivers/pci/controller/pci-host-common.c | 7 +++++++
++ 1 file changed, 7 insertions(+)
++
++diff --git a/drivers/pci/controller/pci-host-common.c b/drivers/pci/controller/pci-host-common.c
++index 5ac2b4dfe9..0c0de5f17a 100644
++--- a/drivers/pci/controller/pci-host-common.c
+++++ b/drivers/pci/controller/pci-host-common.c
++@@ -301,6 +301,13 @@ static int __pci_host_common_d3cold_possible(struct pci_dev *pdev,
++ 	if (pdev->current_state != PCI_D3hot)
++ 		goto exit;
++ 
+++	/*
+++	 * A device that must keep its power, such as a Wi-Fi chip that stays
+++	 * associated for Wake-on-WLAN, has D3cold turned off.
+++	 */
+++	if (pdev->no_d3cold || !pdev->d3cold_allowed)
+++		goto exit;
+++
++ 	if (device_may_wakeup(&pdev->dev)) {
++ 		if (!pci_pme_capable(pdev, PCI_D3cold))
++ 			goto exit;
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0233-PCI-qcom-leave-WAKE-alone-for-endpoints-that-keep-th.patch b/device/testing/linux-postmarketos-qcom-sm8250/0233-PCI-qcom-leave-WAKE-alone-for-endpoints-that-keep-th.patch
+new file mode 100644
+index 0000000000..3ce86e4116
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0233-PCI-qcom-leave-WAKE-alone-for-endpoints-that-keep-th.patch
+@@ -0,0 +1,40 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 24 Nov 2026 07:45:53 +0100
++Subject: [PATCH] PCI: qcom: leave WAKE# alone for endpoints that keep their
++ link
++
++Patch 0173 arms WAKE# as a wakeup interrupt while a wakeup device sits
++below the controller. A Wi-Fi chip that keeps its link for
++Wake-on-WLAN (D3cold off, see 0232) goes to D3hot and signals a wake
++with a PME message over the link. It also moves WAKE# while it enters
++D3hot, so with WAKE# armed every suspend ended at once.
++
++Do not count an endpoint with D3cold turned off when deciding whether
++to arm WAKE#. The modem below PCIe 2 is not affected: its link still
++goes down for suspend, and it still wakes the system with WAKE# on
++GPIO 87.
++---
++ drivers/pci/controller/dwc/pcie-qcom.c | 9 ++++++++-
++ 1 file changed, 8 insertions(+), 1 deletion(-)
++
++diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
++index f8d8ddc371..d2d89edfd9 100644
++--- a/drivers/pci/controller/dwc/pcie-qcom.c
+++++ b/drivers/pci/controller/dwc/pcie-qcom.c
++@@ -343,7 +343,14 @@ static int qcom_pcie_wakeup_endpoint(struct pci_dev *pdev, void *data)
++ {
++ 	bool *wakeup = data;
++ 
++-	if (!pci_is_bridge(pdev) && device_may_wakeup(&pdev->dev))
+++	/*
+++	 * An endpoint that keeps its power over system sleep, such as a Wi-Fi
+++	 * chip in Wake-on-WLAN with D3cold turned off, keeps its link and wakes
+++	 * the system with a PME message. It moves WAKE# while it enters D3hot,
+++	 * which would end the suspend at once, so WAKE# is not for it.
+++	 */
+++	if (!pci_is_bridge(pdev) && device_may_wakeup(&pdev->dev) &&
+++	    !pdev->no_d3cold && pdev->d3cold_allowed)
++ 		*wakeup = true;
++ 
++ 	return 0;
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0234-wifi-ath11k-keep-the-power-on-for-Wake-on-WLAN.patch b/device/testing/linux-postmarketos-qcom-sm8250/0234-wifi-ath11k-keep-the-power-on-for-Wake-on-WLAN.patch
+new file mode 100644
+index 0000000000..304aba5415
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0234-wifi-ath11k-keep-the-power-on-for-Wake-on-WLAN.patch
+@@ -0,0 +1,81 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 24 Nov 2026 08:28:58 +0100
++Subject: [PATCH] wifi: ath11k: keep the power on for Wake-on-WLAN
++
++With Wake-on-WLAN the firmware keeps running over system sleep and
++uses host memory, so the chip has to keep its power and its link. The
++QCA6390 reports PME from D3cold, so the host was free to take the link
++down and assert PERST#; on resume MHI found its rings gone and the
++phone crashed on the first suspend with Wake-on-WLAN enabled.
++
++Turn D3cold off for the suspend when the device is to wake the system,
++and back on after the resume.
++---
++ drivers/net/wireless/ath/ath11k/pci.c | 19 +++++++++++++++++++
++ drivers/net/wireless/ath/ath11k/pci.h |  1 +
++ 2 files changed, 20 insertions(+)
++
++diff --git a/drivers/net/wireless/ath/ath11k/pci.c b/drivers/net/wireless/ath/ath11k/pci.c
++index a163168f36..1bc7bca199 100644
++--- a/drivers/net/wireless/ath/ath11k/pci.c
+++++ b/drivers/net/wireless/ath/ath11k/pci.c
++@@ -1228,6 +1228,8 @@ static void ath11k_pci_shutdown(struct pci_dev *pdev)
++ static __maybe_unused int ath11k_pci_pm_suspend(struct device *dev)
++ {
++ 	struct ath11k_base *ab = dev_get_drvdata(dev);
+++	struct ath11k_pci *ab_pci = ath11k_pci_priv(ab);
+++	struct pci_dev *pdev = to_pci_dev(dev);
++ 	int ret;
++ 
++ 	if (test_bit(ATH11K_FLAG_QMI_FAIL, &ab->dev_flags)) {
++@@ -1235,6 +1237,17 @@ static __maybe_unused int ath11k_pci_pm_suspend(struct device *dev)
++ 		return 0;
++ 	}
++ 
+++	/*
+++	 * Wake-on-WLAN keeps the firmware running from host memory, so the
+++	 * chip has to keep its power and its link. The QCA6390 reports PME
+++	 * from D3cold, which lets the host take the link down and assert
+++	 * PERST#; MHI then finds its rings gone on resume.
+++	 */
+++	if (device_may_wakeup(dev) && !pdev->no_d3cold) {
+++		pci_d3cold_disable(pdev);
+++		ab_pci->wow_no_d3cold = true;
+++	}
+++
++ 	ret = ath11k_core_suspend(ab);
++ 	if (ret)
++ 		ath11k_warn(ab, "failed to suspend core: %d\n", ret);
++@@ -1245,6 +1258,7 @@ static __maybe_unused int ath11k_pci_pm_suspend(struct device *dev)
++ static __maybe_unused int ath11k_pci_pm_resume(struct device *dev)
++ {
++ 	struct ath11k_base *ab = dev_get_drvdata(dev);
+++	struct ath11k_pci *ab_pci = ath11k_pci_priv(ab);
++ 	int ret;
++ 
++ 	if (test_bit(ATH11K_FLAG_QMI_FAIL, &ab->dev_flags)) {
++@@ -1256,6 +1270,11 @@ static __maybe_unused int ath11k_pci_pm_resume(struct device *dev)
++ 	if (ret)
++ 		ath11k_warn(ab, "failed to resume core: %d\n", ret);
++ 
+++	if (ab_pci->wow_no_d3cold) {
+++		pci_d3cold_enable(to_pci_dev(dev));
+++		ab_pci->wow_no_d3cold = false;
+++	}
+++
++ 	return ret;
++ }
++ 
++diff --git a/drivers/net/wireless/ath/ath11k/pci.h b/drivers/net/wireless/ath/ath11k/pci.h
++index 1e3005a4b6..2579d54477 100644
++--- a/drivers/net/wireless/ath/ath11k/pci.h
+++++ b/drivers/net/wireless/ath/ath11k/pci.h
++@@ -74,6 +74,7 @@ struct ath11k_pci {
++ 	unsigned long flags;
++ 	u16 link_ctl;
++ 	u64 dma_mask;
+++	bool wow_no_d3cold;
++ };
++ 
++ static inline struct ath11k_pci *ath11k_pci_priv(struct ath11k_base *ab)
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 94a1fce7a8..bf0c6c831e 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=108
++pkgrel=109
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -259,6 +259,9 @@ source="
+ 	0229-media-iris-support-decoder-display-delay-controls-on.patch
+ 	0230-power-supply-qcom_pm8150b-detect-the-charger-when-US.patch
+ 	0231-power-supply-qcom_pm8150b-terminate-on-the-analog-cu.patch
++	0232-PCI-host-common-keep-D3cold-off-for-devices-that-hav.patch
++	0233-PCI-qcom-leave-WAKE-alone-for-endpoints-that-keep-th.patch
++	0234-wifi-ath11k-keep-the-power-on-for-Wake-on-WLAN.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -525,4 +528,7 @@ fa67018ad107918ecbcc9fa62107eb5d8582214af2ec4fe9045e7440b0460bc65eadb5ccb22c4f80
+ dd7114f3037e900c8b437031976551ebb3472be644c74862498e8e65c57f3248177ce4cb3e64617db9229a61f1a2d174e9ff61c4316c66a19678e8d231b2b453  0229-media-iris-support-decoder-display-delay-controls-on.patch
+ 7926622e16ec92abb445fac1fb0290dd6123ce72f2ad3dd2d7c800f1cebd70c77631fd04c5845baf80b6bc1ed0170519fe1ccf7891a91d0e01735ff0a6acde4a  0230-power-supply-qcom_pm8150b-detect-the-charger-when-US.patch
+ c8d7afefd821fc55e7d3c1b4d191ae074c7dc6bfa00fbede859fb3d4f71ede23543f3d4a46a9bc71cd8b46361fdaeb3c53f09909341129c484252ac38aa0a51e  0231-power-supply-qcom_pm8150b-terminate-on-the-analog-cu.patch
++c1c872fda7cf56db8e172b09f26deb95e1373efe0af2fd4e79b294f774ed8c7226f46916b290e313f4a9190b2993737e80e335bbc0e816359f99b704680a12d9  0232-PCI-host-common-keep-D3cold-off-for-devices-that-hav.patch
++8ac32e7bd585cae6dc47e7532a5d732e7abecf145138b7cd23385b27a59b3a0a1dc56f46d31eec494d5a36c6a7a57bea92e217a13a54f38524aec25d1541ae7a  0233-PCI-qcom-leave-WAKE-alone-for-endpoints-that-keep-th.patch
++864a8e27fab96429ec3e9799f1e383f690acaca73ca31cc2e86f758f5a6ad2500e337594f2adb73e70a1277e8ec1ffa7cf6a2298a3820d734c7d3331fcc858ad  0234-wifi-ath11k-keep-the-power-on-for-Wake-on-WLAN.patch
+ "

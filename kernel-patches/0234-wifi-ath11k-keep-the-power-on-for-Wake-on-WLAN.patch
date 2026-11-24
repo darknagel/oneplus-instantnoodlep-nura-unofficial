@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 08:28:58 +0100
+Subject: [PATCH] wifi: ath11k: keep the power on for Wake-on-WLAN
+
+With Wake-on-WLAN the firmware keeps running over system sleep and
+uses host memory, so the chip has to keep its power and its link. The
+QCA6390 reports PME from D3cold, so the host was free to take the link
+down and assert PERST#; on resume MHI found its rings gone and the
+phone crashed on the first suspend with Wake-on-WLAN enabled.
+
+Turn D3cold off for the suspend when the device is to wake the system,
+and back on after the resume.
+---
+ drivers/net/wireless/ath/ath11k/pci.c | 19 +++++++++++++++++++
+ drivers/net/wireless/ath/ath11k/pci.h |  1 +
+ 2 files changed, 20 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath11k/pci.c b/drivers/net/wireless/ath/ath11k/pci.c
+index a163168f36..1bc7bca199 100644
+--- a/drivers/net/wireless/ath/ath11k/pci.c
++++ b/drivers/net/wireless/ath/ath11k/pci.c
+@@ -1228,6 +1228,8 @@ static void ath11k_pci_shutdown(struct pci_dev *pdev)
+ static __maybe_unused int ath11k_pci_pm_suspend(struct device *dev)
+ {
+ 	struct ath11k_base *ab = dev_get_drvdata(dev);
++	struct ath11k_pci *ab_pci = ath11k_pci_priv(ab);
++	struct pci_dev *pdev = to_pci_dev(dev);
+ 	int ret;
+ 
+ 	if (test_bit(ATH11K_FLAG_QMI_FAIL, &ab->dev_flags)) {
+@@ -1235,6 +1237,17 @@ static __maybe_unused int ath11k_pci_pm_suspend(struct device *dev)
+ 		return 0;
+ 	}
+ 
++	/*
++	 * Wake-on-WLAN keeps the firmware running from host memory, so the
++	 * chip has to keep its power and its link. The QCA6390 reports PME
++	 * from D3cold, which lets the host take the link down and assert
++	 * PERST#; MHI then finds its rings gone on resume.
++	 */
++	if (device_may_wakeup(dev) && !pdev->no_d3cold) {
++		pci_d3cold_disable(pdev);
++		ab_pci->wow_no_d3cold = true;
++	}
++
+ 	ret = ath11k_core_suspend(ab);
+ 	if (ret)
+ 		ath11k_warn(ab, "failed to suspend core: %d\n", ret);
+@@ -1245,6 +1258,7 @@ static __maybe_unused int ath11k_pci_pm_suspend(struct device *dev)
+ static __maybe_unused int ath11k_pci_pm_resume(struct device *dev)
+ {
+ 	struct ath11k_base *ab = dev_get_drvdata(dev);
++	struct ath11k_pci *ab_pci = ath11k_pci_priv(ab);
+ 	int ret;
+ 
+ 	if (test_bit(ATH11K_FLAG_QMI_FAIL, &ab->dev_flags)) {
+@@ -1256,6 +1270,11 @@ static __maybe_unused int ath11k_pci_pm_resume(struct device *dev)
+ 	if (ret)
+ 		ath11k_warn(ab, "failed to resume core: %d\n", ret);
+ 
++	if (ab_pci->wow_no_d3cold) {
++		pci_d3cold_enable(to_pci_dev(dev));
++		ab_pci->wow_no_d3cold = false;
++	}
++
+ 	return ret;
+ }
+ 
+diff --git a/drivers/net/wireless/ath/ath11k/pci.h b/drivers/net/wireless/ath/ath11k/pci.h
+index 1e3005a4b6..2579d54477 100644
+--- a/drivers/net/wireless/ath/ath11k/pci.h
++++ b/drivers/net/wireless/ath/ath11k/pci.h
+@@ -74,6 +74,7 @@ struct ath11k_pci {
+ 	unsigned long flags;
+ 	u16 link_ctl;
+ 	u64 dma_mask;
++	bool wow_no_d3cold;
+ };
+ 
+ static inline struct ath11k_pci *ath11k_pci_priv(struct ath11k_base *ab)

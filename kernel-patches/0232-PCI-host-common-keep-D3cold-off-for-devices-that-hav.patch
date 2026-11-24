@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 21:42:44 +0100
+Subject: [PATCH] PCI: host-common: keep D3cold off for devices that have it
+ disabled
+
+Patch 0171 lets the endpoints decide whether the host takes the link
+down for system sleep: when every endpoint is in D3hot and can signal
+PME from D3cold, the link goes down and PERST# is asserted. A Wi-Fi
+chip with Wake-on-WLAN has to stay powered and associated, but the
+QCA6390 reports PME from D3cold, so the link went down under it. On
+resume MHI found its rings gone, qrtr_mhi failed to prepare its
+channels with -22, and the next transfer faulted in mhi_gen_tre: with
+Wake-on-WLAN enabled the phone crashed on the first suspend.
+
+Leave the link up for a device that has D3cold turned off, through
+pci_dev.no_d3cold or d3cold_allowed in sysfs.
+---
+ drivers/pci/controller/pci-host-common.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/pci/controller/pci-host-common.c b/drivers/pci/controller/pci-host-common.c
+index 5ac2b4dfe9..0c0de5f17a 100644
+--- a/drivers/pci/controller/pci-host-common.c
++++ b/drivers/pci/controller/pci-host-common.c
+@@ -301,6 +301,13 @@ static int __pci_host_common_d3cold_possible(struct pci_dev *pdev,
+ 	if (pdev->current_state != PCI_D3hot)
+ 		goto exit;
+ 
++	/*
++	 * A device that must keep its power, such as a Wi-Fi chip that stays
++	 * associated for Wake-on-WLAN, has D3cold turned off.
++	 */
++	if (pdev->no_d3cold || !pdev->d3cold_allowed)
++		goto exit;
++
+ 	if (device_may_wakeup(&pdev->dev)) {
+ 		if (!pci_pme_capable(pdev, PCI_D3cold))
+ 			goto exit;
