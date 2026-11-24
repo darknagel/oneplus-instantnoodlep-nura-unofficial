@@ -52,9 +52,10 @@ screen may stay black, see [`docs/panel-log.md`](docs/panel-log.md). Patch-by-pa
 
 **Flash:**
 
-1. Download the files from [Releases](../../releases) and check them: `sha256sum -c SHA256SUMS`
+1. Download `oneplus-instantnoodlep-install.zip` from [Releases](../../releases) and unpack it.
+   In its folder, `sha256sum -c SHA256SUMS` checks the images.
 2. Power off, then hold **Volume up + Volume down + Power** for about ten seconds.
-3. In the folder with the files:
+3. In the unpacked folder:
 
    ```sh
    fastboot set_active a
@@ -221,17 +222,18 @@ Details and tested monitors: [`docs/displayport.md`](docs/displayport.md).
 
 ## Update an older image
 
-To keep your installed system, install the kernel package from the newest release instead of
-flashing the image. As root, with the file copied to the phone:
+To keep your installed system, update it instead of flashing the image. From v2026.11.24 on,
+one line as root on the phone, with internet, brings it to the newest release:
 
 ```sh
-apk add --allow-untrusted linux-postmarketos-qcom-sm8250-*.apk
-reboot
+wget -qO- https://github.com/darknagel/oneplus-instantnoodlep-nura-unofficial/releases/latest/download/update.sh | sh
 ```
 
-This replaces the kernel and its modules together. Do not flash only `boot.img` onto an older
-image, its modules would not match. The release notes list the other packages that belong
-to a release (camera, VoLTE). Check the charging with `dmesg | grep pm8150b-charger`: from
+It downloads `oneplus-instantnoodlep-update.tar` of that release, checks it, updates every
+package of the release that is installed (kernel, modem, Wi-Fi, camera, fingerprint) and the
+modem helpers, and reboots. Optional packages such as `usb-signaller` are only updated when you
+installed them. Do not flash only `boot.img` onto an older image, its modules would not match.
+Check the charging with `dmesg | grep pm8150b-charger`: from
 v2026.11.15 on it must say `charging policy uses bq27411-0`, on older kernels
 `float voltage 4350000 uV`.
 
