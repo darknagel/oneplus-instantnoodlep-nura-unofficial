@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <darknagel@proton.me>
+Date: Tue, 24 Nov 2026 09:35:01 +0100
+Subject: [PATCH] temp/modemmanager: do not abort when the modem is recreated
+
+ModemManager 0007: the data port reset during initialization also took
+the ignored mhi_swip0 port of the SDX55, and the qcom-soc plugin
+asserts that a data port is in the net subsystem. Without a SIM,
+ModemManager recreates the modem after every resume and aborted each
+time.
+---
+ ...-modem-qmi-reset-only-real-net-ports.patch | 34 +++++++++++++++++++
+ temp/modemmanager/APKBUILD                    |  4 ++-
+ 2 files changed, 37 insertions(+), 1 deletion(-)
+ create mode 100644 temp/modemmanager/0007-broadband-modem-qmi-reset-only-real-net-ports.patch
+
+diff --git a/temp/modemmanager/0007-broadband-modem-qmi-reset-only-real-net-ports.patch b/temp/modemmanager/0007-broadband-modem-qmi-reset-only-real-net-ports.patch
+new file mode 100644
+index 0000000000..e917d38a06
+--- /dev/null
++++ b/temp/modemmanager/0007-broadband-modem-qmi-reset-only-real-net-ports.patch
+@@ -0,0 +1,34 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 24 Nov 2026 09:21:45 +0100
++Subject: [PATCH] broadband-modem-qmi: reset only real net ports
++
++An explicitly ignored port is grabbed as a plain MMPort with its port
++type but without a subsystem. The data port reset during
++initialization looked for net ports of any subsystem and so also got
++the ignored mhi_swip0 of the SDX55, and the qcom-soc plugin asserts
++that a data port is in the net subsystem: ModemManager aborted each
++time it recreated the modem, for example after every resume without a
++SIM ("new SIM detected, handle as SIM hot-swap").
++
++Look only for net ports in the net subsystem.
++---
++ src/mm-broadband-modem-qmi.c | 4 +++-
++ 1 file changed, 3 insertions(+), 1 deletion(-)
++
++diff --git a/src/mm-broadband-modem-qmi.c b/src/mm-broadband-modem-qmi.c
++index 9620504..7d8d0da 100644
++--- a/src/mm-broadband-modem-qmi.c
+++++ b/src/mm-broadband-modem-qmi.c
++@@ -14572,8 +14572,10 @@ reset_ports (MMBroadbandModemQmi *self,
++     ctx = g_slice_new0 (ResetPortsContext);
++     g_task_set_task_data (task, ctx, (GDestroyNotify)reset_ports_context_free);
++ 
+++    /* Only real net ports: an explicitly ignored port is grabbed with its
+++     * type but without a subsystem, and asking for its QMI port asserts. */
++     ctx->ports = mm_base_modem_find_ports (MM_BASE_MODEM (self),
++-                                           MM_PORT_SUBSYS_UNKNOWN,
+++                                           MM_PORT_SUBSYS_NET,
++                                            MM_PORT_TYPE_NET);
++ 
++     reset_next_port (task);
+diff --git a/temp/modemmanager/APKBUILD b/temp/modemmanager/APKBUILD
+index 5265b351a5..0ee7dcbfb7 100644
+--- a/temp/modemmanager/APKBUILD
++++ b/temp/modemmanager/APKBUILD
+@@ -3,7 +3,7 @@
+ maintainer="Achill Gilgenast <achill@achill.org>"
+ pkgname=modemmanager
+ pkgver=1.25.95_git20261005
+-pkgrel=7
++pkgrel=8
+ _commit=7f0bf17ab518cd78925cf7e53cc0d5c42f88b41a
+ pkgdesc="ModemManager library"
+ url="https://www.freedesktop.org/wiki/Software/ModemManager"
+@@ -53,6 +53,7 @@ source="https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/archive/$
+ 	0004-bearer-qmi-multiplex-by-default-on-mhi_net-over-QRTR.patch
+ 	0005-iface-modem-simple-disconnect-only-its-own-bearers.patch
+ 	0006-bearer-qmi-do-not-ask-for-WDS-event-reports.patch
++	0007-broadband-modem-qmi-reset-only-real-net-ports.patch
+ 	"
+ #builddir="$srcdir"/ModemManager-$pkgver
+ builddir="$srcdir"/ModemManager-$_commit
+@@ -114,4 +115,5 @@ f06e9b89acab5b61c5965658d62551b0f168066384674f7c4dd56feb6f811c82c640470e634e32d8
+ d8e4cef78daaa2a6dbd3b13e66adc61674f3ec45f0c1a6145e789d953ab3ad21d51ea7566f637fc9565588b19c974b1114d905d7ea31ec8b4292e73e567dd6f4  0004-bearer-qmi-multiplex-by-default-on-mhi_net-over-QRTR.patch
+ a6c3f2bc24d1e178246e037be272ea310f4c0613d3a7d5f908d81e77c10af83c67935e2a1758cbdb56c00b1dd2ffe360e4b45f528be7e441963f842999b66a1f  0005-iface-modem-simple-disconnect-only-its-own-bearers.patch
+ b34c7278582c4ecd557f98a40a27e0a77bcb69f476711d1e4a9d54dcc7e5782cba63a3251daa236dda27619846809336727ab940697ccbc2ccd40e53b10d28fa  0006-bearer-qmi-do-not-ask-for-WDS-event-reports.patch
++eeb79a8a22c2674a352b75eb5d1a8733a9385beac26e9504f1e2e64af2328ea4e1592b765bc41de40474db036651e549226d55520d02aaae75cd8c6087fd3cd5  0007-broadband-modem-qmi-reset-only-real-net-ports.patch
+ "
