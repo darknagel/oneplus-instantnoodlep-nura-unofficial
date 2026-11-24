@@ -2,8 +2,11 @@
 # GNSS for the OnePlus 8 Pro's SDX55: talk to the modem's QMI LOC service
 # over QRTR, start a 1 Hz tracking session and hand the standard NMEA
 # sentences to a pseudo terminal at /dev/gnss-sdx55 (for gpsd and friends).
+# The session only runs while a program has /dev/gnss-sdx55 open: while it
+# runs the modem keeps writing to its EFS and sends it to the host every few
+# minutes, which wakes a sleeping phone.
 # Restarts the session whenever the modem goes away and comes back.
-import os, socket, struct, sys, time, tty
+import os, select, socket, struct, sys, time, tty
 
 LOC, DMS = 16, 2
 LINK = '/dev/gnss-sdx55'
@@ -111,6 +114,11 @@ def session(master):
         return
     last = time.monotonic()
     while time.monotonic() - last < 30:   # no NMEA for 30 s: modem gone, start over
+        if not reader_present(master):
+            # A running session makes the modem write to its EFS and send it
+            # to the host every few minutes, which wakes a sleeping phone.
+            log('no reader, stop session:', loc.call(0x0023, tlv(1, b'\x01')))
+            return
         try:
             f, m, t = parse(loc.s.recv(8192))
         except socket.timeout:
@@ -126,6 +134,13 @@ def session(master):
     log('NMEA stopped, restarting')
 
 
+def reader_present(master):
+    """The master side reports a hangup while nobody has the terminal open."""
+    p = select.poll()
+    p.register(master, select.POLLIN)
+    return not any(ev & select.POLLHUP for _, ev in p.poll(0))
+
+
 def main():
     master, slave = os.openpty()
     tty.setraw(slave)
@@ -135,8 +150,12 @@ def main():
     except FileNotFoundError:
         pass
     os.symlink(os.ttyname(slave), LINK)
-    log('NMEA on', LINK, '->', os.ttyname(slave))
+    os.close(slave)     # only readers hold it open: the session runs for them
+    log('NMEA on', LINK, '->', os.readlink(LINK))
     while True:
+        if not reader_present(master):
+            time.sleep(1)
+            continue
         try:
             session(master)
         except OSError as e:

@@ -28,7 +28,8 @@ only for your own build.
    cat /dev/gnss-sdx55     # NMEA, first fix after a few minutes outside
    ```
 
-GPS for apps: `apk add gpsd && gpsd -n /dev/gnss-sdx55`.
+GPS for apps: `apk add gpsd && gpsd -n /dev/gnss-sdx55`. The GNSS session runs while a
+program reads `/dev/gnss-sdx55` and stops when the last one closes it.
 
 Mobile data on congstar, as root (the password is the public one of the APN):
 
@@ -104,6 +105,11 @@ restarts (`systemctl restart 81voltd`).
   NetworkManager took the IMS bearer down together with mobile data (pmaports 0090 leaves
   it up), ModemManager asked for WDS event reports (0090 drops them), and the GNSS session
   runs at 1 Hz (`sdx55-gnss-sleep.service` stops it for the sleep).
+- The GNSS session only runs while a program has `/dev/gnss-sdx55` open. A running
+  session makes the modem write to its EFS and send it to the phone a few minutes later,
+  and when the session ended for the sleep it did so right after the phone fell asleep:
+  seven of eight two-minute sleeps ended after about 85 s with the modem's WAKE#. With
+  the session only running for a reader, seven of eight lasted the full two minutes.
 - Mobile data stays connected over suspend (pmaports 0103). The address stays the same,
   and data that arrives for the phone wakes it. An open SSH session keeps the phone from
   sleeping.
