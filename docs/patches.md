@@ -37,6 +37,7 @@
 | Mobile data over system sleep: NetworkManager took mobile data down before every suspend and brought it back after the resume with a new address. It now leaves modem devices connected, and data that arrives for the phone wakes it | works | pmaports 0103 |
 | ModemManager without a SIM over system sleep: after each resume ModemManager treats the missing SIM as a SIM swap and recreates the modem; the data port reset then also took the ignored `mhi_swip0` port, and the qcom-soc plugin aborted ModemManager on an assertion. The reset now only takes net ports | works | pmaports 0105 |
 | Wake-on-WLAN (`iw phy phy0 wowlan enable magic-packet`): the host took the link of the QCA6390 down for suspend under the running firmware, because the chip reports PME from D3cold, and the phone crashed on the first suspend. The chip now keeps its power, link and interconnect votes while it is to wake the system, stays in D0 with MHI out of M3 as with the vendor driver (in M3 the firmware cannot page code in and woke the phone at once with a page fault), and WAKE# (GPIO 81) is not armed for it. The firmware learns from the QMI host capabilities which MSI wakes the host, ath11k listens to that MSI over system sleep, WoW is enabled for a system suspend, and only SA Query action frames wake the host. The modem keeps waking the system with WAKE# on GPIO 87 | works: a magic packet wakes the phone within a few seconds | kernel 0232–0240, pmaports 0104, 0106 |
+| Wi-Fi over system sleep with Wake-on-WLAN: NetworkManager treated it like Wake-on-LAN and took Wi-Fi down right after the resume to re-check it, so the phone dropped the connection it was woken through and came back with a new MAC address. It now keeps the connection, and the phone answers within about a second of the magic packet | works | pmaports 0107 |
 | GNSS over system sleep: the 1 Hz tracking session kept the modem talking, which woke the phone at once; `sdx55-gnss-sleep.service` stops `sdx55-gnss` before suspend and starts it after resume | works | `modem/sdx55-gnss-sleep.service` |
 | GNSS on demand: `sdx55-gnss` only runs the tracking session while a program has `/dev/gnss-sdx55` open. A running session makes the modem write to its EFS and send it to the phone, and when the session ended for the sleep that woke the phone with WAKE# about 85 s after it fell asleep (seven of eight two-minute sleeps before, one of eight after) | works | `modem/sdx55-gnss.py` |
 | NFC (NXP chip, reading tags with `neard`; PCIe 1 is disabled because it took the enable pin) | works | kernel 0032, pmaports 0021 |
@@ -195,7 +196,7 @@ Attribution for this experiment:
 
 ## Patch numbers in use
 
-The next free numbers are kernel 0241 and package 0107. Kernel 0164 is kept for the
+The next free numbers are kernel 0241 and package 0108. Kernel 0164 is kept for the
 DisplayPort DSC draft. Most package patches change the release and the checksums of the
 kernel package, so a new one has to be made on top of the last one; package numbers
 0070–0074 cannot be filled in later.
@@ -247,7 +248,8 @@ kernel package, so a new one has to be made on top of the last one; package numb
   USB-C attach), 0102 adds 0231 (charge termination on the analog current sense).
   0103 changes NetworkManager (mobile data over system sleep), 0104 adds kernel 0232–0234
   (Wake-on-WLAN without a crash), 0105 changes ModemManager (no abort when the modem is
-  recreated), 0106 adds kernel 0235–0240 (wake by Wake-on-WLAN).
+  recreated), 0106 adds kernel 0235–0240 (wake by Wake-on-WLAN), 0107 changes
+  NetworkManager (Wi-Fi kept over sleep with Wake-on-WLAN).
   Package numbers 0050, 0051, 0053, 0062–0065 and 0070–0074 and kernel numbers 0105–0113,
   0151 and 0164 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.

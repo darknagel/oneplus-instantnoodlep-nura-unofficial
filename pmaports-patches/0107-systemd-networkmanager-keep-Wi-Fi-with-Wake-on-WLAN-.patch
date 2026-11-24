@@ -1,0 +1,117 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <darknagel@proton.me>
+Date: Tue, 24 Nov 2026 20:58:07 +0100
+Subject: [PATCH] systemd/networkmanager: keep Wi-Fi with Wake-on-WLAN over
+ system sleep
+
+NetworkManager 0003: with Wake-on-WLAN armed, NetworkManager took Wi-Fi
+down right after the resume to re-check it, so the phone dropped the
+connection it was woken through and came back with a new MAC address.
+The firmware stays associated over the sleep; keep the connection.
+---
+ ...Fi-with-Wake-on-WLAN-connected-over-.patch | 68 +++++++++++++++++++
+ extra-repos/systemd/networkmanager/APKBUILD   |  4 +-
+ 2 files changed, 71 insertions(+), 1 deletion(-)
+ create mode 100644 extra-repos/systemd/networkmanager/0003-manager-keep-Wi-Fi-with-Wake-on-WLAN-connected-over-.patch
+
+diff --git a/extra-repos/systemd/networkmanager/0003-manager-keep-Wi-Fi-with-Wake-on-WLAN-connected-over-.patch b/extra-repos/systemd/networkmanager/0003-manager-keep-Wi-Fi-with-Wake-on-WLAN-connected-over-.patch
+new file mode 100644
+index 0000000000..1764a913a2
+--- /dev/null
++++ b/extra-repos/systemd/networkmanager/0003-manager-keep-Wi-Fi-with-Wake-on-WLAN-connected-over-.patch
+@@ -0,0 +1,68 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 24 Nov 2026 19:12:45 +0100
++Subject: [PATCH] manager: keep Wi-Fi with Wake-on-WLAN connected over system
++ sleep
++
++NetworkManager treats Wi-Fi with Wake-on-WLAN armed like Wake-on-LAN:
++it leaves the device up for the suspend, but takes it down right after
++the resume to re-check its connectivity. The phone was woken through
++that connection, and it dropped it again, reassociated and came back
++with a new MAC address.
++
++The firmware stays associated while the system sleeps, so the
++connection is still there on resume. Keep it, as for modems.
++---
++ src/core/nm-manager.c | 23 ++++++++++++++++++-----
++ 1 file changed, 18 insertions(+), 5 deletions(-)
++
++diff --git a/src/core/nm-manager.c b/src/core/nm-manager.c
++index 732c44c..9498dcc 100644
++--- a/src/core/nm-manager.c
+++++ b/src/core/nm-manager.c
++@@ -7270,11 +7270,23 @@ sleep_devices_clear(NMManager *self)
++ 
++ /* A modem keeps its data connection over system sleep, as on Android:
++  * ModemManager puts the modem in its quiet state, the bearer and its
++- * address stay, and incoming data can wake the phone. */
+++ * address stay, and incoming data can wake the phone.
+++ *
+++ * So does Wi-Fi with Wake-on-WLAN armed: the firmware stays associated
+++ * while the system sleeps, so the connection is still there on resume.
+++ * Taking it down after the resume would drop the very connection the
+++ * phone was woken through and come back with a new MAC address. */
++ static gboolean
++-device_keeps_link_over_sleep(NMDevice *device)
+++device_keeps_link_over_sleep(NMPlatform *platform, NMDevice *device)
++ {
++-    return nm_device_get_device_type(device) == NM_DEVICE_TYPE_MODEM;
+++    switch (nm_device_get_device_type(device)) {
+++    case NM_DEVICE_TYPE_MODEM:
+++        return TRUE;
+++    case NM_DEVICE_TYPE_WIFI:
+++        return device_is_wake_on_lan(platform, device);
+++    default:
+++        return FALSE;
+++    }
++ }
++ 
++ static void
++@@ -7357,7 +7369,7 @@ do_sleep_wake(NMManager *self, gboolean sleeping_changed)
++                 if (suspending)
++                     continue;
++             }
++-            if (suspending && device_keeps_link_over_sleep(device)) {
+++            if (suspending && device_keeps_link_over_sleep(priv->platform, device)) {
++                 _LOGD(LOGD_SUSPEND,
++                       "sleep: device %s keeps its connection, skipping",
++                       nm_device_get_ip_iface(device));
++@@ -7389,7 +7401,8 @@ do_sleep_wake(NMManager *self, gboolean sleeping_changed)
++                 /* Belatedly take down Wake-on-LAN devices; ideally we wouldn't have to do this
++                  * but for now it's the only way to make sure we re-check their connectivity.
++                  */
++-                if (device_is_wake_on_lan(priv->platform, device))
+++                if (device_is_wake_on_lan(priv->platform, device)
+++                    && !device_keeps_link_over_sleep(priv->platform, device))
++                     nm_device_set_unmanaged_by_flags(device,
++                                                      NM_UNMANAGED_MANAGER_DISABLED,
++                                                      NM_UNMAN_FLAG_OP_SET_UNMANAGED,
+diff --git a/extra-repos/systemd/networkmanager/APKBUILD b/extra-repos/systemd/networkmanager/APKBUILD
+index 0f9cc4706a..d15026d449 100644
+--- a/extra-repos/systemd/networkmanager/APKBUILD
++++ b/extra-repos/systemd/networkmanager/APKBUILD
+@@ -4,7 +4,7 @@ maintainer="Achill Gilgenast <achill@achill.org>"
+ pkgname=networkmanager
+ _pkgver=1.58.0
+ pkgver=9999$_pkgver
+-pkgrel=3
++pkgrel=4
+ pkgdesc="Network Management daemon"
+ url="https://wiki.gnome.org/Projects/NetworkManager"
+ # armhf: pmb#2618
+@@ -84,6 +84,7 @@ source="$pkgname-$_pkgver.tar.gz::https://github.com/NetworkManager/NetworkManag
+ 	$pkgname.rules
+ 	2469.patch
+ 	0002-manager-keep-modem-connections-over-system-sleep.patch
++	0003-manager-keep-Wi-Fi-with-Wake-on-WLAN-connected-over-.patch
+ 	"
+ builddir="$srcdir/NetworkManager-$_pkgver"
+ 
+@@ -250,4 +251,5 @@ sha512sums="
+ 9820ed2ead0af689644842de57657bb10330a1eaff0e85b21ae9913f55e399e47d8b41b0a12956f30de80272b4424c6e55f33acbc88e156879003a260bf576f6  networkmanager.rules
+ cea8057ffec270eb25a37f00c142c76f69da062a8ab5fb40691ed14f85056c0d0b4a45adf900ddac25b518cb7e2a60c5c990c5860d9a8743d02713eee6facf28  2469.patch
+ 4826eda6b3d48dc03035236d6cb5aad07fbe629a314f50c09cf997b3e873b1369bfed41849129b5d0cf50e541063154f34f261914ab5fd11b916ef22bf72380e  0002-manager-keep-modem-connections-over-system-sleep.patch
++c67252f27cacef017b2f3bf8f12ffdcac83a537d8766fbf1b98e42713d7c2f2f76b56622686387fedd49f77eaa4aaab943ef5d5c77f40e57a97a167e129d2825  0003-manager-keep-Wi-Fi-with-Wake-on-WLAN-connected-over-.patch
+ "
