@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 18:03:03 +0100
+Subject: [PATCH] wifi: ath11k: tell the firmware which MSI wakes the host
+
+The QMI host capability message has a field for the MSI that the
+firmware sends to wake the host from WoW, the one assigned to the WAKE
+user. ath11k never filled it in. The QCA6390 firmware then recognises
+a magic packet but has no way to signal it, and the host sleeps on.
+
+Send the WAKE MSI data, as the vendor driver does.
+---
+ drivers/net/wireless/ath/ath11k/qmi.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath11k/qmi.c b/drivers/net/wireless/ath/ath11k/qmi.c
+index 7dc07339b9..9943d92f2f 100644
+--- a/drivers/net/wireless/ath/ath11k/qmi.c
++++ b/drivers/net/wireless/ath/ath11k/qmi.c
+@@ -1711,7 +1711,9 @@ int ath11k_qmi_host_cap_send(struct ath11k_base *ab)
+ {
+ 	struct qmi_wlanfw_host_cap_req_msg_v01 req;
+ 	struct qmi_wlanfw_host_cap_resp_msg_v01 resp;
++	u32 user_base_data, base_vector;
+ 	struct qmi_txn txn;
++	int num_vectors;
+ 	int ret = 0;
+ 
+ 	memset(&req, 0, sizeof(req));
+@@ -1758,6 +1760,17 @@ int ath11k_qmi_host_cap_send(struct ath11k_base *ab)
+ 
+ 	req.nm_modem |= PLATFORM_CAP_PCIE_PME_D3COLD;
+ 
++	/*
++	 * The firmware wakes the host from WoW with an MSI of its own, the
++	 * one assigned to the WAKE user. Without it the firmware sees a
++	 * wake event but has no way to signal it.
++	 */
++	if (!ath11k_get_user_msi_vector(ab, "WAKE", &num_vectors,
++					&user_base_data, &base_vector)) {
++		req.wake_msi_valid = 1;
++		req.wake_msi = user_base_data;
++	}
++
+ 	ath11k_dbg(ab, ATH11K_DBG_QMI, "host cap request\n");
+ 
+ 	ret = qmi_txn_init(&ab->qmi.handle, &txn,

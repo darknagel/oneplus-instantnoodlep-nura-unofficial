@@ -36,7 +36,7 @@
 | IMS connection over system sleep: NetworkManager disconnects all bearers when it brings mobile data down, also before suspend; the modem lost its IMS connection, asked for it again and woke the phone within seconds. A disconnect of all bearers now only covers the ones the Simple interface connected. ModemManager also no longer asks for WDS event reports, which it only logged: the dormancy report woke the phone ten seconds after it went to sleep | works | pmaports 0090 |
 | Mobile data over system sleep: NetworkManager took mobile data down before every suspend and brought it back after the resume with a new address. It now leaves modem devices connected, and data that arrives for the phone wakes it | works | pmaports 0103 |
 | ModemManager without a SIM over system sleep: after each resume ModemManager treats the missing SIM as a SIM swap and recreates the modem; the data port reset then also took the ignored `mhi_swip0` port, and the qcom-soc plugin aborted ModemManager on an assertion. The reset now only takes net ports | works | pmaports 0105 |
-| Wi-Fi with Wake-on-WLAN enabled (`iw phy phy0 wowlan enable magic-packet`): the host took the link of the QCA6390 down for suspend under the running firmware, because the chip reports PME from D3cold, and the phone crashed on the first suspend. The chip now keeps its power and link while it is to wake the system, and WAKE# (GPIO 81) is not armed for it, since it moves WAKE# while entering D3hot. The modem keeps waking the system with WAKE# on GPIO 87 | no crash; the firmware still ends the sleep within seconds (WOW_REASON_PAGE_FAULT), so a magic packet does not wake the phone yet | kernel 0232–0234, pmaports 0104 |
+| Wake-on-WLAN (`iw phy phy0 wowlan enable magic-packet`): the host took the link of the QCA6390 down for suspend under the running firmware, because the chip reports PME from D3cold, and the phone crashed on the first suspend. The chip now keeps its power, link and interconnect votes while it is to wake the system, stays in D0 with MHI out of M3 as with the vendor driver (in M3 the firmware cannot page code in and woke the phone at once with a page fault), and WAKE# (GPIO 81) is not armed for it. The firmware learns from the QMI host capabilities which MSI wakes the host, ath11k listens to that MSI over system sleep, WoW is enabled for a system suspend, and only SA Query action frames wake the host. The modem keeps waking the system with WAKE# on GPIO 87 | works: a magic packet wakes the phone within a few seconds | kernel 0232–0240, pmaports 0104, 0106 |
 | GNSS over system sleep: the 1 Hz tracking session kept the modem talking, which woke the phone at once; `sdx55-gnss-sleep.service` stops `sdx55-gnss` before suspend and starts it after resume | works | `modem/sdx55-gnss-sleep.service` |
 | NFC (NXP chip, reading tags with `neard`; PCIe 1 is disabled because it took the enable pin) | works | kernel 0032, pmaports 0021 |
 | C-PHY on SM8250 CAMSS (posted series, see below) | works | kernel 0033–0041, pmaports 0022 |
@@ -194,7 +194,7 @@ Attribution for this experiment:
 
 ## Patch numbers in use
 
-The next free numbers are kernel 0235 and package 0106. Kernel 0164 is kept for the
+The next free numbers are kernel 0241 and package 0107. Kernel 0164 is kept for the
 DisplayPort DSC draft. Most package patches change the release and the checksums of the
 kernel package, so a new one has to be made on top of the last one; package numbers
 0070–0074 cannot be filled in later.
@@ -246,7 +246,7 @@ kernel package, so a new one has to be made on top of the last one; package numb
   USB-C attach), 0102 adds 0231 (charge termination on the analog current sense).
   0103 changes NetworkManager (mobile data over system sleep), 0104 adds kernel 0232–0234
   (Wake-on-WLAN without a crash), 0105 changes ModemManager (no abort when the modem is
-  recreated).
+  recreated), 0106 adds kernel 0235–0240 (wake by Wake-on-WLAN).
   Package numbers 0050, 0051, 0053, 0062–0065 and 0070–0074 and kernel numbers 0105–0113,
   0151 and 0164 are unused.
 - `modem/` – setup script and small services for the SDX55 modem and GPS.

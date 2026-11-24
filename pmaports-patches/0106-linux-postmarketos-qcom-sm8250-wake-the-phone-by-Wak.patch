@@ -1,0 +1,562 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <darknagel@proton.me>
+Date: Tue, 24 Nov 2026 18:49:29 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: wake the phone by
+ Wake-on-WLAN
+
+Kernel 0235-0240: the Wi-Fi firmware now learns which MSI wakes the
+host, the host listens to it over system sleep, MHI stays out of M3 and
+the chip in D0 with its interconnect votes while it is to wake the
+system, WoW is enabled for a system suspend, and only SA Query action
+frames wake the host. A magic packet now wakes the phone.
+---
+ ...-the-firmware-which-MSI-wakes-the-ho.patch |  47 +++++++
+ ...-the-system-with-the-firmware-s-wake.patch |  88 ++++++++++++
+ ...-MHI-out-of-M3-and-the-device-in-D0-.patch |  77 +++++++++++
+ ...h11k-enable-WoW-for-a-system-suspend.patch |  49 +++++++
+ ...only-SA-Query-action-frames-wake-the.patch | 125 ++++++++++++++++++
+ ...e-interconnect-votes-for-an-endpoint.patch |  76 +++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |  14 +-
+ 7 files changed, 475 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0235-wifi-ath11k-tell-the-firmware-which-MSI-wakes-the-ho.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0236-wifi-ath11k-wake-the-system-with-the-firmware-s-wake.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0237-wifi-ath11k-keep-MHI-out-of-M3-and-the-device-in-D0-.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0238-wifi-ath11k-enable-WoW-for-a-system-suspend.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0239-wifi-ath11k-let-only-SA-Query-action-frames-wake-the.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0240-PCI-qcom-keep-the-interconnect-votes-for-an-endpoint.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0235-wifi-ath11k-tell-the-firmware-which-MSI-wakes-the-ho.patch b/device/testing/linux-postmarketos-qcom-sm8250/0235-wifi-ath11k-tell-the-firmware-which-MSI-wakes-the-ho.patch
+new file mode 100644
+index 0000000000..392ff447a1
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0235-wifi-ath11k-tell-the-firmware-which-MSI-wakes-the-ho.patch
+@@ -0,0 +1,47 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 24 Nov 2026 18:03:03 +0100
++Subject: [PATCH] wifi: ath11k: tell the firmware which MSI wakes the host
++
++The QMI host capability message has a field for the MSI that the
++firmware sends to wake the host from WoW, the one assigned to the WAKE
++user. ath11k never filled it in. The QCA6390 firmware then recognises
++a magic packet but has no way to signal it, and the host sleeps on.
++
++Send the WAKE MSI data, as the vendor driver does.
++---
++ drivers/net/wireless/ath/ath11k/qmi.c | 13 +++++++++++++
++ 1 file changed, 13 insertions(+)
++
++diff --git a/drivers/net/wireless/ath/ath11k/qmi.c b/drivers/net/wireless/ath/ath11k/qmi.c
++index 7dc07339b9..9943d92f2f 100644
++--- a/drivers/net/wireless/ath/ath11k/qmi.c
+++++ b/drivers/net/wireless/ath/ath11k/qmi.c
++@@ -1711,7 +1711,9 @@ int ath11k_qmi_host_cap_send(struct ath11k_base *ab)
++ {
++ 	struct qmi_wlanfw_host_cap_req_msg_v01 req;
++ 	struct qmi_wlanfw_host_cap_resp_msg_v01 resp;
+++	u32 user_base_data, base_vector;
++ 	struct qmi_txn txn;
+++	int num_vectors;
++ 	int ret = 0;
++ 
++ 	memset(&req, 0, sizeof(req));
++@@ -1758,6 +1760,17 @@ int ath11k_qmi_host_cap_send(struct ath11k_base *ab)
++ 
++ 	req.nm_modem |= PLATFORM_CAP_PCIE_PME_D3COLD;
++ 
+++	/*
+++	 * The firmware wakes the host from WoW with an MSI of its own, the
+++	 * one assigned to the WAKE user. Without it the firmware sees a
+++	 * wake event but has no way to signal it.
+++	 */
+++	if (!ath11k_get_user_msi_vector(ab, "WAKE", &num_vectors,
+++					&user_base_data, &base_vector)) {
+++		req.wake_msi_valid = 1;
+++		req.wake_msi = user_base_data;
+++	}
+++
++ 	ath11k_dbg(ab, ATH11K_DBG_QMI, "host cap request\n");
++ 
++ 	ret = qmi_txn_init(&ab->qmi.handle, &txn,
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0236-wifi-ath11k-wake-the-system-with-the-firmware-s-wake.patch b/device/testing/linux-postmarketos-qcom-sm8250/0236-wifi-ath11k-wake-the-system-with-the-firmware-s-wake.patch
+new file mode 100644
+index 0000000000..be158db4c8
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0236-wifi-ath11k-wake-the-system-with-the-firmware-s-wake.patch
+@@ -0,0 +1,88 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 24 Nov 2026 18:03:03 +0100
++Subject: [PATCH] wifi: ath11k: wake the system with the firmware's wake MSI
++
++When a WoW event arrives, the firmware sends the MSI of the WAKE user.
++Request that vector with IRQF_NO_SUSPEND, so that it stays enabled
++over system sleep, and end the sleep from its handler, as the vendor
++driver does.
++
++Only with multiple MSI vectors: with a single one the vector is shared
++with all other interrupts.
++---
++ drivers/net/wireless/ath/ath11k/pci.c | 34 +++++++++++++++++++++++++++
++ drivers/net/wireless/ath/ath11k/pci.h |  1 +
++ 2 files changed, 35 insertions(+)
++
++diff --git a/drivers/net/wireless/ath/ath11k/pci.c b/drivers/net/wireless/ath/ath11k/pci.c
++index 1bc7bca199..f26c568ada 100644
++--- a/drivers/net/wireless/ath/ath11k/pci.c
+++++ b/drivers/net/wireless/ath/ath11k/pci.c
++@@ -7,6 +7,7 @@
++ #include <linux/module.h>
++ #include <linux/msi.h>
++ #include <linux/pci.h>
+++#include <linux/suspend.h>
++ #include <linux/of.h>
++ #include <linux/time.h>
++ #include <linux/vmalloc.h>
++@@ -435,6 +436,37 @@ static void ath11k_pci_msi_disable(struct ath11k_pci *ab_pci)
++ 	ath11k_pci_msi_config(ab_pci, false);
++ }
++ 
+++/* The firmware sends this MSI when a WoW event should wake the host */
+++static irqreturn_t ath11k_pci_wake_irq(int irq, void *data)
+++{
+++	pm_system_wakeup();
+++
+++	return IRQ_HANDLED;
+++}
+++
+++static void ath11k_pci_config_wake_irq(struct ath11k_base *ab)
+++{
+++	struct ath11k_pci *ab_pci = ath11k_pci_priv(ab);
+++	u32 user_base_data, base_vector;
+++	int num_vectors, irq, ret;
+++
+++	/* with a single MSI the vector is shared with everything else */
+++	if (!test_bit(ATH11K_FLAG_MULTI_MSI_VECTORS, &ab->dev_flags) ||
+++	    ath11k_pcic_get_user_msi_assignment(ab, "WAKE", &num_vectors,
+++						&user_base_data, &base_vector))
+++		return;
+++
+++	irq = ath11k_pci_get_msi_irq(ab, base_vector);
+++	ret = devm_request_irq(ab->dev, irq, ath11k_pci_wake_irq,
+++			       IRQF_NO_SUSPEND, "ath11k_wake", ab);
+++	if (ret) {
+++		ath11k_warn(ab, "failed to request wake irq: %d\n", ret);
+++		return;
+++	}
+++
+++	ab_pci->wake_irq = irq;
+++}
+++
++ static int ath11k_pci_alloc_msi(struct ath11k_pci *ab_pci)
++ {
++ 	struct ath11k_base *ab = ab_pci->ab;
++@@ -1126,6 +1158,8 @@ static int ath11k_pci_probe(struct pci_dev *pdev,
++ 		goto err_ce_free;
++ 	}
++ 
+++	ath11k_pci_config_wake_irq(ab);
+++
++ 	/* kernel may allocate a dummy vector before request_irq and
++ 	 * then allocate a real vector when request_irq is called.
++ 	 * So get msi_data here again to avoid spurious interrupt
++diff --git a/drivers/net/wireless/ath/ath11k/pci.h b/drivers/net/wireless/ath/ath11k/pci.h
++index 2579d54477..bf1ede4f28 100644
++--- a/drivers/net/wireless/ath/ath11k/pci.h
+++++ b/drivers/net/wireless/ath/ath11k/pci.h
++@@ -75,6 +75,7 @@ struct ath11k_pci {
++ 	u16 link_ctl;
++ 	u64 dma_mask;
++ 	bool wow_no_d3cold;
+++	int wake_irq;
++ };
++ 
++ static inline struct ath11k_pci *ath11k_pci_priv(struct ath11k_base *ab)
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0237-wifi-ath11k-keep-MHI-out-of-M3-and-the-device-in-D0-.patch b/device/testing/linux-postmarketos-qcom-sm8250/0237-wifi-ath11k-keep-MHI-out-of-M3-and-the-device-in-D0-.patch
+new file mode 100644
+index 0000000000..1db6c92073
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0237-wifi-ath11k-keep-MHI-out-of-M3-and-the-device-in-D0-.patch
+@@ -0,0 +1,77 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 24 Nov 2026 18:03:03 +0100
++Subject: [PATCH] wifi: ath11k: keep MHI out of M3 and the device in D0 for WoW
++
++In MHI M3 or in D3hot the device may not master the bus. The QCA6390
++firmware pages code in from host memory while it runs WoW, so it hit
++a page fault right after the suspend and woke the host at once with
++WOW_REASON_PAGE_FAULT. It also needs bus mastering to send its wake
++MSI.
++
++As the vendor driver does, leave MHI out of M3 on the WoW path and
++keep the device in D0 while it is to wake the system.
++---
++ drivers/net/wireless/ath/ath11k/pci.c |  8 ++++++++
++ drivers/net/wireless/ath/ath11k/wow.c | 20 +++++---------------
++ 2 files changed, 13 insertions(+), 15 deletions(-)
++
++diff --git a/drivers/net/wireless/ath/ath11k/pci.c b/drivers/net/wireless/ath/ath11k/pci.c
++index f26c568ada..c4634fad7e 100644
++--- a/drivers/net/wireless/ath/ath11k/pci.c
+++++ b/drivers/net/wireless/ath/ath11k/pci.c
++@@ -1286,6 +1286,14 @@ static __maybe_unused int ath11k_pci_pm_suspend(struct device *dev)
++ 	if (ret)
++ 		ath11k_warn(ab, "failed to suspend core: %d\n", ret);
++ 
+++	/*
+++	 * For WoW the device stays in D0 with bus mastering on, so that the
+++	 * firmware can page code in and send its wake MSI. With the state
+++	 * saved here the PCI core leaves the power state alone.
+++	 */
+++	if (device_may_wakeup(dev))
+++		pci_save_state(pdev);
+++
++ 	return 0;
++ }
++ 
++diff --git a/drivers/net/wireless/ath/ath11k/wow.c b/drivers/net/wireless/ath/ath11k/wow.c
++index d6c2725903..1bbcd2914f 100644
++--- a/drivers/net/wireless/ath/ath11k/wow.c
+++++ b/drivers/net/wireless/ath/ath11k/wow.c
++@@ -749,17 +749,13 @@ int ath11k_wow_op_suspend(struct ieee80211_hw *hw,
++ 	ath11k_hif_irq_disable(ar->ab);
++ 	ath11k_hif_ce_irq_disable(ar->ab);
++ 
++-	ret = ath11k_hif_suspend(ar->ab);
++-	if (ret) {
++-		ath11k_warn(ar->ab, "failed to suspend hif: %d\n", ret);
++-		goto wakeup;
++-	}
++-
+++	/*
+++	 * MHI stays out of M3, as with the vendor driver: in M3 the
+++	 * firmware may not master the bus, cannot page code in from host
+++	 * memory and wakes the host at once with WOW_REASON_PAGE_FAULT.
+++	 */
++ 	goto exit;
++ 
++-wakeup:
++-	ath11k_wow_wakeup(ar->ab);
++-
++ cleanup:
++ 	ath11k_wow_cleanup(ar);
++ 
++@@ -784,12 +780,6 @@ int ath11k_wow_op_resume(struct ieee80211_hw *hw)
++ 
++ 	mutex_lock(&ar->conf_mutex);
++ 
++-	ret = ath11k_hif_resume(ar->ab);
++-	if (ret) {
++-		ath11k_warn(ar->ab, "failed to resume hif: %d\n", ret);
++-		goto exit;
++-	}
++-
++ 	ath11k_hif_ce_irq_enable(ar->ab);
++ 	ath11k_hif_irq_enable(ar->ab);
++ 
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0238-wifi-ath11k-enable-WoW-for-a-system-suspend.patch b/device/testing/linux-postmarketos-qcom-sm8250/0238-wifi-ath11k-enable-WoW-for-a-system-suspend.patch
+new file mode 100644
+index 0000000000..6bf610c61c
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0238-wifi-ath11k-enable-WoW-for-a-system-suspend.patch
+@@ -0,0 +1,49 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 24 Nov 2026 18:03:03 +0100
++Subject: [PATCH] wifi: ath11k: enable WoW for a system suspend
++
++The vendor driver sets WMI_WOW_FLAG_SYSTEM_SUSPEND_WOW for a system
++suspend and WMI_WOW_FLAG_ENABLE_DRV_PCIE_L1SS_SLEEP when the link may
++sleep. Without them the QCA6390 firmware does not send its wake MSI
++for a WoW event. Send both.
++
++Tested on a OnePlus 8 Pro (QCA6390, WLAN.HST.1.0.1-05266) with this
++series: a magic packet woke the phone within 1 to 7 seconds in every
++run, and the phone otherwise slept until its RTC alarm.
++---
++ drivers/net/wireless/ath/ath11k/wmi.c | 6 ++++++
++ drivers/net/wireless/ath/ath11k/wmi.h | 3 +++
++ 2 files changed, 9 insertions(+)
++
++diff --git a/drivers/net/wireless/ath/ath11k/wmi.c b/drivers/net/wireless/ath/ath11k/wmi.c
++index dca6e011cc..7b6980f225 100644
++--- a/drivers/net/wireless/ath/ath11k/wmi.c
+++++ b/drivers/net/wireless/ath/ath11k/wmi.c
++@@ -9378,6 +9378,12 @@ int ath11k_wmi_wow_enable(struct ath11k *ar)
++ 
++ 	cmd->enable = 1;
++ 	cmd->pause_iface_config = WOW_IFACE_PAUSE_ENABLED;
+++	/*
+++	 * As the vendor driver sends it for a system suspend: without
+++	 * these flags the QCA6390 firmware never sends its wake MSI.
+++	 */
+++	cmd->flags = WMI_WOW_FLAG_SYSTEM_SUSPEND_WOW |
+++		     WMI_WOW_FLAG_ENABLE_DRV_PCIE_L1SS_SLEEP;
++ 	ath11k_dbg(ar->ab, ATH11K_DBG_WMI, "tlv wow enable\n");
++ 
++ 	ret = ath11k_wmi_cmd_send(ar->wmi, skb, WMI_WOW_ENABLE_CMDID);
++diff --git a/drivers/net/wireless/ath/ath11k/wmi.h b/drivers/net/wireless/ath/ath11k/wmi.h
++index b2dade0516..546546050f 100644
++--- a/drivers/net/wireless/ath/ath11k/wmi.h
+++++ b/drivers/net/wireless/ath/ath11k/wmi.h
++@@ -5911,6 +5911,9 @@ enum wmi_wow_wakeup_event {
++ 	WOW_EVENT_MAX,
++ };
++ 
+++#define WMI_WOW_FLAG_ENABLE_DRV_PCIE_L1SS_SLEEP	BIT(4)
+++#define WMI_WOW_FLAG_SYSTEM_SUSPEND_WOW		BIT(5)
+++
++ enum wmi_wow_interface_cfg {
++ 	WOW_IFACE_PAUSE_ENABLED,
++ 	WOW_IFACE_PAUSE_DISABLED
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0239-wifi-ath11k-let-only-SA-Query-action-frames-wake-the.patch b/device/testing/linux-postmarketos-qcom-sm8250/0239-wifi-ath11k-let-only-SA-Query-action-frames-wake-the.patch
+new file mode 100644
+index 0000000000..8bae8f1acf
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0239-wifi-ath11k-let-only-SA-Query-action-frames-wake-the.patch
+@@ -0,0 +1,125 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Mon, 23 Nov 2026 22:31:32 +0100
++Subject: [PATCH] wifi: ath11k: let only SA Query action frames wake the host
++ in WoW
++
++Without a filter the firmware wakes the host from WoW for every action
++frame it receives, Block Ack and BSS transition included, a few
++seconds into every suspend (WOW_REASON_ACTION_FRAME_RECV).
++
++Send WMI_WOW_SET_ACTION_WAKE_UP_CMDID for station interfaces and let
++only SA Query (category 8) wake the host, as the vendor driver does
++for protected management frames.
++---
++ drivers/net/wireless/ath/ath11k/wmi.c | 32 +++++++++++++++++++++++++++
++ drivers/net/wireless/ath/ath11k/wmi.h | 17 ++++++++++++++
++ drivers/net/wireless/ath/ath11k/wow.c | 17 ++++++++++++++
++ 3 files changed, 66 insertions(+)
++
++diff --git a/drivers/net/wireless/ath/ath11k/wmi.c b/drivers/net/wireless/ath/ath11k/wmi.c
++index 7b6980f225..5ce59d422a 100644
++--- a/drivers/net/wireless/ath/ath11k/wmi.c
+++++ b/drivers/net/wireless/ath/ath11k/wmi.c
++@@ -9429,6 +9429,38 @@ int ath11k_wmi_scan_prob_req_oui(struct ath11k *ar,
++ 	return ret;
++ }
++ 
+++int ath11k_wmi_wow_set_action_wake_up(struct ath11k *ar, u32 vdev_id,
+++				       u32 operation, const u32 *category_map)
+++{
+++	struct wmi_wow_set_action_wake_up_cmd *cmd;
+++	struct sk_buff *skb;
+++	int ret, i;
+++
+++	skb = ath11k_wmi_alloc_skb(ar->wmi->wmi_ab, sizeof(*cmd));
+++	if (!skb)
+++		return -ENOMEM;
+++
+++	cmd = (struct wmi_wow_set_action_wake_up_cmd *)skb->data;
+++	cmd->tlv_header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_WOW_SET_ACTION_WAKE_UP_CMD) |
+++			  FIELD_PREP(WMI_TLV_LEN, sizeof(*cmd) - TLV_HDR_SIZE);
+++	cmd->vdev_id = vdev_id;
+++	cmd->operation = operation;
+++	for (i = 0; i < WMI_WOW_ACTION_CATEGORY_WORDS; i++)
+++		cmd->action_category_map[i] = category_map ? category_map[i] : 0;
+++
+++	ath11k_dbg(ar->ab, ATH11K_DBG_WMI,
+++		   "tlv wow set action wake up vdev_id %d operation %d map0 0x%08x\n",
+++		   vdev_id, operation, cmd->action_category_map[0]);
+++
+++	ret = ath11k_wmi_cmd_send(ar->wmi, skb, WMI_WOW_SET_ACTION_WAKE_UP_CMDID);
+++	if (ret) {
+++		ath11k_warn(ar->ab, "failed to send WMI_WOW_SET_ACTION_WAKE_UP_CMDID\n");
+++		dev_kfree_skb(skb);
+++	}
+++
+++	return ret;
+++}
+++
++ int ath11k_wmi_wow_add_wakeup_event(struct ath11k *ar, u32 vdev_id,
++ 				    enum wmi_wow_wakeup_event event,
++ 				u32 enable)
++diff --git a/drivers/net/wireless/ath/ath11k/wmi.h b/drivers/net/wireless/ath/ath11k/wmi.h
++index 546546050f..efc5f6de31 100644
++--- a/drivers/net/wireless/ath/ath11k/wmi.h
+++++ b/drivers/net/wireless/ath/ath11k/wmi.h
++@@ -6061,6 +6061,21 @@ enum wmi_tlv_pattern_type {
++ #define WOW_MAX_REDUCE	(WOW_HDR_LEN - sizeof(struct ethhdr) - \
++ 	offsetof(struct ieee80211_hdr_3addr, addr1))
++ 
+++#define WMI_WOW_ACTION_CATEGORY_WORDS	8
+++
+++enum wmi_wow_action_wakeup_operation {
+++	WMI_WOW_ACTION_WAKEUP_OPERATION_RESET = 0,
+++	WMI_WOW_ACTION_WAKEUP_OPERATION_SET = 1,
+++};
+++
+++/* Which 802.11 action frame categories may wake the host in WoW */
+++struct wmi_wow_set_action_wake_up_cmd {
+++	u32 tlv_header;
+++	u32 vdev_id;
+++	u32 operation;
+++	u32 action_category_map[WMI_WOW_ACTION_CATEGORY_WORDS];
+++} __packed;
+++
++ struct wmi_wow_add_del_event_cmd {
++ 	u32 tlv_header;
++ 	u32 vdev_id;
++@@ -6604,6 +6619,8 @@ int ath11k_wmi_wow_del_pattern(struct ath11k *ar, u32 vdev_id, u32 pattern_id);
++ int ath11k_wmi_wow_add_pattern(struct ath11k *ar, u32 vdev_id, u32 pattern_id,
++ 			       const u8 *pattern, const u8 *mask,
++ 			       int pattern_len, int pattern_offset);
+++int ath11k_wmi_wow_set_action_wake_up(struct ath11k *ar, u32 vdev_id,
+++				       u32 operation, const u32 *category_map);
++ int ath11k_wmi_wow_add_wakeup_event(struct ath11k *ar, u32 vdev_id,
++ 				    enum wmi_wow_wakeup_event event,
++ 				    u32 enable);
++diff --git a/drivers/net/wireless/ath/ath11k/wow.c b/drivers/net/wireless/ath/ath11k/wow.c
++index 1bbcd2914f..8bf3790923 100644
++--- a/drivers/net/wireless/ath/ath11k/wow.c
+++++ b/drivers/net/wireless/ath/ath11k/wow.c
++@@ -451,6 +451,23 @@ static int ath11k_vif_wow_set_wakeups(struct ath11k_vif *arvif,
++ 		__set_bit(WOW_PATTERN_MATCH_EVENT, &wow_mask);
++ 	}
++ 
+++	/*
+++	 * Without a filter the firmware wakes the host for every action frame,
+++	 * Block Ack or BSS transition included, a few seconds into every
+++	 * suspend. Let only SA Query (category 8) wake it, as the vendor driver
+++	 * does for protected management frames.
+++	 */
+++	if (arvif->vdev_type == WMI_VDEV_TYPE_STA) {
+++		u32 map[WMI_WOW_ACTION_CATEGORY_WORDS] = { BIT(8) };
+++
+++		ret = ath11k_wmi_wow_set_action_wake_up(ar, arvif->vdev_id,
+++							WMI_WOW_ACTION_WAKEUP_OPERATION_SET,
+++							map);
+++		if (ret)
+++			ath11k_warn(ar->ab, "failed to set action frame wakeups on vdev %i: %d\n",
+++				    arvif->vdev_id, ret);
+++	}
+++
++ 	for (i = 0; i < WOW_EVENT_MAX; i++) {
++ 		if (!test_bit(i, &wow_mask))
++ 			continue;
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0240-PCI-qcom-keep-the-interconnect-votes-for-an-endpoint.patch b/device/testing/linux-postmarketos-qcom-sm8250/0240-PCI-qcom-keep-the-interconnect-votes-for-an-endpoint.patch
+new file mode 100644
+index 0000000000..ce324a5d88
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0240-PCI-qcom-keep-the-interconnect-votes-for-an-endpoint.patch
+@@ -0,0 +1,76 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Tue, 24 Nov 2026 18:26:38 +0100
++Subject: [PATCH] PCI: qcom: keep the interconnect votes for an endpoint that
++ keeps its link
++
++For system suspend with the link up, the controller sets the PCIe to
++memory path to its minimum bandwidth and turns the CPU path off. A
++Wi-Fi chip in Wake-on-WLAN keeps its link and keeps working from host
++memory: the QCA6390 firmware pages code in while it waits for a wake
++event. With the minimum bandwidth it hit page faults and woke the
++system with WOW_REASON_PAGE_FAULT.
++
++Leave the votes and the OPP alone while an endpoint below the
++controller wakes the system and keeps its power and link.
++---
++ drivers/pci/controller/dwc/pcie-qcom.c | 25 +++++++++++++++++++++++++
++ 1 file changed, 25 insertions(+)
++
++diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
++index d2d89edfd9..e31453d250 100644
++--- a/drivers/pci/controller/dwc/pcie-qcom.c
+++++ b/drivers/pci/controller/dwc/pcie-qcom.c
++@@ -295,6 +295,7 @@ struct qcom_pcie {
++ 	bool use_pm_opp;
++ 	int wake_irq;
++ 	bool wake_armed;
+++	bool wake_link_up;
++ };
++ 
++ #define to_qcom_pcie(x)		dev_get_drvdata((x)->dev)
++@@ -356,6 +357,18 @@ static int qcom_pcie_wakeup_endpoint(struct pci_dev *pdev, void *data)
++ 	return 0;
++ }
++ 
+++/* An endpoint that wakes the system and keeps its power and link */
+++static int qcom_pcie_wakeup_link_up(struct pci_dev *pdev, void *data)
+++{
+++	bool *found = data;
+++
+++	if (!pci_is_bridge(pdev) && device_may_wakeup(&pdev->dev) &&
+++	    (pdev->no_d3cold || !pdev->d3cold_allowed))
+++		*found = true;
+++
+++	return 0;
+++}
+++
++ static void __qcom_pcie_perst_assert(struct qcom_pcie *pcie, bool assert)
++ {
++ 	struct qcom_pcie_perst *perst;
++@@ -2258,6 +2271,10 @@ static int qcom_pcie_suspend_noirq(struct device *dev)
++ 	if (!pcie)
++ 		return 0;
++ 
+++	pcie->wake_link_up = false;
+++	pci_walk_bus(pcie->pci->pp.bridge->bus, qcom_pcie_wakeup_link_up,
+++		     &pcie->wake_link_up);
+++
++ 	ret = dw_pcie_suspend_noirq(pcie->pci);
++ 	if (ret)
++ 		return ret;
++@@ -2273,6 +2290,14 @@ static int qcom_pcie_suspend_noirq(struct device *dev)
++ 
++ 		if (pcie->use_pm_opp)
++ 			dev_pm_opp_set_opp(pcie->pci->dev, NULL);
+++	} else if (pcie->wake_link_up) {
+++		/*
+++		 * An endpoint that wakes the system with its link up, such as a
+++		 * Wi-Fi chip in Wake-on-WLAN, keeps working from host memory while
+++		 * the system sleeps: the QCA6390 firmware pages code in from it.
+++		 * Leave the interconnect votes and the OPP as they are; with the
+++		 * minimum bandwidth the firmware page-faults and wakes the system.
+++		 */
++ 	} else {
++ 		/*
++ 		 * Set minimum bandwidth required to keep data path
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index bf0c6c831e..7c8b23b682 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=109
++pkgrel=110
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -262,6 +262,12 @@ source="
+ 	0232-PCI-host-common-keep-D3cold-off-for-devices-that-hav.patch
+ 	0233-PCI-qcom-leave-WAKE-alone-for-endpoints-that-keep-th.patch
+ 	0234-wifi-ath11k-keep-the-power-on-for-Wake-on-WLAN.patch
++	0235-wifi-ath11k-tell-the-firmware-which-MSI-wakes-the-ho.patch
++	0236-wifi-ath11k-wake-the-system-with-the-firmware-s-wake.patch
++	0237-wifi-ath11k-keep-MHI-out-of-M3-and-the-device-in-D0-.patch
++	0238-wifi-ath11k-enable-WoW-for-a-system-suspend.patch
++	0239-wifi-ath11k-let-only-SA-Query-action-frames-wake-the.patch
++	0240-PCI-qcom-keep-the-interconnect-votes-for-an-endpoint.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -531,4 +537,10 @@ c8d7afefd821fc55e7d3c1b4d191ae074c7dc6bfa00fbede859fb3d4f71ede23543f3d4a46a9bc71
+ c1c872fda7cf56db8e172b09f26deb95e1373efe0af2fd4e79b294f774ed8c7226f46916b290e313f4a9190b2993737e80e335bbc0e816359f99b704680a12d9  0232-PCI-host-common-keep-D3cold-off-for-devices-that-hav.patch
+ 8ac32e7bd585cae6dc47e7532a5d732e7abecf145138b7cd23385b27a59b3a0a1dc56f46d31eec494d5a36c6a7a57bea92e217a13a54f38524aec25d1541ae7a  0233-PCI-qcom-leave-WAKE-alone-for-endpoints-that-keep-th.patch
+ 864a8e27fab96429ec3e9799f1e383f690acaca73ca31cc2e86f758f5a6ad2500e337594f2adb73e70a1277e8ec1ffa7cf6a2298a3820d734c7d3331fcc858ad  0234-wifi-ath11k-keep-the-power-on-for-Wake-on-WLAN.patch
++74d557dcbeb48b80339940e8bf8fb95a6682172922e641afbf92850c69cd03a095dead62bf858f0c240dbbfff953c4ab6fd7ee4fb731243f390bdc77ff52993f  0235-wifi-ath11k-tell-the-firmware-which-MSI-wakes-the-ho.patch
++6e8fc78ca1dabe2c6039993db7b9156975d93036d6837d49b38a261469636abb858f668ebd083fcf327678c5b9f82d1405bd6cca2943979e2859dc099748c319  0236-wifi-ath11k-wake-the-system-with-the-firmware-s-wake.patch
++934b8c4af44af6300b6fe23b75f79c7dba7595dc0813b7ce563c279166bc4f12e237d2259e3b671e3e45985e2341bf7f6af6643f3d82a710b70455c4e9343446  0237-wifi-ath11k-keep-MHI-out-of-M3-and-the-device-in-D0-.patch
++0aec52a133e1a612e693c862fa387314bf0a603844e6acaff83daac8d076c5f1677d6ff7e2c30ebec669c630d2d2749bcbe526fc42918c80361a8b27582b1c45  0238-wifi-ath11k-enable-WoW-for-a-system-suspend.patch
++052188a61569e6878f864f09b0f20ce22f49960bfc3fdd131e5bc006c43184787b3c8c128363ff18cdf6ba7c23e2ff907dcaf64e5defcc20c9d0733e171c2032  0239-wifi-ath11k-let-only-SA-Query-action-frames-wake-the.patch
++ffe99374cf54d4563fd0a8ebbd3c1baeb6fd6d80cfcdc84bb8bb2d50b4c3bef4a5e67e5ba9c7872c437d46fbebff43e8c6736e7dad296da7c2a9183b7ce50fec  0240-PCI-qcom-keep-the-interconnect-votes-for-an-endpoint.patch
+ "

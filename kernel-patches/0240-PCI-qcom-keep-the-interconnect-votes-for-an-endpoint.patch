@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 18:26:38 +0100
+Subject: [PATCH] PCI: qcom: keep the interconnect votes for an endpoint that
+ keeps its link
+
+For system suspend with the link up, the controller sets the PCIe to
+memory path to its minimum bandwidth and turns the CPU path off. A
+Wi-Fi chip in Wake-on-WLAN keeps its link and keeps working from host
+memory: the QCA6390 firmware pages code in while it waits for a wake
+event. With the minimum bandwidth it hit page faults and woke the
+system with WOW_REASON_PAGE_FAULT.
+
+Leave the votes and the OPP alone while an endpoint below the
+controller wakes the system and keeps its power and link.
+---
+ drivers/pci/controller/dwc/pcie-qcom.c | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+
+diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
+index d2d89edfd9..e31453d250 100644
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -295,6 +295,7 @@ struct qcom_pcie {
+ 	bool use_pm_opp;
+ 	int wake_irq;
+ 	bool wake_armed;
++	bool wake_link_up;
+ };
+ 
+ #define to_qcom_pcie(x)		dev_get_drvdata((x)->dev)
+@@ -356,6 +357,18 @@ static int qcom_pcie_wakeup_endpoint(struct pci_dev *pdev, void *data)
+ 	return 0;
+ }
+ 
++/* An endpoint that wakes the system and keeps its power and link */
++static int qcom_pcie_wakeup_link_up(struct pci_dev *pdev, void *data)
++{
++	bool *found = data;
++
++	if (!pci_is_bridge(pdev) && device_may_wakeup(&pdev->dev) &&
++	    (pdev->no_d3cold || !pdev->d3cold_allowed))
++		*found = true;
++
++	return 0;
++}
++
+ static void __qcom_pcie_perst_assert(struct qcom_pcie *pcie, bool assert)
+ {
+ 	struct qcom_pcie_perst *perst;
+@@ -2258,6 +2271,10 @@ static int qcom_pcie_suspend_noirq(struct device *dev)
+ 	if (!pcie)
+ 		return 0;
+ 
++	pcie->wake_link_up = false;
++	pci_walk_bus(pcie->pci->pp.bridge->bus, qcom_pcie_wakeup_link_up,
++		     &pcie->wake_link_up);
++
+ 	ret = dw_pcie_suspend_noirq(pcie->pci);
+ 	if (ret)
+ 		return ret;
+@@ -2273,6 +2290,14 @@ static int qcom_pcie_suspend_noirq(struct device *dev)
+ 
+ 		if (pcie->use_pm_opp)
+ 			dev_pm_opp_set_opp(pcie->pci->dev, NULL);
++	} else if (pcie->wake_link_up) {
++		/*
++		 * An endpoint that wakes the system with its link up, such as a
++		 * Wi-Fi chip in Wake-on-WLAN, keeps working from host memory while
++		 * the system sleeps: the QCA6390 firmware pages code in from it.
++		 * Leave the interconnect votes and the OPP as they are; with the
++		 * minimum bandwidth the firmware page-faults and wakes the system.
++		 */
+ 	} else {
+ 		/*
+ 		 * Set minimum bandwidth required to keep data path

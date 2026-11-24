@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 18:03:03 +0100
+Subject: [PATCH] wifi: ath11k: enable WoW for a system suspend
+
+The vendor driver sets WMI_WOW_FLAG_SYSTEM_SUSPEND_WOW for a system
+suspend and WMI_WOW_FLAG_ENABLE_DRV_PCIE_L1SS_SLEEP when the link may
+sleep. Without them the QCA6390 firmware does not send its wake MSI
+for a WoW event. Send both.
+
+Tested on a OnePlus 8 Pro (QCA6390, WLAN.HST.1.0.1-05266) with this
+series: a magic packet woke the phone within 1 to 7 seconds in every
+run, and the phone otherwise slept until its RTC alarm.
+---
+ drivers/net/wireless/ath/ath11k/wmi.c | 6 ++++++
+ drivers/net/wireless/ath/ath11k/wmi.h | 3 +++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath11k/wmi.c b/drivers/net/wireless/ath/ath11k/wmi.c
+index dca6e011cc..7b6980f225 100644
+--- a/drivers/net/wireless/ath/ath11k/wmi.c
++++ b/drivers/net/wireless/ath/ath11k/wmi.c
+@@ -9378,6 +9378,12 @@ int ath11k_wmi_wow_enable(struct ath11k *ar)
+ 
+ 	cmd->enable = 1;
+ 	cmd->pause_iface_config = WOW_IFACE_PAUSE_ENABLED;
++	/*
++	 * As the vendor driver sends it for a system suspend: without
++	 * these flags the QCA6390 firmware never sends its wake MSI.
++	 */
++	cmd->flags = WMI_WOW_FLAG_SYSTEM_SUSPEND_WOW |
++		     WMI_WOW_FLAG_ENABLE_DRV_PCIE_L1SS_SLEEP;
+ 	ath11k_dbg(ar->ab, ATH11K_DBG_WMI, "tlv wow enable\n");
+ 
+ 	ret = ath11k_wmi_cmd_send(ar->wmi, skb, WMI_WOW_ENABLE_CMDID);
+diff --git a/drivers/net/wireless/ath/ath11k/wmi.h b/drivers/net/wireless/ath/ath11k/wmi.h
+index b2dade0516..546546050f 100644
+--- a/drivers/net/wireless/ath/ath11k/wmi.h
++++ b/drivers/net/wireless/ath/ath11k/wmi.h
+@@ -5911,6 +5911,9 @@ enum wmi_wow_wakeup_event {
+ 	WOW_EVENT_MAX,
+ };
+ 
++#define WMI_WOW_FLAG_ENABLE_DRV_PCIE_L1SS_SLEEP	BIT(4)
++#define WMI_WOW_FLAG_SYSTEM_SUSPEND_WOW		BIT(5)
++
+ enum wmi_wow_interface_cfg {
+ 	WOW_IFACE_PAUSE_ENABLED,
+ 	WOW_IFACE_PAUSE_DISABLED

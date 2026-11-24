@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 18:03:03 +0100
+Subject: [PATCH] wifi: ath11k: keep MHI out of M3 and the device in D0 for WoW
+
+In MHI M3 or in D3hot the device may not master the bus. The QCA6390
+firmware pages code in from host memory while it runs WoW, so it hit
+a page fault right after the suspend and woke the host at once with
+WOW_REASON_PAGE_FAULT. It also needs bus mastering to send its wake
+MSI.
+
+As the vendor driver does, leave MHI out of M3 on the WoW path and
+keep the device in D0 while it is to wake the system.
+---
+ drivers/net/wireless/ath/ath11k/pci.c |  8 ++++++++
+ drivers/net/wireless/ath/ath11k/wow.c | 20 +++++---------------
+ 2 files changed, 13 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath11k/pci.c b/drivers/net/wireless/ath/ath11k/pci.c
+index f26c568ada..c4634fad7e 100644
+--- a/drivers/net/wireless/ath/ath11k/pci.c
++++ b/drivers/net/wireless/ath/ath11k/pci.c
+@@ -1286,6 +1286,14 @@ static __maybe_unused int ath11k_pci_pm_suspend(struct device *dev)
+ 	if (ret)
+ 		ath11k_warn(ab, "failed to suspend core: %d\n", ret);
+ 
++	/*
++	 * For WoW the device stays in D0 with bus mastering on, so that the
++	 * firmware can page code in and send its wake MSI. With the state
++	 * saved here the PCI core leaves the power state alone.
++	 */
++	if (device_may_wakeup(dev))
++		pci_save_state(pdev);
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/net/wireless/ath/ath11k/wow.c b/drivers/net/wireless/ath/ath11k/wow.c
+index d6c2725903..1bbcd2914f 100644
+--- a/drivers/net/wireless/ath/ath11k/wow.c
++++ b/drivers/net/wireless/ath/ath11k/wow.c
+@@ -749,17 +749,13 @@ int ath11k_wow_op_suspend(struct ieee80211_hw *hw,
+ 	ath11k_hif_irq_disable(ar->ab);
+ 	ath11k_hif_ce_irq_disable(ar->ab);
+ 
+-	ret = ath11k_hif_suspend(ar->ab);
+-	if (ret) {
+-		ath11k_warn(ar->ab, "failed to suspend hif: %d\n", ret);
+-		goto wakeup;
+-	}
+-
++	/*
++	 * MHI stays out of M3, as with the vendor driver: in M3 the
++	 * firmware may not master the bus, cannot page code in from host
++	 * memory and wakes the host at once with WOW_REASON_PAGE_FAULT.
++	 */
+ 	goto exit;
+ 
+-wakeup:
+-	ath11k_wow_wakeup(ar->ab);
+-
+ cleanup:
+ 	ath11k_wow_cleanup(ar);
+ 
+@@ -784,12 +780,6 @@ int ath11k_wow_op_resume(struct ieee80211_hw *hw)
+ 
+ 	mutex_lock(&ar->conf_mutex);
+ 
+-	ret = ath11k_hif_resume(ar->ab);
+-	if (ret) {
+-		ath11k_warn(ar->ab, "failed to resume hif: %d\n", ret);
+-		goto exit;
+-	}
+-
+ 	ath11k_hif_ce_irq_enable(ar->ab);
+ 	ath11k_hif_irq_enable(ar->ab);
+ 
