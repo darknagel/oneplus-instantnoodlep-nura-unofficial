@@ -32,7 +32,6 @@ Not working or limited:
 | Fingerprint reader | works with `fprintd`; in Plasma Mobile also screen unlock and setup in the settings (`goodix-fp-overlay`); not in Phosh, no login with a finger |
 | Fast charging (Warp) and wireless charging | not done; charging is 5 V, up to 2 A into the battery |
 | Camera autofocus | phase detection on the main camera only, the other cameras use contrast |
-| Calls | no echo cancellation, see [`modem/`](modem/) |
 | NFC | reading tags only; writing and card emulation are untested |
 | Charging | the phone does not sleep while charging, see [`docs/charging.md`](docs/charging.md) |
 | External display | sound over the monitor breaks after system sleep, see [`docs/displayport.md`](docs/displayport.md) |
@@ -71,8 +70,8 @@ screen may stay black, see [`docs/panel-log.md`](docs/panel-log.md). Patch-by-pa
 The image is console only. It contains no Wi-Fi networks, SSH keys or personal data. At first
 boot it grows the file system and copies the modem, DSP and video firmware and the proximity
 calibration from your phone's own partitions. It contains no proprietary OnePlus files: once
-the phone has internet, `oneplus-ota-fetch` downloads the fingerprint firmware and the sensor
-configuration from OnePlus' official update (about 40 MB, checked against known hashes).
+the phone has internet, `oneplus-ota-fetch` downloads the fingerprint firmware, the sensor
+configuration and the call audio calibration (echo cancellation) from OnePlus' official update (about 40 MB, checked against known hashes).
 Reboot once after that for the sensors.
 
 ## First login

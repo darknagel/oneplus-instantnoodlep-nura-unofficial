@@ -1,0 +1,335 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 23:58:22 +0100
+Subject: [PATCH] ASoC: qcom: q6cvp: CVD 2.2 vocproc setup and calibration
+
+Custom vocproc topologies from the ACDB only work with the CVD 2.2
+session setup: CREATE_FULL_CONTROL_SESSION_V3, the channel and media
+format parameters of the device ports, then TOPOLOGY_COMMIT. Add it
+behind the cvd_v3 parameter, with the microphone and Rx channel counts
+as parameters and 48 kHz ports.
+
+The modules of such topologies need their calibration. Add a
+"calibration" parameter: writing "TXFILE RXFILE" sends the SET_PARAM_V3
+payloads of two firmware files, made from the ACDB, to the enabled
+vocproc. Vendor modules such as the OnePlus echo canceller create their
+state only once audio flows through them and reject parameters before
+that, so user space sends the calibration while a call is up. The write
+fails with -EIO when the ADSP rejected a parameter, which happens for
+data of the wrong sample rate, so user space can fall back to another
+file.
+---
+ sound/soc/qcom/qdsp6/q6cvp.c | 269 ++++++++++++++++++++++++++++++++++-
+ 1 file changed, 264 insertions(+), 5 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6cvp.c b/sound/soc/qcom/qdsp6/q6cvp.c
+index 6d8cc64ef6..41b2936c1b 100644
+--- a/sound/soc/qcom/qdsp6/q6cvp.c
++++ b/sound/soc/qcom/qdsp6/q6cvp.c
+@@ -3,7 +3,11 @@
+ // Copyright (c) 2020, Stephan Gerhold
+ 
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
++#include <linux/firmware.h>
++#include <linux/slab.h>
++#include <linux/unaligned.h>
+ #include <linux/soc/qcom/apr.h>
+ #include "q6cvp.h"
+ #include "q6voice-common.h"
+@@ -104,15 +108,248 @@ static unsigned int rx_topology = VSS_IVOCPROC_TOPOLOGY_ID_RX_DEFAULT;
+ module_param(rx_topology, uint, 0644);
+ MODULE_PARM_DESC(rx_topology, "Topology of the vocproc's Rx path");
+ 
++/*
++ * CVD 2.2 and later set up a vocproc in steps: CREATE_FULL_CONTROL_SESSION_V3
++ * only records the topologies, the channels and media formats of the device
++ * ports follow as parameters, and TOPOLOGY_COMMIT instantiates the modules.
++ * Custom topologies registered from the device's ACDB need this sequence.
++ */
++#define VSS_IVOCPROC_CMD_CREATE_FULL_CONTROL_SESSION_V3	0x00013169
++#define VSS_IVOCPROC_CMD_TOPOLOGY_COMMIT		0x00013198
++#define VSS_ICOMMON_CMD_SET_PARAM_V2			0x0001133D
++#define VSS_ICOMMON_CMD_SET_PARAM_V3			0x00013245
++
++#define VSS_MODULE_CVD_GENERIC				0x0001316E
++#define VSS_PARAM_VOCPROC_TX_CHANNEL_INFO		0x0001328E
++#define VSS_PARAM_VOCPROC_RX_CHANNEL_INFO		0x0001328F
++#define VSS_PARAM_VOCPROC_EC_REF_CHANNEL_INFO		0x00013290
++#define VSS_PARAM_TX_PORT_ENDPOINT_MEDIA_INFO		0x00013253
++#define VSS_PARAM_RX_PORT_ENDPOINT_MEDIA_INFO		0x00013254
++
++#define VSS_NUM_CHANNELS_MAX	32
++#define Q6CVP_PORT_RATE		48000
++
++static bool cvd_v3;
++module_param(cvd_v3, bool, 0644);
++MODULE_PARM_DESC(cvd_v3, "Set up the vocproc with the CVD 2.2 sequence (needed for custom topologies)");
++
++static unsigned int tx_channels = 2;
++module_param(tx_channels, uint, 0644);
++MODULE_PARM_DESC(tx_channels, "Microphone channels of the Tx port (CVD 2.2 sequence)");
++
++static unsigned int rx_channels = 2;
++module_param(rx_channels, uint, 0644);
++MODULE_PARM_DESC(rx_channels, "Channels of the Rx port and echo reference (CVD 2.2 sequence)");
++
++struct q6cvp_set_param {
++	struct apr_hdr hdr;
++	u32 mem_handle;
++	u64 mem_address;
++	u32 mem_size;
++	/*
++	 * In-band SET_PARAM_V2 payload. SET_PARAM_V3 uses a 16 byte header
++	 * here instead (module, instance, reserved, parameter, size), which
++	 * the calibration files hold as is.
++	 */
++	u32 module_id;
++	u32 param_id;
++	u16 param_size;
++	u16 reserved;
++	u8 data[];
++} __packed;
++
++struct q6cvp_channel_info {
++	u32 num_channels;
++	u32 bits_per_sample;
++	u8 channel_mapping[VSS_NUM_CHANNELS_MAX];
++} __packed;
++
++struct q6cvp_media_fmt {
++	u32 port_id;
++	u16 num_channels;
++	u16 bits_per_sample;
++	u32 sample_rate;
++	u8 channel_mapping[VSS_NUM_CHANNELS_MAX];
++} __packed;
++
++static int q6cvp_set_param(struct q6voice_session *s, u32 param_id,
++			   const void *data, u16 size)
++{
++	struct q6cvp_set_param *cmd;
++	int ret;
++
++	cmd = kzalloc(sizeof(*cmd) + size, GFP_KERNEL);
++	if (!cmd)
++		return -ENOMEM;
++	cmd->hdr.pkt_size = sizeof(*cmd) + size;
++	cmd->hdr.opcode = VSS_ICOMMON_CMD_SET_PARAM_V2;
++	cmd->mem_size = 12 + size;
++	cmd->module_id = VSS_MODULE_CVD_GENERIC;
++	cmd->param_id = param_id;
++	cmd->param_size = size;
++	memcpy(cmd->data, data, size);
++	ret = q6voice_common_send(s, &cmd->hdr);
++	kfree(cmd);
++	return ret;
++}
++
++static int q6cvp_set_channels(struct q6voice_session *s, u32 param_id, unsigned int n)
++{
++	struct q6cvp_channel_info ci = { };
++	unsigned int i;
++
++	ci.num_channels = n;
++	ci.bits_per_sample = 16;
++	for (i = 0; i < n && i < VSS_NUM_CHANNELS_MAX; i++)
++		ci.channel_mapping[i] = i + 1;	/* PCM_CHANNEL_FL, FR, ... */
++	return q6cvp_set_param(s, param_id, &ci, sizeof(ci));
++}
++
++static int q6cvp_set_media_fmt(struct q6voice_session *s, u32 param_id,
++			       u16 port, unsigned int n)
++{
++	struct q6cvp_media_fmt mf = { };
++	unsigned int i;
++
++	mf.port_id = port;
++	mf.num_channels = n;
++	mf.bits_per_sample = 16;
++	mf.sample_rate = Q6CVP_PORT_RATE;
++	for (i = 0; i < n && i < VSS_NUM_CHANNELS_MAX; i++)
++		mf.channel_mapping[i] = i + 1;
++	return q6cvp_set_param(s, param_id, &mf, sizeof(mf));
++}
++
++static int q6cvp_v3_setup(struct q6voice_session *s, u16 tx_port, u16 rx_port)
++{
++	struct apr_pkt pkt;
++	int ret;
++
++	ret = q6cvp_set_channels(s, VSS_PARAM_VOCPROC_RX_CHANNEL_INFO, rx_channels);
++	if (!ret)
++		ret = q6cvp_set_channels(s, VSS_PARAM_VOCPROC_TX_CHANNEL_INFO, tx_channels);
++	if (!ret)
++		ret = q6cvp_set_channels(s, VSS_PARAM_VOCPROC_EC_REF_CHANNEL_INFO, rx_channels);
++	if (!ret)
++		ret = q6cvp_set_media_fmt(s, VSS_PARAM_RX_PORT_ENDPOINT_MEDIA_INFO,
++					  rx_port, rx_channels);
++	if (!ret)
++		ret = q6cvp_set_media_fmt(s, VSS_PARAM_TX_PORT_ENDPOINT_MEDIA_INFO,
++					  tx_port, tx_channels);
++	if (ret)
++		return ret;
++
++	pkt.hdr.pkt_size = APR_HDR_SIZE;
++	pkt.hdr.opcode = VSS_IVOCPROC_CMD_TOPOLOGY_COMMIT;
++	return q6voice_common_send(s, &pkt.hdr);
++}
++
++/*
++ * Calibration: the vocproc modules of vendor topologies run on their ACDB
++ * calibration. Writing "TXFILE RXFILE" to the "calibration" parameter sends
++ * the two firmware files ("-" skips one) to the enabled vocproc. Each file
++ * holds SET_PARAM_V3 payloads made from the ACDB, one after another:
++ * module u32, instance u16, reserved u16, parameter u32, size u32, data
++ * (padded to 4 bytes). Some vendor modules only accept their parameters
++ * once audio runs through them, so this is triggered from user space while
++ * a call is up. The write fails with -EIO if the ADSP rejected a parameter,
++ * for example data for a different sample rate.
++ */
++#define Q6CVP_CAL_PARAM_MAX	4096
++
++static struct q6voice_session *cal_session;
++static DEFINE_MUTEX(cal_lock);
++
++static int q6cvp_send_cal_file(struct q6voice_session *s, const char *name)
++{
++	const struct firmware *fw;
++	struct q6cvp_set_param *cmd;
++	size_t o = 0;
++	int ret, bad = 0;
++
++	ret = firmware_request_nowarn(&fw, name, s->dev);
++	if (ret)
++		return ret;
++	cmd = kzalloc(sizeof(*cmd) + Q6CVP_CAL_PARAM_MAX, GFP_KERNEL);
++	if (!cmd) {
++		release_firmware(fw);
++		return -ENOMEM;
++	}
++	while (o + 16 <= fw->size) {
++		u32 size = get_unaligned_le32(fw->data + o + 12);
++
++		if (size > Q6CVP_CAL_PARAM_MAX || o + 16 + size > fw->size) {
++			ret = -EINVAL;
++			break;
++		}
++		memset(cmd, 0, sizeof(*cmd));
++		/* the V3 payload header (module .. size) follows mem_size */
++		cmd->hdr.pkt_size = offsetof(struct q6cvp_set_param, module_id) + 16 + size;
++		cmd->hdr.opcode = VSS_ICOMMON_CMD_SET_PARAM_V3;
++		cmd->mem_size = 16 + size;
++		memcpy(&cmd->module_id, fw->data + o, 16 + size);
++		if (q6voice_common_send(s, &cmd->hdr)) {
++			bad++;
++			dev_dbg(s->dev, "%s: module %#x param %#x rejected\n", name,
++				get_unaligned_le32(fw->data + o),
++				get_unaligned_le32(fw->data + o + 8));
++		}
++		o += 16 + ALIGN(size, 4);
++	}
++	if (!ret && bad)
++		ret = -EIO;
++	dev_dbg(s->dev, "%s: %d parameters rejected: %d\n", name, bad, ret);
++	kfree(cmd);
++	release_firmware(fw);
++	return ret;
++}
++
++static int q6cvp_set_calibration(const char *val, const struct kernel_param *kp)
++{
++	char buf[256], *p = buf, *tx, *rx;
++	int ret = 0, r;
++
++	strscpy(buf, val, sizeof(buf));
++	tx = strsep(&p, " \t\n");
++	rx = p ? strim(p) : NULL;
++	if (!tx || !tx[0])
++		return -EINVAL;
++
++	mutex_lock(&cal_lock);
++	if (!cal_session) {
++		ret = -ENODEV;
++		goto out;
++	}
++	if (strcmp(tx, "-"))
++		ret = q6cvp_send_cal_file(cal_session, tx);
++	if (rx && rx[0] && strcmp(rx, "-")) {
++		r = q6cvp_send_cal_file(cal_session, rx);
++		if (!ret)
++			ret = r;
++	}
++out:
++	mutex_unlock(&cal_lock);
++	return ret;
++}
++
++static const struct kernel_param_ops q6cvp_calibration_ops = {
++	.set = q6cvp_set_calibration,
++};
++module_param_cb(calibration, &q6cvp_calibration_ops, NULL, 0200);
++MODULE_PARM_DESC(calibration, "Send \"TXFILE RXFILE\" calibration to the enabled vocproc");
++
+ struct q6voice_session *q6cvp_session_create(enum q6voice_path_type path,
+ 					     u16 tx_port, u16 rx_port)
+ {
+-	struct vss_ivocproc_cmd_create_full_control_session_v2_cmd cmd;
++	struct vss_ivocproc_cmd_create_full_control_session_v2_cmd cmd = { };
++	struct q6voice_session *s;
++	bool v3 = cvd_v3;
++	int ret;
+ 
+ 	cmd.hdr.pkt_size = sizeof(cmd);
+-	cmd.hdr.opcode = VSS_IVOCPROC_CMD_CREATE_FULL_CONTROL_SESSION_V2;
++	cmd.hdr.opcode = v3 ? VSS_IVOCPROC_CMD_CREATE_FULL_CONTROL_SESSION_V3 :
++			      VSS_IVOCPROC_CMD_CREATE_FULL_CONTROL_SESSION_V2;
+ 
+-	/* TODO: Implement calibration */
+ 	cmd.tx_topology_id = tx_topology;
+ 	cmd.rx_topology_id = rx_topology;
+ 
+@@ -123,18 +360,40 @@ struct q6voice_session *q6cvp_session_create(enum q6voice_path_type path,
+ 	cmd.vocproc_mode = VSS_IVOCPROC_VOCPROC_MODE_EC_INT_MIXING;
+ 	cmd.ec_ref_port_id = VSS_IVOCPROC_PORT_ID_NONE;
+ 
+-	return q6voice_session_create(Q6VOICE_SERVICE_CVP, path, &cmd.hdr);
++	s = q6voice_session_create(Q6VOICE_SERVICE_CVP, path, &cmd.hdr);
++	if (IS_ERR(s) || !v3)
++		return s;
++	ret = q6cvp_v3_setup(s, tx_port, rx_port);
++	if (ret) {
++		dev_err(s->dev, "failed to set up vocproc topology %#x/%#x: %d\n",
++			tx_topology, rx_topology, ret);
++		q6voice_session_release(s);
++		return ERR_PTR(ret);
++	}
++	return s;
+ }
+ EXPORT_SYMBOL_GPL(q6cvp_session_create);
+ 
+ int q6cvp_enable(struct q6voice_session *cvp, bool state)
+ {
+ 	struct apr_pkt cmd;
++	int ret;
+ 
+ 	cmd.hdr.pkt_size = APR_HDR_SIZE;
+ 	cmd.hdr.opcode = state ? VSS_IVOCPROC_CMD_ENABLE : VSS_IVOCPROC_CMD_DISABLE;
+ 
+-	return q6voice_common_send(cvp, &cmd.hdr);
++	mutex_lock(&cal_lock);
++	if (!state && cal_session == cvp)
++		cal_session = NULL;
++	mutex_unlock(&cal_lock);
++
++	ret = q6voice_common_send(cvp, &cmd.hdr);
++	if (!ret && state) {
++		mutex_lock(&cal_lock);
++		cal_session = cvp;
++		mutex_unlock(&cal_lock);
++	}
++	return ret;
+ }
+ EXPORT_SYMBOL_GPL(q6cvp_enable);
+ 

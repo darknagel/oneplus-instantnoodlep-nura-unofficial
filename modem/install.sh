@@ -46,6 +46,7 @@ install -m 755 sdx55-sim.py /usr/local/bin/sdx55-sim
 install -m 755 modemstate.py /usr/local/bin/sdx55-modemstate
 install -m 755 sdx55-callaudio.py /usr/local/bin/sdx55-callaudio
 install -m 755 sdx55-callaudiod.py /usr/local/bin/sdx55-callaudiod
+install -m 755 oneplus-voicecal.py /usr/local/bin/oneplus-voicecal
 mkdir -p /var/lib/sdx55-rfs/efs /etc/udev/rules.d
 chmod 700 /var/lib/sdx55-rfs/efs
 

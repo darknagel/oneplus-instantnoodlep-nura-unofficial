@@ -60,10 +60,29 @@ link and GLINK.
   button turns both on, mute sets the microphone gain to zero. If the session bus still
   starts `callaudiod`, put the same service file into `~/.local/share/dbus-1/services/`.
 
-Limits: no echo cancellation or noise suppression (the vocproc runs without a Tx topology,
-`q6cvp.tx_topology`, because there is no calibration data, so the microphone gain is
-fixed at +36 dB, `VA_DEC0 Volume` 120; at +24 dB the other side heard us too quietly),
-incoming calls over 2G are untested, and several of the kernel patches are still marked WIP: which of the
+Echo cancellation (kernel 0241–0242, pmaports 0108): OnePlus runs the call audio
+processing in the ADSP in its own vocproc topologies, `0x1000bff1` (Tx, two microphones,
+with OnePlus' echo canceller module `0x1000b500`) and `0x1000bff2` (Rx, module
+`0x1000b501`). Their definitions and calibration are in the ACDB files of the odm
+partition. `oneplus-ota-fetch` downloads `Global_cal.acdb`, `Handset_cal.acdb` and
+`Speaker_cal.acdb` from the official OTA, and `oneplus-voicecal` turns them into
+`/lib/firmware/oneplus-instantnoodlep/voice/`: `topologies.bin` and one calibration file
+per route (`hs` earpiece, `spk` speakerphone), network (`gsm`, `wcdma`, `lte`) and voice
+bandwidth (`nb`, `wb`), each the static calibration of the Tx and Rx modules plus the
+volume dependent one. When the files exist, `sdx55-callaudio` registers the topologies
+(`q6core.topologies`), switches the vocproc to them with the CVD 2.2 setup
+(`q6cvp.cvd_v3`), adds the second microphone (`VA_DEC1`, DMIC1) and writes the matching
+calibration to `q6cvp.calibration` two seconds after the call audio starts, and again
+when the route changes. The OnePlus modules create their state only once audio flows
+through them and reject their parameters before that, which is why the calibration
+cannot go with the session setup. The ADSP also rejects wideband data while the call runs
+at 8 kHz (a longer microphone filter), so `sdx55-callaudio` falls back to the narrowband
+file. `journalctl -u sdx55-callaudio` shows the file it used. Without the files the call
+runs without processing as before.
+
+Limits: the microphone gain is fixed at +36 dB (`VA_DEC0 Volume` 120; at +24 dB the
+other side heard us too quietly), the calibration uses the middle of OnePlus' nine
+volume steps, incoming calls over 2G are untested, and several of the kernel patches are still marked WIP: which of the
 mailbox placement patches are really needed has not been narrowed down.
 
 What made it work in the end: the SDX55 has two QRTR nodes behind its MHI link. Forwarded

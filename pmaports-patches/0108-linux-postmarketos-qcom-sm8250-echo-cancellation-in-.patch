@@ -1,0 +1,655 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <darknagel@proton.me>
+Date: Fri, 27 Nov 2026 00:18:10 +0100
+Subject: [PATCH] linux-postmarketos-qcom-sm8250: echo cancellation in calls
+
+Kernel 0241-0242: q6core registers custom topologies from a firmware
+file, q6cvp sets up the vocproc with the CVD 2.2 sequence and sends
+calibration files to the running vocproc on request. With OnePlus'
+topologies and calibration from the ACDB, which oneplus-ota-fetch and
+oneplus-voicecal provide, the echo canceller runs in calls.
+---
+ ...-register-custom-topologies-from-a-f.patch | 261 ++++++++++++++
+ ...CVD-2.2-vocproc-setup-and-calibratio.patch | 335 ++++++++++++++++++
+ .../linux-postmarketos-qcom-sm8250/APKBUILD   |   6 +-
+ 3 files changed, 601 insertions(+), 1 deletion(-)
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0241-ASoC-qcom-q6core-register-custom-topologies-from-a-f.patch
+ create mode 100644 device/testing/linux-postmarketos-qcom-sm8250/0242-ASoC-qcom-q6cvp-CVD-2.2-vocproc-setup-and-calibratio.patch
+
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0241-ASoC-qcom-q6core-register-custom-topologies-from-a-f.patch b/device/testing/linux-postmarketos-qcom-sm8250/0241-ASoC-qcom-q6core-register-custom-topologies-from-a-f.patch
+new file mode 100644
+index 0000000000..a370437a49
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0241-ASoC-qcom-q6core-register-custom-topologies-from-a-f.patch
+@@ -0,0 +1,261 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Thu, 26 Nov 2026 23:58:22 +0100
++Subject: [PATCH] ASoC: qcom: q6core: register custom topologies from a
++ firmware file
++
++Devices with vendor voice and audio processing define their own module
++topologies in the ACDB, and the vendor stack registers them with the
++ADSP before a session can use them. Add a "topologies" parameter: writing
++a firmware file name to it sends the file, a topology definition blob as
++stored in the ACDB, with AVCS_CMD_REGISTER_TOPOLOGIES.
++
++The blob is passed in shared memory mapped with
++AVCS_CMD_SHARED_MEM_MAP_REGIONS. The ADSP reaches the memory through the
++SMMU context bank of the q6asm DAIs and expects that bank's stream ID in
++the upper address word, as msm_audio_ion does downstream; without it the
++ADSP faults and the SoC resets. The stream ID is a parameter, 1 on
++SM8250.
++---
++ sound/soc/qcom/qdsp6/q6core.c | 188 ++++++++++++++++++++++++++++++++++
++ 1 file changed, 188 insertions(+)
++
++diff --git a/sound/soc/qcom/qdsp6/q6core.c b/sound/soc/qcom/qdsp6/q6core.c
++index 48825756a7..1ea043ab7f 100644
++--- a/sound/soc/qcom/qdsp6/q6core.c
+++++ b/sound/soc/qcom/qdsp6/q6core.c
++@@ -9,6 +9,10 @@
++ #include <linux/sched.h>
++ #include <linux/of.h>
++ #include <linux/of_platform.h>
+++#include <linux/platform_device.h>
+++#include <linux/dma-mapping.h>
+++#include <linux/firmware.h>
+++#include <linux/sizes.h>
++ #include <linux/jiffies.h>
++ #include <linux/soc/qcom/apr.h>
++ #include "q6core.h"
++@@ -22,6 +26,11 @@
++ #define AVCS_GET_VERSIONS_RSP   0x00012906
++ #define AVCS_CMD_GET_FWK_VERSION	0x001292c
++ #define AVCS_CMDRSP_GET_FWK_VERSION	0x001292d
+++#define AVCS_CMD_REGISTER_TOPOLOGIES	0x00012923
+++#define AVCS_CMD_SHARED_MEM_MAP_REGIONS	0x00012924
+++#define AVCS_CMDRSP_SHARED_MEM_MAP_REGIONS	0x00012925
+++
+++#define ADSP_MEMORY_MAP_SHMEM8_4K_POOL	3
++ 
++ struct avcs_svc_info {
++ 	uint32_t service_id;
++@@ -63,6 +72,12 @@ struct q6core {
++ 	bool get_state_supported;
++ 	bool get_version_supported;
++ 	bool is_version_requested;
+++	u32 cmd_status;
+++	u32 map_handle;
+++	void *topo_buf;
+++	dma_addr_t topo_iova;
+++	size_t topo_len;
+++	struct device *topo_dev;
++ };
++ 
++ static struct q6core *g_core;
++@@ -93,9 +108,19 @@ static int q6core_callback(struct apr_device *adev, const struct apr_resp_pkt *d
++ 				core->get_state_supported = false;
++ 			core->resp_received = true;
++ 			break;
+++		case AVCS_CMD_REGISTER_TOPOLOGIES:
+++		case AVCS_CMD_SHARED_MEM_MAP_REGIONS:
+++			core->cmd_status = result->status;
+++			core->resp_received = true;
+++			break;
++ 		}
++ 		break;
++ 	}
+++	case AVCS_CMDRSP_SHARED_MEM_MAP_REGIONS:
+++		core->map_handle = *(u32 *)data->payload;
+++		core->cmd_status = 0;
+++		core->resp_received = true;
+++		break;
++ 	case AVCS_CMDRSP_GET_FWK_VERSION: {
++ 		struct avcs_cmdrsp_get_fwk_version *fwk;
++ 
++@@ -325,6 +350,164 @@ bool q6core_is_adsp_ready(void)
++ }
++ EXPORT_SYMBOL_GPL(q6core_is_adsp_ready);
++ 
+++/*
+++ * Custom topologies: devices with vendor voice and audio processing ship
+++ * topology definitions in their ACDB, which the vendor stack registers
+++ * with the ADSP before a session may use them. Writing a firmware file
+++ * name to the "topologies" parameter sends that file, a topology
+++ * definition blob as stored in the ACDB, with AVCS_CMD_REGISTER_TOPOLOGIES.
+++ *
+++ * The blob is passed out of band in shared memory. The ADSP reaches the
+++ * memory through the SMMU context bank of the q6asm DAIs, whose stream ID
+++ * it expects in the upper address word (as msm_audio_ion does downstream).
+++ */
+++struct avcs_cmd_register_topologies {
+++	struct apr_hdr hdr;
+++	u32 payload_addr_lsw;
+++	u32 payload_addr_msw;
+++	u32 mem_map_handle;
+++	u32 payload_size;
+++} __packed;
+++
+++struct avcs_cmd_shared_mem_map_regions {
+++	struct apr_hdr hdr;
+++	u16 mem_pool_id;
+++	u16 num_regions;
+++	u32 property_flag;
+++	u32 shm_addr_lsw;
+++	u32 shm_addr_msw;
+++	u32 mem_size_bytes;
+++} __packed;
+++
+++static unsigned int q6core_smmu_sid = 1;
+++module_param_named(smmu_sid, q6core_smmu_sid, uint, 0644);
+++MODULE_PARM_DESC(smmu_sid, "SMMU stream ID of the ADSP audio context bank");
+++
+++static char q6core_topologies[128];
+++
+++static int q6core_send_wait(struct q6core *core, void *pkt)
+++{
+++	int rc;
+++
+++	core->resp_received = false;
+++	core->cmd_status = U32_MAX;
+++	rc = apr_send_pkt(core->adev, pkt);
+++	if (rc < 0)
+++		return rc;
+++	rc = wait_event_timeout(core->wait, core->resp_received,
+++				msecs_to_jiffies(Q6_READY_TIMEOUT_MS));
+++	core->resp_received = false;
+++	if (!rc)
+++		return -ETIMEDOUT;
+++	return core->cmd_status ? -EIO : 0;
+++}
+++
+++static struct device *q6core_dma_dev(void)
+++{
+++	struct device_node *np = of_find_compatible_node(NULL, NULL, "qcom,q6asm-dais");
+++	struct platform_device *pdev;
+++
+++	if (!np)
+++		return NULL;
+++	pdev = of_find_device_by_node(np);
+++	of_node_put(np);
+++	return pdev ? &pdev->dev : NULL;
+++}
+++
+++static int q6core_register_topologies(struct q6core *core, const char *name)
+++{
+++	struct avcs_cmd_shared_mem_map_regions map = { };
+++	struct avcs_cmd_register_topologies cmd = { };
+++	const struct firmware *fw;
+++	u32 hdr_field;
+++	int rc;
+++
+++	rc = firmware_request_nowarn(&fw, name, &core->adev->dev);
+++	if (rc)
+++		return rc;
+++	if (!fw->size) {
+++		rc = -EINVAL;
+++		goto out;
+++	}
+++
+++	mutex_lock(&core->lock);
+++	/* the ADSP keeps referring to the memory, so keep it until the next registration */
+++	if (core->topo_buf) {
+++		dma_free_coherent(core->topo_dev, core->topo_len, core->topo_buf, core->topo_iova);
+++		core->topo_buf = NULL;
+++	}
+++	if (core->topo_dev)
+++		put_device(core->topo_dev);
+++	core->topo_dev = q6core_dma_dev();
+++	core->topo_len = ALIGN(fw->size, SZ_4K);
+++	if (core->topo_dev)
+++		core->topo_buf = dma_alloc_coherent(core->topo_dev, core->topo_len,
+++						    &core->topo_iova, GFP_KERNEL);
+++	if (!core->topo_buf) {
+++		rc = -ENOMEM;
+++		goto unlock;
+++	}
+++	memcpy(core->topo_buf, fw->data, fw->size);
+++
+++	hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD, APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
+++	map.hdr.hdr_field = hdr_field;
+++	map.hdr.pkt_size = sizeof(map);
+++	map.hdr.opcode = AVCS_CMD_SHARED_MEM_MAP_REGIONS;
+++	map.mem_pool_id = ADSP_MEMORY_MAP_SHMEM8_4K_POOL;
+++	map.num_regions = 1;
+++	map.shm_addr_lsw = lower_32_bits(core->topo_iova);
+++	map.shm_addr_msw = upper_32_bits(core->topo_iova) | q6core_smmu_sid;
+++	map.mem_size_bytes = core->topo_len;
+++	rc = q6core_send_wait(core, &map);
+++	if (rc)
+++		goto unlock;
+++
+++	cmd.hdr.hdr_field = hdr_field;
+++	cmd.hdr.pkt_size = sizeof(cmd);
+++	cmd.hdr.opcode = AVCS_CMD_REGISTER_TOPOLOGIES;
+++	cmd.payload_addr_lsw = lower_32_bits(core->topo_iova);
+++	cmd.payload_addr_msw = upper_32_bits(core->topo_iova) | q6core_smmu_sid;
+++	cmd.mem_map_handle = core->map_handle;
+++	cmd.payload_size = fw->size;
+++	rc = q6core_send_wait(core, &cmd);
+++unlock:
+++	mutex_unlock(&core->lock);
+++out:
+++	dev_info(&core->adev->dev, "register topologies from %s (%zu bytes): %d\n",
+++		 name, fw->size, rc);
+++	release_firmware(fw);
+++	return rc;
+++}
+++
+++static int q6core_set_topologies(const char *val, const struct kernel_param *kp)
+++{
+++	char name[sizeof(q6core_topologies)];
+++	int rc;
+++
+++	if (!g_core)
+++		return -ENODEV;
+++	strscpy(name, val, sizeof(name));
+++	strim(name);
+++	if (!name[0])
+++		return -EINVAL;
+++	rc = q6core_register_topologies(g_core, name);
+++	if (!rc)
+++		strscpy(q6core_topologies, name, sizeof(q6core_topologies));
+++	return rc;
+++}
+++
+++static int q6core_get_topologies(char *buf, const struct kernel_param *kp)
+++{
+++	return sysfs_emit(buf, "%s\n", q6core_topologies);
+++}
+++
+++static const struct kernel_param_ops q6core_topologies_ops = {
+++	.set = q6core_set_topologies,
+++	.get = q6core_get_topologies,
+++};
+++module_param_cb(topologies, &q6core_topologies_ops, NULL, 0644);
+++MODULE_PARM_DESC(topologies, "Firmware file with custom topologies to register");
+++
++ static int q6core_probe(struct apr_device *adev)
++ {
++ 	g_core = kzalloc_obj(*g_core);
++@@ -347,8 +530,13 @@ static void q6core_exit(struct apr_device *adev)
++ 		kfree(core->fwk_version);
++ 	if (core->get_version_supported)
++ 		kfree(core->svc_version);
+++	if (core->topo_buf)
+++		dma_free_coherent(core->topo_dev, core->topo_len, core->topo_buf, core->topo_iova);
+++	if (core->topo_dev)
+++		put_device(core->topo_dev);
++ 
++ 	g_core = NULL;
+++	q6core_topologies[0] = 0;
++ 	kfree(core);
++ }
++ 
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/0242-ASoC-qcom-q6cvp-CVD-2.2-vocproc-setup-and-calibratio.patch b/device/testing/linux-postmarketos-qcom-sm8250/0242-ASoC-qcom-q6cvp-CVD-2.2-vocproc-setup-and-calibratio.patch
+new file mode 100644
+index 0000000000..b0e440e276
+--- /dev/null
++++ b/device/testing/linux-postmarketos-qcom-sm8250/0242-ASoC-qcom-q6cvp-CVD-2.2-vocproc-setup-and-calibratio.patch
+@@ -0,0 +1,335 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Timo <1788603+darknagel@users.noreply.github.com>
++Date: Thu, 26 Nov 2026 23:58:22 +0100
++Subject: [PATCH] ASoC: qcom: q6cvp: CVD 2.2 vocproc setup and calibration
++
++Custom vocproc topologies from the ACDB only work with the CVD 2.2
++session setup: CREATE_FULL_CONTROL_SESSION_V3, the channel and media
++format parameters of the device ports, then TOPOLOGY_COMMIT. Add it
++behind the cvd_v3 parameter, with the microphone and Rx channel counts
++as parameters and 48 kHz ports.
++
++The modules of such topologies need their calibration. Add a
++"calibration" parameter: writing "TXFILE RXFILE" sends the SET_PARAM_V3
++payloads of two firmware files, made from the ACDB, to the enabled
++vocproc. Vendor modules such as the OnePlus echo canceller create their
++state only once audio flows through them and reject parameters before
++that, so user space sends the calibration while a call is up. The write
++fails with -EIO when the ADSP rejected a parameter, which happens for
++data of the wrong sample rate, so user space can fall back to another
++file.
++---
++ sound/soc/qcom/qdsp6/q6cvp.c | 269 ++++++++++++++++++++++++++++++++++-
++ 1 file changed, 264 insertions(+), 5 deletions(-)
++
++diff --git a/sound/soc/qcom/qdsp6/q6cvp.c b/sound/soc/qcom/qdsp6/q6cvp.c
++index 6d8cc64ef6..41b2936c1b 100644
++--- a/sound/soc/qcom/qdsp6/q6cvp.c
+++++ b/sound/soc/qcom/qdsp6/q6cvp.c
++@@ -3,7 +3,11 @@
++ // Copyright (c) 2020, Stephan Gerhold
++ 
++ #include <linux/module.h>
+++#include <linux/mutex.h>
++ #include <linux/of.h>
+++#include <linux/firmware.h>
+++#include <linux/slab.h>
+++#include <linux/unaligned.h>
++ #include <linux/soc/qcom/apr.h>
++ #include "q6cvp.h"
++ #include "q6voice-common.h"
++@@ -104,15 +108,248 @@ static unsigned int rx_topology = VSS_IVOCPROC_TOPOLOGY_ID_RX_DEFAULT;
++ module_param(rx_topology, uint, 0644);
++ MODULE_PARM_DESC(rx_topology, "Topology of the vocproc's Rx path");
++ 
+++/*
+++ * CVD 2.2 and later set up a vocproc in steps: CREATE_FULL_CONTROL_SESSION_V3
+++ * only records the topologies, the channels and media formats of the device
+++ * ports follow as parameters, and TOPOLOGY_COMMIT instantiates the modules.
+++ * Custom topologies registered from the device's ACDB need this sequence.
+++ */
+++#define VSS_IVOCPROC_CMD_CREATE_FULL_CONTROL_SESSION_V3	0x00013169
+++#define VSS_IVOCPROC_CMD_TOPOLOGY_COMMIT		0x00013198
+++#define VSS_ICOMMON_CMD_SET_PARAM_V2			0x0001133D
+++#define VSS_ICOMMON_CMD_SET_PARAM_V3			0x00013245
+++
+++#define VSS_MODULE_CVD_GENERIC				0x0001316E
+++#define VSS_PARAM_VOCPROC_TX_CHANNEL_INFO		0x0001328E
+++#define VSS_PARAM_VOCPROC_RX_CHANNEL_INFO		0x0001328F
+++#define VSS_PARAM_VOCPROC_EC_REF_CHANNEL_INFO		0x00013290
+++#define VSS_PARAM_TX_PORT_ENDPOINT_MEDIA_INFO		0x00013253
+++#define VSS_PARAM_RX_PORT_ENDPOINT_MEDIA_INFO		0x00013254
+++
+++#define VSS_NUM_CHANNELS_MAX	32
+++#define Q6CVP_PORT_RATE		48000
+++
+++static bool cvd_v3;
+++module_param(cvd_v3, bool, 0644);
+++MODULE_PARM_DESC(cvd_v3, "Set up the vocproc with the CVD 2.2 sequence (needed for custom topologies)");
+++
+++static unsigned int tx_channels = 2;
+++module_param(tx_channels, uint, 0644);
+++MODULE_PARM_DESC(tx_channels, "Microphone channels of the Tx port (CVD 2.2 sequence)");
+++
+++static unsigned int rx_channels = 2;
+++module_param(rx_channels, uint, 0644);
+++MODULE_PARM_DESC(rx_channels, "Channels of the Rx port and echo reference (CVD 2.2 sequence)");
+++
+++struct q6cvp_set_param {
+++	struct apr_hdr hdr;
+++	u32 mem_handle;
+++	u64 mem_address;
+++	u32 mem_size;
+++	/*
+++	 * In-band SET_PARAM_V2 payload. SET_PARAM_V3 uses a 16 byte header
+++	 * here instead (module, instance, reserved, parameter, size), which
+++	 * the calibration files hold as is.
+++	 */
+++	u32 module_id;
+++	u32 param_id;
+++	u16 param_size;
+++	u16 reserved;
+++	u8 data[];
+++} __packed;
+++
+++struct q6cvp_channel_info {
+++	u32 num_channels;
+++	u32 bits_per_sample;
+++	u8 channel_mapping[VSS_NUM_CHANNELS_MAX];
+++} __packed;
+++
+++struct q6cvp_media_fmt {
+++	u32 port_id;
+++	u16 num_channels;
+++	u16 bits_per_sample;
+++	u32 sample_rate;
+++	u8 channel_mapping[VSS_NUM_CHANNELS_MAX];
+++} __packed;
+++
+++static int q6cvp_set_param(struct q6voice_session *s, u32 param_id,
+++			   const void *data, u16 size)
+++{
+++	struct q6cvp_set_param *cmd;
+++	int ret;
+++
+++	cmd = kzalloc(sizeof(*cmd) + size, GFP_KERNEL);
+++	if (!cmd)
+++		return -ENOMEM;
+++	cmd->hdr.pkt_size = sizeof(*cmd) + size;
+++	cmd->hdr.opcode = VSS_ICOMMON_CMD_SET_PARAM_V2;
+++	cmd->mem_size = 12 + size;
+++	cmd->module_id = VSS_MODULE_CVD_GENERIC;
+++	cmd->param_id = param_id;
+++	cmd->param_size = size;
+++	memcpy(cmd->data, data, size);
+++	ret = q6voice_common_send(s, &cmd->hdr);
+++	kfree(cmd);
+++	return ret;
+++}
+++
+++static int q6cvp_set_channels(struct q6voice_session *s, u32 param_id, unsigned int n)
+++{
+++	struct q6cvp_channel_info ci = { };
+++	unsigned int i;
+++
+++	ci.num_channels = n;
+++	ci.bits_per_sample = 16;
+++	for (i = 0; i < n && i < VSS_NUM_CHANNELS_MAX; i++)
+++		ci.channel_mapping[i] = i + 1;	/* PCM_CHANNEL_FL, FR, ... */
+++	return q6cvp_set_param(s, param_id, &ci, sizeof(ci));
+++}
+++
+++static int q6cvp_set_media_fmt(struct q6voice_session *s, u32 param_id,
+++			       u16 port, unsigned int n)
+++{
+++	struct q6cvp_media_fmt mf = { };
+++	unsigned int i;
+++
+++	mf.port_id = port;
+++	mf.num_channels = n;
+++	mf.bits_per_sample = 16;
+++	mf.sample_rate = Q6CVP_PORT_RATE;
+++	for (i = 0; i < n && i < VSS_NUM_CHANNELS_MAX; i++)
+++		mf.channel_mapping[i] = i + 1;
+++	return q6cvp_set_param(s, param_id, &mf, sizeof(mf));
+++}
+++
+++static int q6cvp_v3_setup(struct q6voice_session *s, u16 tx_port, u16 rx_port)
+++{
+++	struct apr_pkt pkt;
+++	int ret;
+++
+++	ret = q6cvp_set_channels(s, VSS_PARAM_VOCPROC_RX_CHANNEL_INFO, rx_channels);
+++	if (!ret)
+++		ret = q6cvp_set_channels(s, VSS_PARAM_VOCPROC_TX_CHANNEL_INFO, tx_channels);
+++	if (!ret)
+++		ret = q6cvp_set_channels(s, VSS_PARAM_VOCPROC_EC_REF_CHANNEL_INFO, rx_channels);
+++	if (!ret)
+++		ret = q6cvp_set_media_fmt(s, VSS_PARAM_RX_PORT_ENDPOINT_MEDIA_INFO,
+++					  rx_port, rx_channels);
+++	if (!ret)
+++		ret = q6cvp_set_media_fmt(s, VSS_PARAM_TX_PORT_ENDPOINT_MEDIA_INFO,
+++					  tx_port, tx_channels);
+++	if (ret)
+++		return ret;
+++
+++	pkt.hdr.pkt_size = APR_HDR_SIZE;
+++	pkt.hdr.opcode = VSS_IVOCPROC_CMD_TOPOLOGY_COMMIT;
+++	return q6voice_common_send(s, &pkt.hdr);
+++}
+++
+++/*
+++ * Calibration: the vocproc modules of vendor topologies run on their ACDB
+++ * calibration. Writing "TXFILE RXFILE" to the "calibration" parameter sends
+++ * the two firmware files ("-" skips one) to the enabled vocproc. Each file
+++ * holds SET_PARAM_V3 payloads made from the ACDB, one after another:
+++ * module u32, instance u16, reserved u16, parameter u32, size u32, data
+++ * (padded to 4 bytes). Some vendor modules only accept their parameters
+++ * once audio runs through them, so this is triggered from user space while
+++ * a call is up. The write fails with -EIO if the ADSP rejected a parameter,
+++ * for example data for a different sample rate.
+++ */
+++#define Q6CVP_CAL_PARAM_MAX	4096
+++
+++static struct q6voice_session *cal_session;
+++static DEFINE_MUTEX(cal_lock);
+++
+++static int q6cvp_send_cal_file(struct q6voice_session *s, const char *name)
+++{
+++	const struct firmware *fw;
+++	struct q6cvp_set_param *cmd;
+++	size_t o = 0;
+++	int ret, bad = 0;
+++
+++	ret = firmware_request_nowarn(&fw, name, s->dev);
+++	if (ret)
+++		return ret;
+++	cmd = kzalloc(sizeof(*cmd) + Q6CVP_CAL_PARAM_MAX, GFP_KERNEL);
+++	if (!cmd) {
+++		release_firmware(fw);
+++		return -ENOMEM;
+++	}
+++	while (o + 16 <= fw->size) {
+++		u32 size = get_unaligned_le32(fw->data + o + 12);
+++
+++		if (size > Q6CVP_CAL_PARAM_MAX || o + 16 + size > fw->size) {
+++			ret = -EINVAL;
+++			break;
+++		}
+++		memset(cmd, 0, sizeof(*cmd));
+++		/* the V3 payload header (module .. size) follows mem_size */
+++		cmd->hdr.pkt_size = offsetof(struct q6cvp_set_param, module_id) + 16 + size;
+++		cmd->hdr.opcode = VSS_ICOMMON_CMD_SET_PARAM_V3;
+++		cmd->mem_size = 16 + size;
+++		memcpy(&cmd->module_id, fw->data + o, 16 + size);
+++		if (q6voice_common_send(s, &cmd->hdr)) {
+++			bad++;
+++			dev_dbg(s->dev, "%s: module %#x param %#x rejected\n", name,
+++				get_unaligned_le32(fw->data + o),
+++				get_unaligned_le32(fw->data + o + 8));
+++		}
+++		o += 16 + ALIGN(size, 4);
+++	}
+++	if (!ret && bad)
+++		ret = -EIO;
+++	dev_dbg(s->dev, "%s: %d parameters rejected: %d\n", name, bad, ret);
+++	kfree(cmd);
+++	release_firmware(fw);
+++	return ret;
+++}
+++
+++static int q6cvp_set_calibration(const char *val, const struct kernel_param *kp)
+++{
+++	char buf[256], *p = buf, *tx, *rx;
+++	int ret = 0, r;
+++
+++	strscpy(buf, val, sizeof(buf));
+++	tx = strsep(&p, " \t\n");
+++	rx = p ? strim(p) : NULL;
+++	if (!tx || !tx[0])
+++		return -EINVAL;
+++
+++	mutex_lock(&cal_lock);
+++	if (!cal_session) {
+++		ret = -ENODEV;
+++		goto out;
+++	}
+++	if (strcmp(tx, "-"))
+++		ret = q6cvp_send_cal_file(cal_session, tx);
+++	if (rx && rx[0] && strcmp(rx, "-")) {
+++		r = q6cvp_send_cal_file(cal_session, rx);
+++		if (!ret)
+++			ret = r;
+++	}
+++out:
+++	mutex_unlock(&cal_lock);
+++	return ret;
+++}
+++
+++static const struct kernel_param_ops q6cvp_calibration_ops = {
+++	.set = q6cvp_set_calibration,
+++};
+++module_param_cb(calibration, &q6cvp_calibration_ops, NULL, 0200);
+++MODULE_PARM_DESC(calibration, "Send \"TXFILE RXFILE\" calibration to the enabled vocproc");
+++
++ struct q6voice_session *q6cvp_session_create(enum q6voice_path_type path,
++ 					     u16 tx_port, u16 rx_port)
++ {
++-	struct vss_ivocproc_cmd_create_full_control_session_v2_cmd cmd;
+++	struct vss_ivocproc_cmd_create_full_control_session_v2_cmd cmd = { };
+++	struct q6voice_session *s;
+++	bool v3 = cvd_v3;
+++	int ret;
++ 
++ 	cmd.hdr.pkt_size = sizeof(cmd);
++-	cmd.hdr.opcode = VSS_IVOCPROC_CMD_CREATE_FULL_CONTROL_SESSION_V2;
+++	cmd.hdr.opcode = v3 ? VSS_IVOCPROC_CMD_CREATE_FULL_CONTROL_SESSION_V3 :
+++			      VSS_IVOCPROC_CMD_CREATE_FULL_CONTROL_SESSION_V2;
++ 
++-	/* TODO: Implement calibration */
++ 	cmd.tx_topology_id = tx_topology;
++ 	cmd.rx_topology_id = rx_topology;
++ 
++@@ -123,18 +360,40 @@ struct q6voice_session *q6cvp_session_create(enum q6voice_path_type path,
++ 	cmd.vocproc_mode = VSS_IVOCPROC_VOCPROC_MODE_EC_INT_MIXING;
++ 	cmd.ec_ref_port_id = VSS_IVOCPROC_PORT_ID_NONE;
++ 
++-	return q6voice_session_create(Q6VOICE_SERVICE_CVP, path, &cmd.hdr);
+++	s = q6voice_session_create(Q6VOICE_SERVICE_CVP, path, &cmd.hdr);
+++	if (IS_ERR(s) || !v3)
+++		return s;
+++	ret = q6cvp_v3_setup(s, tx_port, rx_port);
+++	if (ret) {
+++		dev_err(s->dev, "failed to set up vocproc topology %#x/%#x: %d\n",
+++			tx_topology, rx_topology, ret);
+++		q6voice_session_release(s);
+++		return ERR_PTR(ret);
+++	}
+++	return s;
++ }
++ EXPORT_SYMBOL_GPL(q6cvp_session_create);
++ 
++ int q6cvp_enable(struct q6voice_session *cvp, bool state)
++ {
++ 	struct apr_pkt cmd;
+++	int ret;
++ 
++ 	cmd.hdr.pkt_size = APR_HDR_SIZE;
++ 	cmd.hdr.opcode = state ? VSS_IVOCPROC_CMD_ENABLE : VSS_IVOCPROC_CMD_DISABLE;
++ 
++-	return q6voice_common_send(cvp, &cmd.hdr);
+++	mutex_lock(&cal_lock);
+++	if (!state && cal_session == cvp)
+++		cal_session = NULL;
+++	mutex_unlock(&cal_lock);
+++
+++	ret = q6voice_common_send(cvp, &cmd.hdr);
+++	if (!ret && state) {
+++		mutex_lock(&cal_lock);
+++		cal_session = cvp;
+++		mutex_unlock(&cal_lock);
+++	}
+++	return ret;
++ }
++ EXPORT_SYMBOL_GPL(q6cvp_enable);
++ 
+diff --git a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+index 7c8b23b682..202d0119be 100644
+--- a/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
++++ b/device/testing/linux-postmarketos-qcom-sm8250/APKBUILD
+@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+ _flavor="postmarketos-qcom-sm8250"
+ pkgname=linux-$_flavor
+ pkgver=7.2.0_git20261010
+-pkgrel=110
++pkgrel=111
+ pkgdesc="Mainline kernel fork for SM8250"
+ arch="aarch64"
+ _carch="arm64"
+@@ -268,6 +268,8 @@ source="
+ 	0238-wifi-ath11k-enable-WoW-for-a-system-suspend.patch
+ 	0239-wifi-ath11k-let-only-SA-Query-action-frames-wake-the.patch
+ 	0240-PCI-qcom-keep-the-interconnect-votes-for-an-endpoint.patch
++	0241-ASoC-qcom-q6core-register-custom-topologies-from-a-f.patch
++	0242-ASoC-qcom-q6cvp-CVD-2.2-vocproc-setup-and-calibratio.patch
+ "
+ builddir="$srcdir/linux-$_tag"
+ 
+@@ -543,4 +545,6 @@ c1c872fda7cf56db8e172b09f26deb95e1373efe0af2fd4e79b294f774ed8c7226f46916b290e313
+ 0aec52a133e1a612e693c862fa387314bf0a603844e6acaff83daac8d076c5f1677d6ff7e2c30ebec669c630d2d2749bcbe526fc42918c80361a8b27582b1c45  0238-wifi-ath11k-enable-WoW-for-a-system-suspend.patch
+ 052188a61569e6878f864f09b0f20ce22f49960bfc3fdd131e5bc006c43184787b3c8c128363ff18cdf6ba7c23e2ff907dcaf64e5defcc20c9d0733e171c2032  0239-wifi-ath11k-let-only-SA-Query-action-frames-wake-the.patch
+ ffe99374cf54d4563fd0a8ebbd3c1baeb6fd6d80cfcdc84bb8bb2d50b4c3bef4a5e67e5ba9c7872c437d46fbebff43e8c6736e7dad296da7c2a9183b7ce50fec  0240-PCI-qcom-keep-the-interconnect-votes-for-an-endpoint.patch
++2ad2cfb86e9e559ccc070925ab677d629fac28d4bb01002a9c7487497a99a40e2ea13d0f4c1f492e91f19f6b26b4dfee1104834a1f70f5cf29c957aefdb7a91a  0241-ASoC-qcom-q6core-register-custom-topologies-from-a-f.patch
++0e9398ec73075f9d9372b71df7422e9dc25755d68e3f2a1ae943a264a6dd5cff41736877a3454c5ff9c321160c412f267a375d6240b407de7726c2ac2f6695ae  0242-ASoC-qcom-q6cvp-CVD-2.2-vocproc-setup-and-calibratio.patch
+ "

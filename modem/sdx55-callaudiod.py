@@ -34,7 +34,9 @@ def route():
     else:
         cset('Top Speaker Volume', SPEAKER_GAIN)
         cset('Bottom Speaker Switch', 1)
-    cset('VA_DEC0 Volume', 0 if state['MicState'] else MIC_GAIN)
+    # DEC1 is the second microphone of the echo cancelling topology
+    for dec in ('VA_DEC0', 'VA_DEC1'):
+        cset(dec + ' Volume', 0 if state['MicState'] else MIC_GAIN)
 
 
 def changed(con, key):

@@ -9,7 +9,10 @@ straight from the official OxygenOS 13 full OTA on Google's OTA server:
   - the Goodix fingerprint trusted application (odm/vendor/firmware/gfp96xx.*),
     joined into /lib/firmware/<name>.mbn, then its loader is started,
   - the sensor DSP configuration (vendor/etc/sensors, odm/etc/sensor/config),
-    handed to setup-sensors when the sensors are not set up yet.
+    handed to setup-sensors when the sensors are not set up yet,
+  - the audio calibration database (odm/etc/acdbdata, Global, Handset and
+    Speaker), from which oneplus-voicecal makes the echo cancellation setup
+    for calls.
 
 Only the parts of the OTA that hold these files are fetched (about 40 MB of
 4.4 GB), with HTTP range requests. Every downloaded chunk is checked against
@@ -42,6 +45,10 @@ TA_SHA256 = {
 FIRMWARE_DIR = '/lib/firmware'
 FP_SYSFS = '/sys/class/misc/goodix_fp/device/firmware_name'
 SENSORS = '/usr/share/qcom/sm8250/OnePlus/instantnoodlep/sensors'
+# the audio calibration database (ACDB) for the voice call processing,
+# turned into ADSP topologies and calibration by oneplus-voicecal
+ACDB_FILES = ['/etc/acdbdata/%s_cal.acdb' % n for n in ('Global', 'Handset', 'Speaker')]
+VOICECAL = '/lib/firmware/oneplus-instantnoodlep/voice'
 WORK_DIR = '/var/tmp'
 
 
@@ -185,7 +192,9 @@ def main():
         not os.listdir(os.path.join(SENSORS, 'config'))
     if want_sensors and not shutil.which('setup-sensors'):
         want_sensors = False
-    if not want_ta and not want_sensors:
+    want_voice = (force or not os.path.exists(os.path.join(VOICECAL, 'topologies.bin'))) and \
+        shutil.which('oneplus-voicecal') is not None
+    if not want_ta and not want_sensors and not want_voice:
         return 0
 
     with tempfile.TemporaryDirectory(dir=WORK_DIR, prefix='oneplus-ota.') as tmp:
@@ -207,6 +216,15 @@ def main():
             log('installed the fingerprint trusted application %s' % ta)
             subprocess.run(['systemctl', '--no-block', 'restart',
                             'qsee-app-loader@%s.service' % ta], check=False)
+
+        if want_voice:
+            extract(data, 'odm', odm, ACDB_FILES, files)
+            subprocess.run(['oneplus-voicecal', os.path.join(files, 'etc', 'acdbdata'), VOICECAL],
+                           check=True)
+            log('made the voice call calibration (echo cancellation)')
+            # sdx55-callaudio registers the topologies when it starts
+            subprocess.run(['systemctl', '--no-block', 'try-restart', 'sdx55-callaudio.service'],
+                           check=False)
 
         if want_sensors:
             vendor = os.path.join(tmp, 'vendor.img')

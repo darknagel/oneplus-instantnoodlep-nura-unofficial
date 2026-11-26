@@ -1,0 +1,261 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Timo <1788603+darknagel@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 23:58:22 +0100
+Subject: [PATCH] ASoC: qcom: q6core: register custom topologies from a
+ firmware file
+
+Devices with vendor voice and audio processing define their own module
+topologies in the ACDB, and the vendor stack registers them with the
+ADSP before a session can use them. Add a "topologies" parameter: writing
+a firmware file name to it sends the file, a topology definition blob as
+stored in the ACDB, with AVCS_CMD_REGISTER_TOPOLOGIES.
+
+The blob is passed in shared memory mapped with
+AVCS_CMD_SHARED_MEM_MAP_REGIONS. The ADSP reaches the memory through the
+SMMU context bank of the q6asm DAIs and expects that bank's stream ID in
+the upper address word, as msm_audio_ion does downstream; without it the
+ADSP faults and the SoC resets. The stream ID is a parameter, 1 on
+SM8250.
+---
+ sound/soc/qcom/qdsp6/q6core.c | 188 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 188 insertions(+)
+
+diff --git a/sound/soc/qcom/qdsp6/q6core.c b/sound/soc/qcom/qdsp6/q6core.c
+index 48825756a7..1ea043ab7f 100644
+--- a/sound/soc/qcom/qdsp6/q6core.c
++++ b/sound/soc/qcom/qdsp6/q6core.c
+@@ -9,6 +9,10 @@
+ #include <linux/sched.h>
+ #include <linux/of.h>
+ #include <linux/of_platform.h>
++#include <linux/platform_device.h>
++#include <linux/dma-mapping.h>
++#include <linux/firmware.h>
++#include <linux/sizes.h>
+ #include <linux/jiffies.h>
+ #include <linux/soc/qcom/apr.h>
+ #include "q6core.h"
+@@ -22,6 +26,11 @@
+ #define AVCS_GET_VERSIONS_RSP   0x00012906
+ #define AVCS_CMD_GET_FWK_VERSION	0x001292c
+ #define AVCS_CMDRSP_GET_FWK_VERSION	0x001292d
++#define AVCS_CMD_REGISTER_TOPOLOGIES	0x00012923
++#define AVCS_CMD_SHARED_MEM_MAP_REGIONS	0x00012924
++#define AVCS_CMDRSP_SHARED_MEM_MAP_REGIONS	0x00012925
++
++#define ADSP_MEMORY_MAP_SHMEM8_4K_POOL	3
+ 
+ struct avcs_svc_info {
+ 	uint32_t service_id;
+@@ -63,6 +72,12 @@ struct q6core {
+ 	bool get_state_supported;
+ 	bool get_version_supported;
+ 	bool is_version_requested;
++	u32 cmd_status;
++	u32 map_handle;
++	void *topo_buf;
++	dma_addr_t topo_iova;
++	size_t topo_len;
++	struct device *topo_dev;
+ };
+ 
+ static struct q6core *g_core;
+@@ -93,9 +108,19 @@ static int q6core_callback(struct apr_device *adev, const struct apr_resp_pkt *d
+ 				core->get_state_supported = false;
+ 			core->resp_received = true;
+ 			break;
++		case AVCS_CMD_REGISTER_TOPOLOGIES:
++		case AVCS_CMD_SHARED_MEM_MAP_REGIONS:
++			core->cmd_status = result->status;
++			core->resp_received = true;
++			break;
+ 		}
+ 		break;
+ 	}
++	case AVCS_CMDRSP_SHARED_MEM_MAP_REGIONS:
++		core->map_handle = *(u32 *)data->payload;
++		core->cmd_status = 0;
++		core->resp_received = true;
++		break;
+ 	case AVCS_CMDRSP_GET_FWK_VERSION: {
+ 		struct avcs_cmdrsp_get_fwk_version *fwk;
+ 
+@@ -325,6 +350,164 @@ bool q6core_is_adsp_ready(void)
+ }
+ EXPORT_SYMBOL_GPL(q6core_is_adsp_ready);
+ 
++/*
++ * Custom topologies: devices with vendor voice and audio processing ship
++ * topology definitions in their ACDB, which the vendor stack registers
++ * with the ADSP before a session may use them. Writing a firmware file
++ * name to the "topologies" parameter sends that file, a topology
++ * definition blob as stored in the ACDB, with AVCS_CMD_REGISTER_TOPOLOGIES.
++ *
++ * The blob is passed out of band in shared memory. The ADSP reaches the
++ * memory through the SMMU context bank of the q6asm DAIs, whose stream ID
++ * it expects in the upper address word (as msm_audio_ion does downstream).
++ */
++struct avcs_cmd_register_topologies {
++	struct apr_hdr hdr;
++	u32 payload_addr_lsw;
++	u32 payload_addr_msw;
++	u32 mem_map_handle;
++	u32 payload_size;
++} __packed;
++
++struct avcs_cmd_shared_mem_map_regions {
++	struct apr_hdr hdr;
++	u16 mem_pool_id;
++	u16 num_regions;
++	u32 property_flag;
++	u32 shm_addr_lsw;
++	u32 shm_addr_msw;
++	u32 mem_size_bytes;
++} __packed;
++
++static unsigned int q6core_smmu_sid = 1;
++module_param_named(smmu_sid, q6core_smmu_sid, uint, 0644);
++MODULE_PARM_DESC(smmu_sid, "SMMU stream ID of the ADSP audio context bank");
++
++static char q6core_topologies[128];
++
++static int q6core_send_wait(struct q6core *core, void *pkt)
++{
++	int rc;
++
++	core->resp_received = false;
++	core->cmd_status = U32_MAX;
++	rc = apr_send_pkt(core->adev, pkt);
++	if (rc < 0)
++		return rc;
++	rc = wait_event_timeout(core->wait, core->resp_received,
++				msecs_to_jiffies(Q6_READY_TIMEOUT_MS));
++	core->resp_received = false;
++	if (!rc)
++		return -ETIMEDOUT;
++	return core->cmd_status ? -EIO : 0;
++}
++
++static struct device *q6core_dma_dev(void)
++{
++	struct device_node *np = of_find_compatible_node(NULL, NULL, "qcom,q6asm-dais");
++	struct platform_device *pdev;
++
++	if (!np)
++		return NULL;
++	pdev = of_find_device_by_node(np);
++	of_node_put(np);
++	return pdev ? &pdev->dev : NULL;
++}
++
++static int q6core_register_topologies(struct q6core *core, const char *name)
++{
++	struct avcs_cmd_shared_mem_map_regions map = { };
++	struct avcs_cmd_register_topologies cmd = { };
++	const struct firmware *fw;
++	u32 hdr_field;
++	int rc;
++
++	rc = firmware_request_nowarn(&fw, name, &core->adev->dev);
++	if (rc)
++		return rc;
++	if (!fw->size) {
++		rc = -EINVAL;
++		goto out;
++	}
++
++	mutex_lock(&core->lock);
++	/* the ADSP keeps referring to the memory, so keep it until the next registration */
++	if (core->topo_buf) {
++		dma_free_coherent(core->topo_dev, core->topo_len, core->topo_buf, core->topo_iova);
++		core->topo_buf = NULL;
++	}
++	if (core->topo_dev)
++		put_device(core->topo_dev);
++	core->topo_dev = q6core_dma_dev();
++	core->topo_len = ALIGN(fw->size, SZ_4K);
++	if (core->topo_dev)
++		core->topo_buf = dma_alloc_coherent(core->topo_dev, core->topo_len,
++						    &core->topo_iova, GFP_KERNEL);
++	if (!core->topo_buf) {
++		rc = -ENOMEM;
++		goto unlock;
++	}
++	memcpy(core->topo_buf, fw->data, fw->size);
++
++	hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD, APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
++	map.hdr.hdr_field = hdr_field;
++	map.hdr.pkt_size = sizeof(map);
++	map.hdr.opcode = AVCS_CMD_SHARED_MEM_MAP_REGIONS;
++	map.mem_pool_id = ADSP_MEMORY_MAP_SHMEM8_4K_POOL;
++	map.num_regions = 1;
++	map.shm_addr_lsw = lower_32_bits(core->topo_iova);
++	map.shm_addr_msw = upper_32_bits(core->topo_iova) | q6core_smmu_sid;
++	map.mem_size_bytes = core->topo_len;
++	rc = q6core_send_wait(core, &map);
++	if (rc)
++		goto unlock;
++
++	cmd.hdr.hdr_field = hdr_field;
++	cmd.hdr.pkt_size = sizeof(cmd);
++	cmd.hdr.opcode = AVCS_CMD_REGISTER_TOPOLOGIES;
++	cmd.payload_addr_lsw = lower_32_bits(core->topo_iova);
++	cmd.payload_addr_msw = upper_32_bits(core->topo_iova) | q6core_smmu_sid;
++	cmd.mem_map_handle = core->map_handle;
++	cmd.payload_size = fw->size;
++	rc = q6core_send_wait(core, &cmd);
++unlock:
++	mutex_unlock(&core->lock);
++out:
++	dev_info(&core->adev->dev, "register topologies from %s (%zu bytes): %d\n",
++		 name, fw->size, rc);
++	release_firmware(fw);
++	return rc;
++}
++
++static int q6core_set_topologies(const char *val, const struct kernel_param *kp)
++{
++	char name[sizeof(q6core_topologies)];
++	int rc;
++
++	if (!g_core)
++		return -ENODEV;
++	strscpy(name, val, sizeof(name));
++	strim(name);
++	if (!name[0])
++		return -EINVAL;
++	rc = q6core_register_topologies(g_core, name);
++	if (!rc)
++		strscpy(q6core_topologies, name, sizeof(q6core_topologies));
++	return rc;
++}
++
++static int q6core_get_topologies(char *buf, const struct kernel_param *kp)
++{
++	return sysfs_emit(buf, "%s\n", q6core_topologies);
++}
++
++static const struct kernel_param_ops q6core_topologies_ops = {
++	.set = q6core_set_topologies,
++	.get = q6core_get_topologies,
++};
++module_param_cb(topologies, &q6core_topologies_ops, NULL, 0644);
++MODULE_PARM_DESC(topologies, "Firmware file with custom topologies to register");
++
+ static int q6core_probe(struct apr_device *adev)
+ {
+ 	g_core = kzalloc_obj(*g_core);
+@@ -347,8 +530,13 @@ static void q6core_exit(struct apr_device *adev)
+ 		kfree(core->fwk_version);
+ 	if (core->get_version_supported)
+ 		kfree(core->svc_version);
++	if (core->topo_buf)
++		dma_free_coherent(core->topo_dev, core->topo_len, core->topo_buf, core->topo_iova);
++	if (core->topo_dev)
++		put_device(core->topo_dev);
+ 
+ 	g_core = NULL;
++	q6core_topologies[0] = 0;
+ 	kfree(core);
+ }
+ 
