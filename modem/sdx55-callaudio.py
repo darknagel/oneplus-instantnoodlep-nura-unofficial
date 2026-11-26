@@ -54,8 +54,13 @@ def cget(name):
 
 
 def sysfs(path, val):
-    with open(path, 'w') as f:
-        f.write(val)
+    # one write() call: a buffered file would write again when closed after
+    # an error
+    fd = os.open(path, os.O_WRONLY)
+    try:
+        os.write(fd, val.encode())
+    finally:
+        os.close(fd)
 
 
 def setup_ec():
@@ -132,21 +137,25 @@ def calibrate():
     """Send the calibration for the current route; True when the ADSP took it."""
     r, net = route(), network()
     # wideband first: the narrowband data has a shorter microphone filter, the
-    # ADSP rejects the wideband data while the call runs at 8 kHz
+    # ADSP rejects the wideband data while the call runs at 8 kHz. The OnePlus
+    # module keeps a rejected filter in its configuration and fails every
+    # parameter until the next filter replaces it, so a file can need a
+    # second pass after another one was rejected.
     for bw in ('wb', 'nb'):
         name = '%s/%s-%s-%s.bin' % (VOICECAL, r, net, bw)
         if not os.path.exists('/lib/firmware/' + name):
             continue
-        try:
-            sysfs(Q6CVP + 'calibration', name + ' -')
-        except OSError as e:
-            if e.errno == errno.EIO:
-                continue
-            log('calibration %s: %s' % (name, e))
-            return False
-        cal['route'] = r
-        log('calibration %s' % name)
-        return True
+        for attempt in range(2):
+            try:
+                sysfs(Q6CVP + 'calibration', name + ' -')
+            except OSError as e:
+                if e.errno == errno.EIO:
+                    continue
+                log('calibration %s: %s' % (name, e))
+                return False
+            cal['route'] = r
+            log('calibration %s' % name)
+            return True
     return False
 
 

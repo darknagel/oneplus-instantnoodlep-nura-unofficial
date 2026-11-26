@@ -17,11 +17,11 @@ the upper address word, as msm_audio_ion does downstream; without it the
 ADSP faults and the SoC resets. The stream ID is a parameter, 1 on
 SM8250.
 ---
- sound/soc/qcom/qdsp6/q6core.c | 188 ++++++++++++++++++++++++++++++++++
- 1 file changed, 188 insertions(+)
+ sound/soc/qcom/qdsp6/q6core.c | 200 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 200 insertions(+)
 
 diff --git a/sound/soc/qcom/qdsp6/q6core.c b/sound/soc/qcom/qdsp6/q6core.c
-index 48825756a7..1ea043ab7f 100644
+index 48825756a7..6ab092ead3 100644
 --- a/sound/soc/qcom/qdsp6/q6core.c
 +++ b/sound/soc/qcom/qdsp6/q6core.c
 @@ -9,6 +9,10 @@
@@ -80,7 +80,7 @@ index 48825756a7..1ea043ab7f 100644
  	case AVCS_CMDRSP_GET_FWK_VERSION: {
  		struct avcs_cmdrsp_get_fwk_version *fwk;
  
-@@ -325,6 +350,164 @@ bool q6core_is_adsp_ready(void)
+@@ -325,6 +350,176 @@ bool q6core_is_adsp_ready(void)
  }
  EXPORT_SYMBOL_GPL(q6core_is_adsp_ready);
  
@@ -153,6 +153,10 @@ index 48825756a7..1ea043ab7f 100644
 +	struct avcs_cmd_shared_mem_map_regions map = { };
 +	struct avcs_cmd_register_topologies cmd = { };
 +	const struct firmware *fw;
++	struct device *dev;
++	dma_addr_t iova;
++	size_t len;
++	void *buf = NULL;
 +	u32 hdr_field;
 +	int rc;
 +
@@ -164,48 +168,53 @@ index 48825756a7..1ea043ab7f 100644
 +		goto out;
 +	}
 +
-+	mutex_lock(&core->lock);
-+	/* the ADSP keeps referring to the memory, so keep it until the next registration */
-+	if (core->topo_buf) {
-+		dma_free_coherent(core->topo_dev, core->topo_len, core->topo_buf, core->topo_iova);
-+		core->topo_buf = NULL;
-+	}
-+	if (core->topo_dev)
-+		put_device(core->topo_dev);
-+	core->topo_dev = q6core_dma_dev();
-+	core->topo_len = ALIGN(fw->size, SZ_4K);
-+	if (core->topo_dev)
-+		core->topo_buf = dma_alloc_coherent(core->topo_dev, core->topo_len,
-+						    &core->topo_iova, GFP_KERNEL);
-+	if (!core->topo_buf) {
++	dev = q6core_dma_dev();
++	len = ALIGN(fw->size, SZ_4K);
++	if (dev)
++		buf = dma_alloc_coherent(dev, len, &iova, GFP_KERNEL);
++	if (!buf) {
 +		rc = -ENOMEM;
-+		goto unlock;
++		goto put;
 +	}
-+	memcpy(core->topo_buf, fw->data, fw->size);
++	memcpy(buf, fw->data, fw->size);
 +
++	mutex_lock(&core->lock);
 +	hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD, APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
 +	map.hdr.hdr_field = hdr_field;
 +	map.hdr.pkt_size = sizeof(map);
 +	map.hdr.opcode = AVCS_CMD_SHARED_MEM_MAP_REGIONS;
 +	map.mem_pool_id = ADSP_MEMORY_MAP_SHMEM8_4K_POOL;
 +	map.num_regions = 1;
-+	map.shm_addr_lsw = lower_32_bits(core->topo_iova);
-+	map.shm_addr_msw = upper_32_bits(core->topo_iova) | q6core_smmu_sid;
-+	map.mem_size_bytes = core->topo_len;
++	map.shm_addr_lsw = lower_32_bits(iova);
++	map.shm_addr_msw = upper_32_bits(iova) | q6core_smmu_sid;
++	map.mem_size_bytes = len;
 +	rc = q6core_send_wait(core, &map);
-+	if (rc)
-+		goto unlock;
-+
-+	cmd.hdr.hdr_field = hdr_field;
-+	cmd.hdr.pkt_size = sizeof(cmd);
-+	cmd.hdr.opcode = AVCS_CMD_REGISTER_TOPOLOGIES;
-+	cmd.payload_addr_lsw = lower_32_bits(core->topo_iova);
-+	cmd.payload_addr_msw = upper_32_bits(core->topo_iova) | q6core_smmu_sid;
-+	cmd.mem_map_handle = core->map_handle;
-+	cmd.payload_size = fw->size;
-+	rc = q6core_send_wait(core, &cmd);
-+unlock:
++	if (!rc) {
++		cmd.hdr.hdr_field = hdr_field;
++		cmd.hdr.pkt_size = sizeof(cmd);
++		cmd.hdr.opcode = AVCS_CMD_REGISTER_TOPOLOGIES;
++		cmd.payload_addr_lsw = lower_32_bits(iova);
++		cmd.payload_addr_msw = upper_32_bits(iova) | q6core_smmu_sid;
++		cmd.mem_map_handle = core->map_handle;
++		cmd.payload_size = fw->size;
++		rc = q6core_send_wait(core, &cmd);
++	}
++	if (!rc) {
++		/*
++		 * The ADSP may keep referring to the registered blob: keep the
++		 * memory of the last successful registration.
++		 */
++		swap(dev, core->topo_dev);
++		swap(buf, core->topo_buf);
++		swap(iova, core->topo_iova);
++		swap(len, core->topo_len);
++	}
 +	mutex_unlock(&core->lock);
++	if (buf)
++		dma_free_coherent(dev, len, buf, iova);
++put:
++	if (dev)
++		put_device(dev);
 +out:
 +	dev_info(&core->adev->dev, "register topologies from %s (%zu bytes): %d\n",
 +		 name, fw->size, rc);
@@ -224,6 +233,9 @@ index 48825756a7..1ea043ab7f 100644
 +	strim(name);
 +	if (!name[0])
 +		return -EINVAL;
++	/* the ADSP refuses a second registration of the same topologies */
++	if (!strcmp(name, q6core_topologies))
++		return 0;
 +	rc = q6core_register_topologies(g_core, name);
 +	if (!rc)
 +		strscpy(q6core_topologies, name, sizeof(q6core_topologies));
@@ -245,7 +257,7 @@ index 48825756a7..1ea043ab7f 100644
  static int q6core_probe(struct apr_device *adev)
  {
  	g_core = kzalloc_obj(*g_core);
-@@ -347,8 +530,13 @@ static void q6core_exit(struct apr_device *adev)
+@@ -347,8 +542,13 @@ static void q6core_exit(struct apr_device *adev)
  		kfree(core->fwk_version);
  	if (core->get_version_supported)
  		kfree(core->svc_version);
